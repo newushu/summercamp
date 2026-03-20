@@ -1,0 +1,11 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/api/email/auto-reply/route": "app/api/email/auto-reply/route.js",
+  "/api/email/draft-reply/route": "app/api/email/draft-reply/route.js",
+  "/api/email/send-test/route": "app/api/email/send-test/route.js",
+  "/api/survey-recommendation/route": "app/api/survey-recommendation/route.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js"
+}
