@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { buildProgramWeekOptions, defaultAdminConfig, formatWeekLabel } from '../../lib/campAdmin'
+import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
 import {
   fetchAdminConfigFromSupabase,
   filterSelectedWeeksByDateWindow,
@@ -26,7 +27,7 @@ const programMeta = {
   },
   overnight: {
     title: 'Overnight Camp',
-    rhythm: 'Auto-generated 7-day blocks starting Saturday',
+    rhythm: 'Auto-generated Sunday to Saturday 7-day weeks',
   },
 }
 
@@ -35,7 +36,7 @@ function money(value) {
 }
 
 function roundUpToFive(value) {
-  const next = Math.ceil(Number(value || 0) / 5) * 5
+  const next = Math.round(Number(value || 0) / 5) * 5
   return Number.isFinite(next) ? Math.max(0, next) : 0
 }
 
@@ -148,14 +149,22 @@ function getInitialState() {
       surveyMobileBgUrl: defaultAdminConfig.media.surveyMobileBgUrl,
       surveyStepImageUrls: [...defaultAdminConfig.media.surveyStepImageUrls],
       surveyStepImagePositions: defaultAdminConfig.media.surveyStepImagePositions.map((item) => ({ ...item })),
+      landingCarouselImagePositions: defaultAdminConfig.media.landingCarouselImagePositions.map((item) => ({ ...item })),
       registrationStepImageUrls: [...defaultAdminConfig.media.registrationStepImageUrls],
+      burlingtonFacilityImageUrls: [...defaultAdminConfig.media.burlingtonFacilityImageUrls],
+      actonFacilityImageUrls: [...defaultAdminConfig.media.actonFacilityImageUrls],
+      overnightLandingImageUrls: [...defaultAdminConfig.media.overnightLandingImageUrls],
+      overnightGalleryImageUrls: [...defaultAdminConfig.media.overnightGalleryImageUrls],
+      overnightRegistrationImageUrls: [...defaultAdminConfig.media.overnightRegistrationImageUrls],
       levelUpImageUrl: defaultAdminConfig.media.levelUpImageUrl,
       levelUpScreenshotUrls: [...defaultAdminConfig.media.levelUpScreenshotUrls],
+      levelUpScreenshotPositions: defaultAdminConfig.media.levelUpScreenshotPositions.map((item) => ({ ...item })),
       levelUpScreenshotSize: defaultAdminConfig.media.levelUpScreenshotSize,
       wechatQrUrl: defaultAdminConfig.media.wechatQrUrl,
     },
     emailJourney: defaultAdminConfig.emailJourney.map((item) => ({ ...item })),
     testimonials: defaultAdminConfig.testimonials.map((item) => ({ ...item })),
+    campTypeShowcase: JSON.parse(JSON.stringify(defaultAdminConfig.campTypeShowcase)),
     tuition: {
       regular: { ...defaultAdminConfig.tuition.regular },
       discount: { ...defaultAdminConfig.tuition.discount },
@@ -165,6 +174,8 @@ function getInitialState() {
       lunchPrice: defaultAdminConfig.tuition.lunchPrice,
       bootcampPremiumPct: defaultAdminConfig.tuition.bootcampPremiumPct,
       siblingDiscountPct: defaultAdminConfig.tuition.siblingDiscountPct,
+      businessName: defaultAdminConfig.tuition.businessName,
+      businessAddress: defaultAdminConfig.tuition.businessAddress,
     },
     programs: {
       general: { ...defaultAdminConfig.programs.general },
@@ -261,11 +272,88 @@ const registrationStepQuestions = [
   'Registration Step 4: Review & submit',
 ]
 
+const overnightLandingSlots = [
+  {
+    key: 'lodging-space',
+    label: 'Top Carousel Slot 1: Lodging Space',
+    caption: 'Spacious lodging setup with comfort, organization, and supervised routines.',
+  },
+  {
+    key: 'fun-activities',
+    label: 'Top Carousel Slot 2: Fun Activities',
+    caption: 'Fun activities, team games, and social challenges that keep campers engaged.',
+  },
+  {
+    key: 'training-growth',
+    label: 'Top Carousel Slot 3: Outings & Outdoor Activities',
+    caption: 'Fun outings and outdoor activities that keep campers active, adventurous, and engaged.',
+  },
+  {
+    key: 'sleeping-setup',
+    label: 'Top Carousel Slot 4: Sleeping Setup',
+    caption: 'Comfortable overnight setup that supports rest, routine, and independence.',
+  },
+  {
+    key: 'academy-training',
+    label: 'Top Carousel Slot 5: Academy Training',
+    caption: 'Focused academy training moments that show progress, technique, and coaching attention.',
+  },
+  {
+    key: 'team-life',
+    label: 'Top Carousel Slot 6: Team Life',
+    caption: 'Camp community moments that highlight friendship, bonding, and independence.',
+  },
+]
+const campTypeShowcaseAdminCards = [
+  { key: 'general', label: 'General Camp' },
+  { key: 'bootcamp', label: 'Competition Team Boot Camp' },
+  { key: 'overnight', label: 'Overnight Camp' },
+]
+
+const levelUpScreenshotCaptions = [
+  'Live training moment: coach guiding movement or form corrections.',
+  'Parent updates view: daily photos/videos progress feed.',
+  'Lunch booking view: simple day-by-day lunch selection.',
+  'Schedule/attendance view: clear weekly structure and check-ins.',
+  'Progress notes view: instructor comments and improvement milestones.',
+]
+
+const landingCarouselSlotGuide = [
+  {
+    slot: 1,
+    sourceLabel: 'Hero image URL',
+    binding: 'Hero Camp Moment',
+    caption:
+      'Every week blends high-energy training, confidence-building, and summer fun.',
+  },
+  {
+    slot: 2,
+    sourceLabel: surveyStepQuestions[0],
+    binding: 'Training Highlights',
+    caption:
+      'Campers build real skills while making friends through team challenges.',
+  },
+  {
+    slot: 3,
+    sourceLabel: surveyStepQuestions[1],
+    binding: 'Teamwork & Friends',
+    caption:
+      'Daily movement, structure, and coaching help kids grow fast and stay motivated.',
+  },
+  {
+    slot: 4,
+    sourceLabel: surveyStepQuestions[2],
+    binding: 'Weekly Showcase',
+    caption:
+      'From first-timers to advanced students, every camper trains at the right level.',
+  },
+]
+
 const emailJourneyBlueprint = [
   {
     step: 'Step 1',
-    objective: 'Deliver recommendation immediately while intent is high.',
-    cta: 'View recommended plan + start registration',
+    objective: 'Re-engage visitors who started exploring camp but did not finish.',
+    cta: 'Show highlights + return to registration',
   },
   {
     step: 'Step 2',
@@ -289,26 +377,833 @@ const emailJourneyBlueprint = [
   },
 ]
 
+const reservationJourneyBlueprint = [
+  {
+    step: 'Step 1',
+    objective: 'Sent immediately after submitted registration. Starts 72-hour hold.',
+    cta: 'Complete payment and confirm reservation',
+  },
+  {
+    step: 'Step 2',
+    objective: 'Friendly evening reminder while hold is still active.',
+    cta: 'Pay now to keep selected weeks',
+  },
+  {
+    step: 'Step 3',
+    objective: 'Priority reminder before final-day deadline.',
+    cta: 'Keep reservation active',
+  },
+  {
+    step: 'Step 4',
+    objective: 'Final day warning before auto-cancel.',
+    cta: 'Payment required today',
+  },
+  {
+    step: 'Step 5',
+    objective: 'Auto-cancel notice after unpaid 72-hour window.',
+    cta: 'Reply to reopen if spots remain',
+  },
+  {
+    step: 'P1',
+    objective: '7 days before camp: early prep, logistics, and extra-week invitation.',
+    cta: 'Prep family + encourage added weeks',
+  },
+  {
+    step: 'P2',
+    objective: '5 days before camp: logistics reminder and extra-week offer.',
+    cta: 'Keep schedule easy and upsell added weeks',
+  },
+  {
+    step: 'P3',
+    objective: '3 days before camp: final checklist and reminders.',
+    cta: 'Reduce friction before arrival',
+  },
+  {
+    step: 'P4',
+    objective: '1 day before camp: tomorrow reminder and arrival prep.',
+    cta: 'Confirm readiness for day 1',
+  },
+]
+
+const reservationJourneyTemplates = [
+  {
+    dayLabel: 'Immediately',
+    title: 'Step 1 - Reservation Received',
+    subject: '[Action Needed] 72-Hour Camp Spot Hold - Complete Payment to Confirm',
+    body:
+      'Hi {parent_name},\n\nThank you for submitting your camp registration. Your selected weeks are now reserved for 72 hours.\n\nPlease complete payment to keep your spot.\n\nAmount due: {amount_due}\n\nPayment options:\n{payment_methods}\n\nFamily rewards: each camper receives 2,500 points for prizes and family discounts.\n\nReservation summary:\n{registration_summary}',
+  },
+  {
+    dayLabel: '12 Hours',
+    title: 'Step 2 - Evening Reminder',
+    subject: 'Evening Reminder: Complete Payment to Keep Your Camp Reservation',
+    body:
+      'Hi {parent_name},\n\nQuick reminder: your reservation is still active.\n\nPlease complete payment to keep your selected weeks.\n\nAmount due: {amount_due}\n\nPayment options:\n{payment_methods}\n\nFamily rewards: each camper receives 2,500 points for prizes and family discounts.\n\nReservation summary:\n{registration_summary}',
+  },
+  {
+    dayLabel: '36 Hours',
+    title: 'Step 3 - Priority Reminder',
+    subject: 'Important Reminder: Keep Your Summer Camp Weeks Locked In',
+    body:
+      'Hi {parent_name},\n\nYour reservation hold is still active. Please complete payment before the hold expires.\n\nAmount due: {amount_due}\n\nPayment options:\n{payment_methods}\n\nFamily rewards: each camper receives 2,500 points for prizes and family discounts.\n\nReservation summary:\n{registration_summary}',
+  },
+  {
+    dayLabel: '66 Hours',
+    title: 'Step 4 - Final Day Reminder',
+    subject: 'Final Notice Today: Reservation Auto-Cancels Without Payment',
+    body:
+      'Hi {parent_name},\n\nFinal reminder: your reservation auto-cancels if payment is not received before {reservation_deadline}.\n\nAmount due: {amount_due}\n\nPayment options:\n{payment_methods}\n\nFamily rewards: each camper receives 2,500 points for prizes and family discounts.\n\nReservation summary:\n{registration_summary}',
+  },
+  {
+    dayLabel: '72 Hours',
+    title: 'Step 5 - Reservation Canceled',
+    subject: 'Reservation Canceled (Unpaid) - Reply to Reopen Quickly',
+    body:
+      'Hi {parent_name},\n\nYour reservation was automatically canceled because payment was not received within 72 hours.\n\nReply to this email if you want us to help reopen your registration (subject to availability).\n\nPrevious summary:\n{registration_summary}',
+  },
+  {
+    dayLabel: '7 Days Before Camp',
+    title: 'P1 - 7-Day Prep Reminder',
+    subject: '7 Days Before Camp: Preparation Checklist + Bonus Week Offers',
+    body:
+      'Hi {parent_name},\n\nGreat news. Your family is officially registered, and camp starts next week.\n\nThis is your early prep reminder with logistics, schedule planning, and optional added-week support.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want help adding weeks or adjusting the plan.',
+  },
+  {
+    dayLabel: '5 Days Before Camp',
+    title: 'P2 - 5-Day Prep Reminder',
+    subject: '5 Days Before Camp: Final Logistics + Extra Week Invitation',
+    body:
+      'Hi {parent_name},\n\nYour camp week is coming up fast. Please review clothing, lunch, Water Wednesday, and Friday showcase timing.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want help adding more weeks.',
+  },
+  {
+    dayLabel: '3 Days Before Camp',
+    title: 'P3 - 3-Day Prep Reminder',
+    subject: '3 Days Before Camp: Final Packing + Arrival Checklist',
+    body:
+      'Hi {parent_name},\n\nThree-day reminder before camp begins: confirm drop-off and pickup timing, pack training clothing, and review the weekly schedule.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want to adjust weeks before camp starts.',
+  },
+  {
+    dayLabel: '1 Day Before Camp',
+    title: 'P4 - Tomorrow Reminder',
+    subject: 'Camp Starts Tomorrow: Arrival Reminder + Final Checklist',
+    body:
+      'Hi {parent_name},\n\nCamp starts tomorrow. Final reminder to pack training clothes, water bottle, and anything else your camper needs.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you need any last-minute help.',
+  },
+]
+
+const premiumJourneyTemplates = [
+  {
+    dayLabel: 'Immediately',
+    title: 'Step 1 - Summer Camp Follow-Up',
+    subject: 'Still Thinking About Summer Camp? Here Are the Highlights',
+    body:
+      'Hi {parent_name},\n\nWe noticed you checked out New England Wushu Summer Camp and wanted to send a quick follow-up in case you did not get to finish.\n\nFamilies usually choose us for four big reasons: strong coaching, fun team energy, lunch convenience, and daily photo/video updates through the Level Up app.\n\nA strong fit based on what we saw so far:\n{recommended_plan}\n\nYou can pick back up here anytime:\n{registration_link}\n\nIf you want help choosing the best weeks, just reply and we will guide you.',
+  },
+  {
+    dayLabel: 'Day 1',
+    title: 'Step 2 - Best-Fit Plan Reminder',
+    subject: 'Your Recommended Camp Plan + Next Steps',
+    body:
+      'Hi {parent_name},\n\nQuick follow-up from our team. We can help you lock in the schedule that best matches your goals.\n\nRecommended fit:\n{recommended_plan}\n\nRegistration takes only a few minutes:\n{registration_link}\n\nIf you want help picking weeks, just reply and we will guide you.',
+  },
+  {
+    dayLabel: 'Day 3',
+    title: 'Step 3 - Social Proof + Confidence',
+    subject: 'Why Families Choose New England Wushu Summer Camp',
+    body:
+      'Hi {parent_name},\n\nFamilies tell us they value three things most: coaching quality, visible progress, and a positive team environment.\n\nYour camper can start with a plan matched to age and experience:\n{recommended_plan}\n\nStart registration when ready:\n{registration_link}\n\nWe are happy to answer any questions before you submit.',
+  },
+  {
+    dayLabel: 'Day 5',
+    title: 'Step 4 - Logistics + Readiness',
+    subject: 'Camp Logistics Made Easy: Schedule, Lunch, and Daily Updates',
+    body:
+      'Hi {parent_name},\n\nTo make camp easier for families, we provide clear weekly scheduling, lunch options, and ongoing updates.\n\nYou can complete registration here:\n{registration_link}\n\nRecommended fit from your survey:\n{recommended_plan}\n\nIf you prefer, reply and we can help you choose the best starting weeks.',
+  },
+  {
+    dayLabel: 'Day 7',
+    title: 'Step 5 - Final Invitation',
+    subject: 'Final Invitation: Reserve Your Preferred Summer Camp Weeks',
+    body:
+      'Hi {parent_name},\n\nFinal check-in from us. If you still want a summer camp plan tailored to your goals, we would love to welcome your family.\n\nRecommended plan:\n{recommended_plan}\n\nComplete registration:\n{registration_link}\n\nIf now is not the right time, no problem. You can always return when ready.',
+  },
+]
+
+const leadTrackerColumns = premiumJourneyTemplates.map((item, index) => ({
+  key: `step_${index + 1}`,
+  stepNumber: index + 1,
+  label: `L${index + 1}`,
+  timingLabel: item.dayLabel,
+  description: item.dayLabel === 'Immediately' ? `Lead ${index + 1}: sends immediately` : `Lead ${index + 1}: ${item.dayLabel}`,
+}))
+
+const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) => ({
+  key:
+    index < 5
+      ? `step_${index + 1}`
+      : index === 5
+        ? 'paid_7d'
+        : index === 6
+          ? 'paid_5d'
+          : index === 7
+            ? 'paid_3d'
+            : 'paid_1d',
+  stepNumber: index < 5 ? index + 1 : null,
+  label:
+    index < 5
+      ? `R${index + 1}`
+      : index === 5
+        ? 'P1'
+        : index === 6
+          ? 'P2'
+        : index === 7
+            ? 'P3'
+            : 'P4',
+  timingLabel: item.dayLabel,
+  description: item.objective,
+}))
+
+function normalizeAdminEmail(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function buildTrackerCell(status = 'pending', at = '') {
+  return { status, at }
+}
+
+function formatTrackerDateTime(value) {
+  const parsed = new Date(value || '')
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toLocaleString()
+}
+
+function formatElapsedSince(value) {
+  const parsed = new Date(value || '')
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  const diffMs = Math.max(0, Date.now() - parsed.getTime())
+  const totalHours = Math.floor(diffMs / (1000 * 60 * 60))
+  const days = Math.floor(totalHours / 24)
+  const hours = totalHours % 24
+  if (days > 0) {
+    return `${days}d ${hours}h ago`
+  }
+  if (totalHours > 0) {
+    return `${totalHours}h ago`
+  }
+  const minutes = Math.max(0, Math.floor(diffMs / (1000 * 60)))
+  return `${minutes}m ago`
+}
+
+function addHoursToIso(value, hours) {
+  const parsed = new Date(value || '')
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return new Date(parsed.getTime() + hours * 60 * 60 * 1000).toISOString()
+}
+
+function addDaysToIso(value, days) {
+  const parsed = new Date(value || '')
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return new Date(parsed.getTime() + days * 24 * 60 * 60 * 1000).toISOString()
+}
+
+function buildLeadCriteria(row, isRegistered) {
+  const statusValue = String(row?.status || '')
+  const isTestRow = statusValue.startsWith('test_')
+  if (!row?.createdAt) {
+    return [
+      ...(isTestRow ? ['Admin test send: this is not a live lead automation'] : []),
+      isRegistered ? 'Blocked: this email already exists in registrations' : 'Submission time unavailable',
+    ]
+  }
+  const dueOffsets = [0, 1, 3, 5, 7]
+  const nextColumn = leadTrackerColumns.find((column) => {
+    const status = row.steps[column.key]?.status || 'pending'
+    return !['sent', 'preview', 'closed'].includes(status)
+  })
+  const lines = [
+    ...(isTestRow ? ['Admin test send: this is not a live lead automation'] : []),
+    `Submitted ${formatTrackerDateTime(row.createdAt)}`,
+    `Elapsed: ${formatElapsedSince(row.createdAt)}`,
+  ]
+  if (isRegistered) {
+    lines.push('Blocked: this email already exists in registrations')
+    return lines
+  }
+  if (!nextColumn) {
+    lines.push('All lead steps already handled')
+    return lines
+  }
+  const dueAt = addDaysToIso(row.createdAt, dueOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+  if (!dueAt) {
+    lines.push(`Next step: ${nextColumn.label}`)
+    return lines
+  }
+  const dueDate = new Date(dueAt)
+  const dueNow = dueDate.getTime() <= Date.now()
+  lines.push(`${dueNow ? 'Due now' : 'Next due'}: ${nextColumn.label} ${dueNow ? 'since' : 'at'} ${formatTrackerDateTime(dueAt)}`)
+  return lines
+}
+
+function buildReservationCriteria(row) {
+  const statusValue = String(row?.status || '')
+  const isTestRow = statusValue.startsWith('test_')
+  if (!row?.createdAt) {
+    return [
+      ...(isTestRow ? ['Admin test send: this is not a live reservation automation'] : []),
+      'Registration time unavailable',
+    ]
+  }
+  const lines = [
+    ...(isTestRow ? ['Admin test send: this is not a live reservation automation'] : []),
+    `Submitted ${formatTrackerDateTime(row.createdAt)}`,
+    `Elapsed: ${formatElapsedSince(row.createdAt)}`,
+  ]
+  if (statusValue === 'paid') {
+    lines.push('Paid: prep emails follow first camp-week timing')
+    return lines
+  }
+  const dueOffsetsHours = [0, 12, 36, 66, 72]
+  const nextColumn = reservationTrackerColumns
+    .filter((column) => String(column.key || '').startsWith('step_'))
+    .find((column) => {
+      const status = row.steps[column.key]?.status || 'pending'
+      return !['sent', 'preview', 'closed'].includes(status)
+    })
+  if (!nextColumn) {
+    lines.push('All unpaid reminder steps already handled')
+    return lines
+  }
+  const dueAt = addHoursToIso(row.createdAt, dueOffsetsHours[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+  if (!dueAt) {
+    lines.push(`Next step: ${nextColumn.label}`)
+    return lines
+  }
+  const dueDate = new Date(dueAt)
+  const dueNow = dueDate.getTime() <= Date.now()
+  lines.push(`${dueNow ? 'Due now' : 'Next due'}: ${nextColumn.label} ${dueNow ? 'since' : 'at'} ${formatTrackerDateTime(dueAt)}`)
+  return lines
+}
+
+function getTrackerCellLabel(cell) {
+  switch (cell?.status) {
+    case 'sent':
+      return 'Sent'
+    case 'preview':
+      return 'Preview'
+    case 'queued':
+      return 'Queued'
+    case 'scheduled':
+      return 'Scheduled'
+    case 'error':
+      return 'Error'
+    case 'closed':
+      return 'Closed'
+    case 'paid':
+      return 'Paid'
+    default:
+      return '-'
+  }
+}
+
+function isTrackerStepHandled(status = '') {
+  return ['sent', 'preview', 'closed'].includes(String(status || ''))
+}
+
+function isPaidPrepHandled(status = '') {
+  return String(status || '') === 'sent'
+}
+
+const adminTabBlueprint = [
+  { id: 'media', label: 'Media' },
+  { id: 'tuition', label: 'Tuition' },
+  { id: 'programs', label: 'Programs' },
+  { id: 'journey', label: 'Email Journey' },
+  { id: 'accounting', label: 'Registration Accounting' },
+  { id: 'overnight-accounting', label: 'Overnight Accounting' },
+  { id: 'leads', label: 'Leads' },
+  { id: 'testimonials', label: 'Testimonials' },
+  { id: 'tracking', label: 'Tracking' },
+  { id: 'account', label: 'Save & Account' },
+]
+
+const mediaSubtabBlueprint = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'carousel', label: 'Landing Carousel' },
+  { id: 'levelup', label: 'Level Up Viewport' },
+  { id: 'steps', label: 'Survey/Reg/Overnight' },
+  { id: 'library', label: 'Media Library' },
+]
+
+const accountingPaymentMethods = ['venmo', 'zelle', 'paypal', 'cash', 'check']
+
+function parseMaybeJson(value, fallback = null) {
+  try {
+    return JSON.parse(String(value || ''))
+  } catch {
+    return fallback
+  }
+}
+
+function parseDiscountDate(value) {
+  if (!value) {
+    return null
+  }
+  const parsed = new Date(`${value}T23:59:59`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
+}
+
+function isLimitedDiscountActiveForDate(discountEndDate, createdAtIso) {
+  const endDate = parseDiscountDate(discountEndDate)
+  const created = new Date(createdAtIso || Date.now())
+  if (!endDate || Number.isNaN(created.getTime())) {
+    return false
+  }
+  return created.getTime() <= endDate.getTime()
+}
+
+function getWeekDayKeysForProgram(programKey) {
+  if (programKey === 'overnight') {
+    return ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+  }
+  return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+}
+
+function normalizeDayKey(dayKey) {
+  const value = String(dayKey || '').trim().toLowerCase()
+  if (value.startsWith('mon')) return 'mon'
+  if (value.startsWith('tue')) return 'tue'
+  if (value.startsWith('wed')) return 'wed'
+  if (value.startsWith('thu')) return 'thu'
+  if (value.startsWith('fri')) return 'fri'
+  if (value.startsWith('sat')) return 'sat'
+  if (value.startsWith('sun')) return 'sun'
+  return value
+}
+
+function toWeekLabel(weekId, weekById) {
+  const week = weekById[weekId]
+  if (week) {
+    return formatWeekLabel(week)
+  }
+  const [, startDate = ''] = String(weekId || '').split(':')
+  return startDate || weekId
+}
+
+function formatCalendarDate(value) {
+  const parsed = new Date(`${value}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) {
+    return value || ''
+  }
+  return parsed.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100
+}
+
+function buildOvernightAccountingInvoice(weeksSelected, regularWeekPrice, discountedWeekPrice, discountActive) {
+  const normalizedWeeks = Math.max(0, Number(weeksSelected || 0))
+  const regularRate = Number(regularWeekPrice || 0)
+  const activeDiscountedRate = discountActive
+    ? Math.min(regularRate || discountedWeekPrice, Number(discountedWeekPrice || 0))
+    : regularRate
+  const secondWeekDiscount = discountActive && normalizedWeeks >= 2 ? 100 : 0
+  const regularSubtotal = normalizedWeeks * regularRate
+  const discountedSubtotal = normalizedWeeks * activeDiscountedRate
+  const total = Math.max(0, discountedSubtotal - secondWeekDiscount)
+
+  return {
+    regularRate,
+    discountedRate: activeDiscountedRate,
+    secondWeekDiscount,
+    secondWeekRate: Math.max(0, activeDiscountedRate - 100),
+    regularSubtotal,
+    total,
+  }
+}
+
+function formatWeekCountSummary(counts = {}, programKey = 'general') {
+  const parts = []
+  if (Number(counts.fullWeek || 0) > 0) {
+    parts.push(`${counts.fullWeek} full week${counts.fullWeek === 1 ? '' : 's'}`)
+  }
+  if (Number(counts.fullDay || 0) > 0) {
+    parts.push(
+      `${counts.fullDay} ${programKey === 'overnight' ? 'camp day' : 'full day'}${counts.fullDay === 1 ? '' : 's'}`
+    )
+  }
+  if (Number(counts.amHalf || 0) > 0) {
+    parts.push(`${counts.amHalf} AM day${counts.amHalf === 1 ? '' : 's'}`)
+  }
+  if (Number(counts.pmHalf || 0) > 0) {
+    parts.push(`${counts.pmHalf} PM day${counts.pmHalf === 1 ? '' : 's'}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : 'No selected days'
+}
+
+function buildAccountingCalendarLines({ camperName, student, weekById, weekNumberById }) {
+  const schedule = getStudentScheduleForAccounting(student)
+  const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
+  const rows = [`Calendar for ${camperName}`]
+
+  const sortedWeeks = Object.entries(schedule).sort((a, b) => {
+    const weekA = weekById[a[0]]
+    const weekB = weekById[b[0]]
+    return String(weekA?.start || a[0]).localeCompare(String(weekB?.start || b[0]))
+  })
+
+  for (const [weekId, entry] of sortedWeeks) {
+    const week = weekById[weekId]
+    const programKey =
+      entry?.programKey === 'daycamp'
+        ? entry?.campType || 'general'
+        : entry?.programKey || entry?.campType || (String(weekId).startsWith('overnight:') ? 'overnight' : 'general')
+    const weekLabel = weekNumberById[weekId]?.label || toWeekLabel(weekId, weekById)
+    rows.push(`${weekLabel} (${toWeekLabel(weekId, weekById)})`)
+
+    const dayDefs =
+      Array.isArray(week?.days) && week.days.length > 0
+        ? week.days
+        : getWeekDayKeysForProgram(programKey).map((dayKey) => ({ key: dayKey, label: dayKey, date: '' }))
+
+    for (const day of dayDefs) {
+      const mode = entry?.days?.[day.key] || 'NONE'
+      if (mode === 'NONE') {
+        continue
+      }
+      if (programKey === 'overnight') {
+        rows.push(`- ${day.label || day.key}: ${formatCalendarDate(day.date)} · Overnight camp day`)
+        continue
+      }
+      const lunchKey = `${weekId}:${day.key}`
+      const lunchLabel =
+        day.key === 'thursday' || day.key === 'Thu'
+          ? 'BBQ lunch included'
+          : lunch[lunchKey]
+            ? 'Lunch selected'
+            : 'Pack lunch needed'
+      rows.push(
+        `- ${day.label || day.key}: ${formatCalendarDate(day.date)} · ${mode} · ${lunchLabel}`
+      )
+    }
+  }
+
+  if (rows.length === 1) {
+    rows.push('No calendar selections saved.')
+  }
+
+  return rows
+}
+
+function getStudentScheduleForAccounting(student) {
+  const directSchedule = typeof student?.schedule === 'object' && student?.schedule ? student.schedule : {}
+  if (Object.keys(directSchedule).length > 0) {
+    return directSchedule
+  }
+
+  const overnightWeekIds = Array.isArray(student?.overnightWeekIds) ? student.overnightWeekIds : []
+  if (overnightWeekIds.length === 0) {
+    return {}
+  }
+
+  return Object.fromEntries(
+    overnightWeekIds.map((weekId) => [
+      weekId,
+      {
+        programKey: 'overnight',
+        campType: 'overnight',
+        days: {
+          sunday: 'FULL',
+          monday: 'FULL',
+          tuesday: 'FULL',
+          wednesday: 'FULL',
+          thursday: 'FULL',
+          friday: 'FULL',
+          saturday: 'FULL',
+        },
+      },
+    ])
+  )
+}
+
+function formatAdminDateTime(value) {
+  if (!value) {
+    return '-'
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString()
+}
+
+function buildCamperPricing({
+  student,
+  studentIndex,
+  tuition,
+  discountActive,
+  lunchPrice,
+  weekById,
+}) {
+  const regular = tuition.regular || {}
+  const discount = tuition.discount || {}
+  const premiumFactor = 1 + Number(tuition.bootcampPremiumPct || 0) / 100
+  const schedule = getStudentScheduleForAccounting(student)
+  const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
+
+  const totals = {
+    general: 0,
+    bootcamp: 0,
+    overnight: 0,
+    regularGeneral: 0,
+    regularBootcamp: 0,
+    regularOvernight: 0,
+    lunchCost: 0,
+    lunchDays: [],
+    paidLunchCount: 0,
+    weekIds: [],
+    scheduleByWeek: [],
+    weekDetails: [],
+    countsByProgram: {
+      general: { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 },
+      bootcamp: { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 },
+      overnight: { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 },
+    },
+  }
+
+  for (const [weekId, entry] of Object.entries(schedule)) {
+    const programKey =
+      entry?.programKey === 'daycamp'
+        ? entry?.campType || 'general'
+        : entry?.programKey || entry?.campType || (String(weekId).startsWith('overnight:') ? 'overnight' : 'general')
+    const dayKeys = Object.keys(entry?.days || {})
+    const resolvedDayKeys = dayKeys.length > 0 ? dayKeys : getWeekDayKeysForProgram(programKey)
+    const modes = resolvedDayKeys.map((dayKey) => entry?.days?.[dayKey] || 'NONE')
+    const fullWeekSelected = modes.every((mode) => mode === 'FULL')
+    const counts = { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 }
+
+    if (programKey === 'overnight') {
+      if (fullWeekSelected) {
+        counts.fullWeek = 1
+      } else {
+        counts.fullDay = modes.filter((mode) => mode !== 'NONE').length
+      }
+    } else if (fullWeekSelected) {
+      counts.fullWeek = 1
+    } else {
+      for (const mode of modes) {
+        if (mode === 'FULL') counts.fullDay += 1
+        if (mode === 'AM') counts.amHalf += 1
+        if (mode === 'PM') counts.pmHalf += 1
+      }
+    }
+
+    const programRegularRates =
+      programKey === 'bootcamp'
+        ? {
+            fullWeek: roundUpToFive(Number(regular.fullWeek || 0) * premiumFactor),
+            fullDay: roundUpToFive(Number(regular.fullDay || 0) * premiumFactor),
+            amHalf: roundUpToFive(Number(regular.amHalf || 0) * premiumFactor),
+            pmHalf: roundUpToFive(Number(regular.pmHalf || 0) * premiumFactor),
+          }
+        : programKey === 'overnight'
+          ? { fullWeek: Number(regular.overnightWeek || 0), fullDay: Number(regular.overnightDay || 0), amHalf: 0, pmHalf: 0 }
+          : {
+              fullWeek: Number(regular.fullWeek || 0),
+              fullDay: Number(regular.fullDay || 0),
+              amHalf: Number(regular.amHalf || 0),
+              pmHalf: Number(regular.pmHalf || 0),
+            }
+    const programDiscountRates =
+      programKey === 'bootcamp'
+        ? {
+            fullWeek: roundUpToFive(Number(discount.fullWeek || 0) * premiumFactor),
+            fullDay: roundUpToFive(Number(discount.fullDay || 0) * premiumFactor),
+            amHalf: roundUpToFive(Number(discount.amHalf || 0) * premiumFactor),
+            pmHalf: roundUpToFive(Number(discount.pmHalf || 0) * premiumFactor),
+          }
+        : programKey === 'overnight'
+          ? { fullWeek: Number(discount.overnightWeek || 0), fullDay: Number(discount.overnightDay || 0), amHalf: 0, pmHalf: 0 }
+          : {
+              fullWeek: Number(discount.fullWeek || 0),
+              fullDay: Number(discount.fullDay || 0),
+              amHalf: Number(discount.amHalf || 0),
+              pmHalf: Number(discount.pmHalf || 0),
+            }
+
+    const regularTotal =
+      counts.fullWeek * programRegularRates.fullWeek +
+      counts.fullDay * programRegularRates.fullDay +
+      counts.amHalf * programRegularRates.amHalf +
+      counts.pmHalf * programRegularRates.pmHalf
+    const discountedTotal =
+      counts.fullWeek * programDiscountRates.fullWeek +
+      counts.fullDay * programDiscountRates.fullDay +
+      counts.amHalf * programDiscountRates.amHalf +
+      counts.pmHalf * programDiscountRates.pmHalf
+    const effectiveTotal =
+      programKey === 'overnight'
+        ? buildOvernightAccountingInvoice(
+            counts.fullWeek,
+            programRegularRates.fullWeek,
+            programDiscountRates.fullWeek || programRegularRates.fullWeek,
+            discountActive
+          ).total
+        : discountActive
+          ? Math.max(0, Math.min(regularTotal, discountedTotal || regularTotal))
+          : regularTotal
+
+    if (programKey === 'bootcamp') {
+      totals.bootcamp += effectiveTotal
+      totals.regularBootcamp += regularTotal
+    } else if (programKey === 'overnight') {
+      totals.overnight += effectiveTotal
+      totals.regularOvernight += regularTotal
+    } else {
+      totals.general += effectiveTotal
+      totals.regularGeneral += regularTotal
+    }
+    totals.countsByProgram[programKey].fullWeek += counts.fullWeek
+    totals.countsByProgram[programKey].fullDay += counts.fullDay
+    totals.countsByProgram[programKey].amHalf += counts.amHalf
+    totals.countsByProgram[programKey].pmHalf += counts.pmHalf
+
+    totals.weekIds.push(weekId)
+    totals.scheduleByWeek.push({ weekId, programKey, entry })
+    totals.weekDetails.push({
+      weekId,
+      programKey,
+      label: weekById[weekId] ? formatWeekLabel(weekById[weekId]) : toWeekLabel(weekId, weekById),
+      counts,
+      isFullWeek: counts.fullWeek > 0,
+      detailLines: [
+        `${(programKey === 'bootcamp'
+          ? 'Boot Camp'
+          : programKey === 'overnight'
+            ? 'Overnight Camp'
+            : 'General Camp')} · ${formatWeekCountSummary(counts, programKey)}`,
+      ],
+    })
+
+    if (programKey === 'overnight' && counts.fullWeek > 0) {
+      const overnightInvoice = buildOvernightAccountingInvoice(
+        counts.fullWeek,
+        programRegularRates.fullWeek,
+        programDiscountRates.fullWeek || programRegularRates.fullWeek,
+        discountActive
+      )
+      const overnightLines = [
+        `Regular: ${money(overnightInvoice.regularRate)}/week`,
+      ]
+      if (discountActive) {
+        overnightLines.push(`Discounted: ${money(overnightInvoice.discountedRate)}/week`)
+        if (overnightInvoice.secondWeekDiscount > 0) {
+          overnightLines.push(
+            `Week 2 extra discount: -${money(overnightInvoice.secondWeekDiscount)} (week 2 = ${money(overnightInvoice.secondWeekRate)})`
+          )
+        }
+      }
+      overnightLines.push(`Overnight subtotal: ${money(overnightInvoice.total)}`)
+      totals.weekDetails[totals.weekDetails.length - 1].detailLines.push(...overnightLines)
+    }
+
+    if (programKey !== 'overnight') {
+      for (const dayKey of resolvedDayKeys) {
+        const mode = entry?.days?.[dayKey] || 'NONE'
+        if (mode === 'NONE') {
+          continue
+        }
+        const lunchKey = `${weekId}:${dayKey}`
+        if (normalizeDayKey(dayKey) === 'thu') {
+          totals.lunchDays.push(`${toWeekLabel(weekId, weekById)} · Thu BBQ included`)
+          continue
+        }
+        if (lunch[lunchKey]) {
+          totals.paidLunchCount += 1
+          totals.lunchDays.push(`${toWeekLabel(weekId, weekById)} · ${dayKey.slice(0, 3).toUpperCase()} lunch`)
+        }
+      }
+    }
+  }
+
+  totals.lunchCost = totals.paidLunchCount * Number(lunchPrice || 0)
+  const regularTuitionSubtotal = totals.regularGeneral + totals.regularBootcamp + totals.regularOvernight
+  const tuitionSubtotal = totals.general + totals.bootcamp + totals.overnight
+  const hasNonOvernightTuition = Number(totals.general || 0) > 0 || Number(totals.bootcamp || 0) > 0
+  const siblingDiscountPct =
+    studentIndex >= 1 && hasNonOvernightTuition ? Number(tuition.siblingDiscountPct || 0) : 0
+  const siblingAfterLimitedDiscount =
+    siblingDiscountPct > 0 ? (Number(totals.general || 0) + Number(totals.bootcamp || 0)) * (siblingDiscountPct / 100) : 0
+  const tuitionAfterSibling = Math.max(0, tuitionSubtotal - siblingAfterLimitedDiscount)
+  const totalWithSibling = tuitionAfterSibling + totals.lunchCost
+
+  totals.regularTotal = roundMoney(regularTuitionSubtotal + totals.lunchCost)
+  totals.tuitionSubtotal = roundMoney(tuitionSubtotal)
+  totals.subtotal = roundMoney(tuitionSubtotal + totals.lunchCost)
+  totals.siblingDiscount = roundMoney(tuitionSubtotal - tuitionAfterSibling)
+  totals.total = roundMoney(totalWithSibling)
+  totals.siblingDiscountPct = siblingDiscountPct
+  totals.general = roundMoney(totals.general)
+  totals.bootcamp = roundMoney(totals.bootcamp)
+  totals.overnight = roundMoney(totals.overnight)
+  totals.regularGeneral = roundMoney(totals.regularGeneral)
+  totals.regularBootcamp = roundMoney(totals.regularBootcamp)
+  totals.regularOvernight = roundMoney(totals.regularOvernight)
+  totals.lunchCost = roundMoney(totals.lunchCost)
+  return totals
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [config, setConfig] = useState(getInitialState)
+  const [activeAdminTab, setActiveAdminTab] = useState('media')
+  const [activeMediaSubtab, setActiveMediaSubtab] = useState('overview')
   const [activeJourneyTab, setActiveJourneyTab] = useState(0)
+  const [activeJourneyFlow, setActiveJourneyFlow] = useState('lead')
+  const [activeReservationJourneyTab, setActiveReservationJourneyTab] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [loadingLibrary, setLoadingLibrary] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [savedMessage, setSavedMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [journeyProcessSummary, setJourneyProcessSummary] = useState(null)
   const [adminEmail, setAdminEmail] = useState('')
   const [mediaLibrary, setMediaLibrary] = useState([])
   const [activePreviewIndex, setActivePreviewIndex] = useState(0)
   const [activeLibraryPreviewIndex, setActiveLibraryPreviewIndex] = useState(0)
+  const [openLevelUpScreenshotLibraryPicker, setOpenLevelUpScreenshotLibraryPicker] = useState(null)
   const [openStepLibraryPicker, setOpenStepLibraryPicker] = useState(null)
+  const [openLandingCarouselLibraryPicker, setOpenLandingCarouselLibraryPicker] = useState(null)
   const [openRegistrationStepLibraryPicker, setOpenRegistrationStepLibraryPicker] = useState(null)
+  const [openFacilityLibraryPicker, setOpenFacilityLibraryPicker] = useState(null)
+  const [openOvernightLandingLibraryPicker, setOpenOvernightLandingLibraryPicker] = useState(null)
+  const [openOvernightRegistrationLibraryPicker, setOpenOvernightRegistrationLibraryPicker] = useState(null)
+  const [openCampTypeShowcaseLibraryPicker, setOpenCampTypeShowcaseLibraryPicker] = useState(null)
+  const [selectedOvernightGalleryLibraryUrls, setSelectedOvernightGalleryLibraryUrls] = useState([])
   const [loadingEmailTracking, setLoadingEmailTracking] = useState(false)
   const [emailJourneyRuns, setEmailJourneyRuns] = useState([])
   const [emailReplies, setEmailReplies] = useState([])
   const [emailEvents, setEmailEvents] = useState([])
+  const [registrationRecords, setRegistrationRecords] = useState([])
+  const [accountingDrafts, setAccountingDrafts] = useState({})
+  const [leadProfiles, setLeadProfiles] = useState([])
+  const [loadingAccounting, setLoadingAccounting] = useState(false)
+  const [loadingLeads, setLoadingLeads] = useState(false)
+  const [updatingAccountingKey, setUpdatingAccountingKey] = useState('')
+  const [sendingInvoiceKey, setSendingInvoiceKey] = useState('')
   const [testEmail, setTestEmail] = useState('')
   const [sendingTestStep, setSendingTestStep] = useState(0)
   const [aiReplyInput, setAiReplyInput] = useState({
@@ -321,6 +1216,17 @@ export default function AdminPage() {
   const [aiReplyLoading, setAiReplyLoading] = useState(false)
   const [selectedReplyId, setSelectedReplyId] = useState(0)
   const [replyFilterEmail, setReplyFilterEmail] = useState('')
+  const [updatingRunId, setUpdatingRunId] = useState(0)
+  const [processingJourneyEmails, setProcessingJourneyEmails] = useState(false)
+  const [sendingJourneyCellKey, setSendingJourneyCellKey] = useState('')
+  const [accountingOverlay, setAccountingOverlay] = useState({
+    key: '',
+    label: '',
+    items: [],
+    top: 0,
+    left: 0,
+    pointerLeft: 24,
+  })
 
   const refreshMediaLibrary = useCallback(async () => {
     setLoadingLibrary(true)
@@ -344,9 +1250,9 @@ export default function AdminPage() {
     const [runsResponse, repliesResponse, eventsResponse] = await Promise.all([
       supabase
         .from('email_journey_runs')
-        .select('id, email, status, current_step, last_sent_at, next_send_at, created_at')
+        .select('id, email, status, current_step, last_sent_at, next_send_at, created_at, updated_at')
         .order('created_at', { ascending: false })
-        .limit(30),
+        .limit(200),
       supabase
         .from('email_replies')
         .select('id, email, from_email, subject, body_text, is_unread, received_at, ai_status, ai_error, ai_draft')
@@ -354,9 +1260,9 @@ export default function AdminPage() {
         .limit(30),
       supabase
         .from('email_journey_events')
-        .select('id, email, step_number, event_type, event_at')
+        .select('id, run_id, email, step_number, event_type, event_at')
         .order('event_at', { ascending: false })
-        .limit(30),
+        .limit(400),
     ])
 
     const firstError = runsResponse.error || repliesResponse.error || eventsResponse.error
@@ -370,6 +1276,84 @@ export default function AdminPage() {
     setEmailReplies(repliesResponse.data || [])
     setEmailEvents(eventsResponse.data || [])
     setLoadingEmailTracking(false)
+  }, [])
+
+  const refreshRegistrationAccounting = useCallback(async () => {
+    if (!supabaseEnabled || !supabase) {
+      return
+    }
+    setLoadingAccounting(true)
+    let response = await supabase
+      .from('registrations')
+      .select('id, guardian_name, guardian_email, created_at, medical_notes, accounting_entries')
+      .order('created_at', { ascending: false })
+      .limit(500)
+
+    if (response.error && String(response.error.message || '').toLowerCase().includes('accounting_entries')) {
+      response = await supabase
+        .from('registrations')
+        .select('id, guardian_name, guardian_email, created_at, medical_notes')
+        .order('created_at', { ascending: false })
+        .limit(500)
+    }
+
+    if (response.error) {
+      const rawMessage = String(response.error.message || '')
+      const tableMissing = rawMessage.includes("Could not find the table 'public.registrations'")
+      setErrorMessage(
+        tableMissing
+          ? 'Registration accounting load failed: the Supabase table public.registrations does not exist in this project yet. Run the SQL setup for registrations first.'
+          : `Registration accounting load failed: ${response.error.message}`
+      )
+      setLoadingAccounting(false)
+      return
+    }
+
+    setRegistrationRecords(
+      (response.data || []).map((item) => ({
+        ...item,
+        accounting_entries: Array.isArray(item.accounting_entries) ? item.accounting_entries : [],
+      }))
+    )
+    setLoadingAccounting(false)
+  }, [])
+
+  const refreshLeadProfiles = useCallback(async () => {
+    if (!supabaseEnabled || !supabase) {
+      return
+    }
+    setLoadingLeads(true)
+    const [leadResponse, registrationResponse] = await Promise.all([
+      supabase
+        .from('program_interest_profiles')
+        .select('id, email, camper_count, camper_ages, source, created_at, last_completed_step')
+        .order('created_at', { ascending: false })
+        .limit(500),
+      supabase.from('registrations').select('guardian_email'),
+    ])
+
+    if (leadResponse.error) {
+      setErrorMessage(`Lead load failed: ${leadResponse.error.message}`)
+      setLoadingLeads(false)
+      return
+    }
+
+    if (registrationResponse.error) {
+      setErrorMessage(`Lead load failed: ${registrationResponse.error.message}`)
+      setLoadingLeads(false)
+      return
+    }
+
+    const registeredEmails = new Set(
+      (registrationResponse.data || [])
+        .map((row) => String(row?.guardian_email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+
+    setLeadProfiles(
+      (leadResponse.data || []).filter((lead) => !registeredEmails.has(String(lead?.email || '').trim().toLowerCase()))
+    )
+    setLoadingLeads(false)
   }, [])
 
   useEffect(() => {
@@ -412,6 +1396,8 @@ export default function AdminPage() {
       setLoading(false)
       refreshMediaLibrary()
       refreshEmailTracking()
+      refreshRegistrationAccounting()
+      refreshLeadProfiles()
     }
 
     bootstrap()
@@ -419,7 +1405,7 @@ export default function AdminPage() {
     return () => {
       active = false
     }
-  }, [refreshEmailTracking, refreshMediaLibrary, router])
+  }, [refreshEmailTracking, refreshLeadProfiles, refreshMediaLibrary, refreshRegistrationAccounting, router])
 
   const weekOptions = useMemo(
     () => ({
@@ -447,6 +1433,96 @@ export default function AdminPage() {
     config.media.levelUpScreenshotUrls[activePreviewIndex] || config.media.levelUpScreenshotUrls[0] || ''
   const activeLibraryPreviewUrl =
     mediaLibrary[activeLibraryPreviewIndex]?.publicUrl || mediaLibrary[0]?.publicUrl || ''
+  const accountingDiscountActive = useMemo(
+    () => isLimitedDiscountActiveForDate(config.tuition.discountEndDate, new Date().toISOString()),
+    [config.tuition.discountEndDate]
+  )
+  const accountingPricingReference = useMemo(() => {
+    const regular = config.tuition.regular || {}
+    const discount = config.tuition.discount || {}
+    const activeLabel = accountingDiscountActive ? 'Current full-week price' : 'Regular full-week price'
+    const discountDate = parseDiscountDate(config.tuition.discountEndDate)
+    const discountDateLabel = discountDate ? discountDate.toLocaleDateString() : ''
+
+    return [
+      {
+        key: 'general',
+        title: 'General Camp',
+        activeLabel,
+        activeFullWeek: accountingDiscountActive ? Number(discount.fullWeek || 0) : Number(regular.fullWeek || 0),
+        regularFullWeek: Number(regular.fullWeek || 0),
+        showRegularNote:
+          accountingDiscountActive && Number(discount.fullWeek || 0) > 0 && Number(discount.fullWeek || 0) !== Number(regular.fullWeek || 0),
+        note:
+          accountingDiscountActive && discountDateLabel
+            ? `Discount active through ${discountDateLabel}`
+            : 'Standard pricing reference',
+        rows: [
+          { label: 'Full Day', value: Number(regular.fullDay || 0), discountedValue: Number(discount.fullDay || 0) },
+          { label: 'AM Half Day', value: Number(regular.amHalf || 0), discountedValue: Number(discount.amHalf || 0) },
+          { label: 'PM Half Day', value: Number(regular.pmHalf || 0), discountedValue: Number(discount.pmHalf || 0) },
+        ],
+      },
+      {
+        key: 'bootcamp',
+        title: 'Boot Camp',
+        activeLabel,
+        activeFullWeek: accountingDiscountActive
+          ? Number(bootcampTuition.discount.fullWeek || 0)
+          : Number(bootcampTuition.regular.fullWeek || 0),
+        regularFullWeek: Number(bootcampTuition.regular.fullWeek || 0),
+        showRegularNote:
+          accountingDiscountActive &&
+          Number(bootcampTuition.discount.fullWeek || 0) > 0 &&
+          Number(bootcampTuition.discount.fullWeek || 0) !== Number(bootcampTuition.regular.fullWeek || 0),
+        note: `Includes +${Number(config.tuition.bootcampPremiumPct || 0)}% premium`,
+        rows: [
+          {
+            label: 'Full Day',
+            value: Number(bootcampTuition.regular.fullDay || 0),
+            discountedValue: Number(bootcampTuition.discount.fullDay || 0),
+          },
+          {
+            label: 'AM Half Day',
+            value: Number(bootcampTuition.regular.amHalf || 0),
+            discountedValue: Number(bootcampTuition.discount.amHalf || 0),
+          },
+          {
+            label: 'PM Half Day',
+            value: Number(bootcampTuition.regular.pmHalf || 0),
+            discountedValue: Number(bootcampTuition.discount.pmHalf || 0),
+          },
+        ],
+      },
+      {
+        key: 'overnight',
+        title: 'Overnight Camp',
+        activeLabel,
+        activeFullWeek: accountingDiscountActive ? Number(discount.overnightWeek || 0) : Number(regular.overnightWeek || 0),
+        regularFullWeek: Number(regular.overnightWeek || 0),
+        showRegularNote:
+          accountingDiscountActive &&
+          Number(discount.overnightWeek || 0) > 0 &&
+          Number(discount.overnightWeek || 0) !== Number(regular.overnightWeek || 0),
+        note: accountingDiscountActive
+          ? 'Week 1 uses the discounted overnight full-week price. Week 2 gets an extra $100 off.'
+          : 'Accounting uses overnight full-week pricing only.',
+        rows: accountingDiscountActive
+          ? [
+              {
+                label: 'Second Week Special',
+                value: Number(discount.overnightWeek || 0),
+                discountedValue: Math.max(0, Number(discount.overnightWeek || 0) - 100),
+              },
+            ]
+          : [],
+      },
+    ]
+  }, [accountingDiscountActive, bootcampTuition.discount.amHalf, bootcampTuition.discount.fullDay, bootcampTuition.discount.fullWeek, bootcampTuition.discount.pmHalf, bootcampTuition.regular.amHalf, bootcampTuition.regular.fullDay, bootcampTuition.regular.fullWeek, bootcampTuition.regular.pmHalf, config.tuition.bootcampPremiumPct, config.tuition.discount, config.tuition.discountEndDate, config.tuition.regular])
+  const imageLibrary = useMemo(
+    () => mediaLibrary.filter((item) => !isVideoUrl(item.publicUrl)),
+    [mediaLibrary]
+  )
   const filteredEmailReplies = useMemo(
     () =>
       replyFilterEmail
@@ -454,6 +1530,842 @@ export default function AdminPage() {
         : emailReplies,
     [emailReplies, replyFilterEmail]
   )
+  const leadJourneyTrackerRows = useMemo(() => {
+    const registeredEmails = new Set(
+      registrationRecords
+        .map((item) => normalizeAdminEmail(item?.guardian_email))
+        .filter(Boolean)
+    )
+    const trackerMap = new Map()
+    const leadRunMap = new Map()
+    const leadRunIds = new Set(
+      emailEvents
+        .filter((event) => {
+          const eventType = String(event?.event_type || '')
+          return (
+            eventType.startsWith('lead_journey_') ||
+            eventType === 'test_sent_lead' ||
+            eventType === 'test_preview_only_lead'
+          )
+        })
+        .map((event) => Number(event?.run_id || 0))
+        .filter((runId) => runId > 0)
+    )
+
+    for (const run of emailJourneyRuns) {
+      const email = normalizeAdminEmail(run?.email)
+      if (!email) continue
+      const runId = Number(run?.id || 0)
+      const statusValue = String(run?.status || '')
+      const isLeadRun = statusValue.startsWith('lead_') || leadRunIds.has(runId)
+      if (!isLeadRun) {
+        continue
+      }
+      const current = leadRunMap.get(email)
+      if (!current || new Date(run.created_at || 0).getTime() > new Date(current.created_at || 0).getTime()) {
+        leadRunMap.set(email, run)
+      }
+    }
+
+    const ensureRow = (email) => {
+      const normalized = normalizeAdminEmail(email)
+      if (!normalized) return null
+      if (!trackerMap.has(normalized)) {
+        trackerMap.set(normalized, {
+          email: normalized,
+          runId: null,
+          source: '',
+          createdAt: '',
+          status: '',
+          isRegistered: registeredEmails.has(normalized),
+          criteria: [],
+          steps: Object.fromEntries(leadTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
+        })
+      }
+      return trackerMap.get(normalized)
+    }
+
+    for (const lead of leadProfiles) {
+      const row = ensureRow(lead?.email)
+      if (!row) continue
+      row.source = lead?.source || row.source
+      row.createdAt = lead?.created_at || row.createdAt
+    }
+
+    for (const event of emailEvents) {
+      const email = normalizeAdminEmail(event?.email)
+      const row = ensureRow(email)
+      if (!row) continue
+      const eventType = String(event?.event_type || '')
+      const stepNumber = Number(event?.step_number || 0)
+      if (
+        !eventType.startsWith('lead_journey_') &&
+        eventType !== 'test_sent_lead' &&
+        eventType !== 'test_preview_only_lead'
+      ) {
+        continue
+      }
+      if (stepNumber < 1 || stepNumber > 5) {
+        continue
+      }
+      const key = `step_${stepNumber}`
+      if (eventType === 'lead_journey_sent' || eventType === 'test_sent_lead') {
+        row.steps[key] = buildTrackerCell('sent', event?.event_at)
+      } else if ((eventType === 'lead_journey_preview' || eventType === 'test_preview_only_lead') && row.steps[key].status !== 'sent') {
+        row.steps[key] = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'lead_journey_error' && row.steps[key].status === 'pending') {
+        row.steps[key] = buildTrackerCell('error', event?.event_at)
+      }
+    }
+
+    for (const [email, run] of leadRunMap.entries()) {
+      const row = ensureRow(email)
+      if (!row) continue
+      row.runId = Number(run?.id || 0) || row.runId
+      row.status = run?.status || row.status
+      const currentStep = Number(run?.current_step || 0)
+      if (currentStep === 0 && row.steps.step_1.status === 'pending') {
+        row.steps.step_1 = buildTrackerCell(run?.status === 'error' ? 'error' : 'queued', run?.next_send_at || '')
+      } else if (currentStep > 0 && currentStep <= 5 && row.steps[`step_${currentStep}`].status === 'pending') {
+        row.steps[`step_${currentStep}`] = buildTrackerCell('scheduled', run?.next_send_at || run?.last_sent_at || '')
+      }
+    }
+
+    return Array.from(trackerMap.values())
+      .map((row) => ({ ...row, criteria: buildLeadCriteria(row, row.isRegistered) }))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+  }, [emailEvents, emailJourneyRuns, leadProfiles, registrationRecords])
+  const reservationJourneyTrackerRows = useMemo(() => {
+    const rows = []
+    const rowByKey = new Map()
+    const rowByRunId = new Map()
+    const unmatchedRunsByEmail = new Map()
+    const nonLeadRuns = emailJourneyRuns
+      .filter((run) => !String(run?.status || '').startsWith('lead_'))
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+
+    const getDistance = (left, right) => Math.abs(new Date(left || 0).getTime() - new Date(right || 0).getTime())
+
+    for (const run of nonLeadRuns) {
+      const email = normalizeAdminEmail(run?.email)
+      if (!email) continue
+      if (!unmatchedRunsByEmail.has(email)) {
+        unmatchedRunsByEmail.set(email, [])
+      }
+      unmatchedRunsByEmail.get(email).push(run)
+    }
+
+    for (const registration of registrationRecords) {
+      const email = normalizeAdminEmail(registration?.guardian_email)
+      if (!email) continue
+      const key = `registration-${registration.id}`
+      const row = {
+        key,
+        registrationId: Number(registration.id),
+        runId: null,
+        email,
+        guardianName: registration?.guardian_name || '',
+        createdAt: registration?.created_at || '',
+        status: '',
+        criteria: [],
+        steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
+      }
+      const candidates = unmatchedRunsByEmail.get(email) || []
+      if (candidates.length > 0) {
+        let bestIndex = 0
+        let bestDistance = getDistance(candidates[0]?.created_at, registration?.created_at)
+        for (let index = 1; index < candidates.length; index += 1) {
+          const distance = getDistance(candidates[index]?.created_at, registration?.created_at)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            bestIndex = index
+          }
+        }
+        const [matchedRun] = candidates.splice(bestIndex, 1)
+        if (matchedRun) {
+          row.runId = Number(matchedRun.id)
+          row.status = matchedRun?.status || ''
+        }
+      }
+      rows.push(row)
+      rowByKey.set(key, row)
+      if (row.runId) {
+        rowByRunId.set(row.runId, row)
+      }
+    }
+
+    for (const run of nonLeadRuns) {
+      const runId = Number(run?.id || 0)
+      if (!runId || rowByRunId.has(runId)) continue
+      const email = normalizeAdminEmail(run?.email)
+      const key = `run-${runId}`
+      const row = {
+        key,
+        registrationId: null,
+        runId,
+        email,
+        guardianName: '',
+        createdAt: run?.created_at || '',
+        status: run?.status || '',
+        criteria: [],
+        steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
+      }
+      const matchingRegistration = registrationRecords
+        .filter((item) => normalizeAdminEmail(item?.guardian_email) === email)
+        .sort((a, b) => getDistance(run?.created_at, a?.created_at) - getDistance(run?.created_at, b?.created_at))[0]
+      if (matchingRegistration) {
+        row.guardianName = matchingRegistration?.guardian_name || ''
+        row.registrationId = Number(matchingRegistration.id)
+      }
+      rows.push(row)
+      rowByKey.set(key, row)
+      rowByRunId.set(runId, row)
+    }
+
+    const resolveRowForEvent = (event) => {
+      const runId = Number(event?.run_id || 0)
+      if (runId && rowByRunId.has(runId)) {
+        return rowByRunId.get(runId)
+      }
+      const normalizedEmail = normalizeAdminEmail(event?.email)
+      const candidates = rows.filter((row) => row.email === normalizedEmail)
+      if (candidates.length === 1) {
+        return candidates[0]
+      }
+      return candidates.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0] || null
+    }
+
+    for (const event of emailEvents) {
+      const row = resolveRowForEvent(event)
+      if (!row) continue
+      const eventType = String(event?.event_type || '')
+      const stepNumber = Number(event?.step_number || 0)
+      if ((eventType === 'reservation_email_sent' || eventType === 'test_sent_reservation') && stepNumber >= 1 && stepNumber <= 5) {
+        row.steps[`step_${stepNumber}`] = buildTrackerCell('sent', event?.event_at)
+      } else if ((eventType === 'reservation_email_preview' || eventType === 'test_preview_only_reservation') && stepNumber >= 1 && stepNumber <= 5) {
+        if (row.steps[`step_${stepNumber}`].status !== 'sent') {
+          row.steps[`step_${stepNumber}`] = buildTrackerCell('preview', event?.event_at)
+        }
+      } else if (eventType === 'paid_prep_7d_sent') {
+        row.steps.paid_7d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_5d_sent') {
+        row.steps.paid_5d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_3d_sent') {
+        row.steps.paid_3d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_1d_sent') {
+        row.steps.paid_1d = buildTrackerCell('sent', event?.event_at)
+      }
+    }
+
+    for (const run of nonLeadRuns) {
+      const row = rowByRunId.get(Number(run?.id || 0))
+      if (!row) continue
+      row.status = run?.status || row.status
+      const currentStep = Number(run?.current_step || 0)
+      const statusValue = String(run?.status || '')
+      if (statusValue === 'paid') {
+        if (row.steps.paid_7d.status === 'pending') {
+          row.steps.paid_7d = buildTrackerCell('paid', run?.updated_at || run?.last_sent_at || '')
+        }
+      } else if (statusValue === 'test_sent_reservation' && currentStep >= 1 && currentStep <= 5 && row.steps[`step_${currentStep}`].status === 'pending') {
+        row.steps[`step_${currentStep}`] = buildTrackerCell('sent', run?.last_sent_at || run?.updated_at || run?.created_at || '')
+      } else if (statusValue === 'test_preview_only_reservation' && currentStep >= 1 && currentStep <= 5 && row.steps[`step_${currentStep}`].status === 'pending') {
+        row.steps[`step_${currentStep}`] = buildTrackerCell('preview', run?.last_sent_at || run?.updated_at || run?.created_at || '')
+      } else if (currentStep >= 1 && currentStep <= 5 && row.steps[`step_${currentStep}`].status === 'pending') {
+        row.steps[`step_${currentStep}`] = buildTrackerCell(
+          ['active', 'queued'].includes(statusValue) ? 'scheduled' : statusValue === 'error' ? 'error' : 'closed',
+          run?.next_send_at || run?.last_sent_at || ''
+        )
+      }
+    }
+
+    return rows
+      .map((row) => ({ ...row, criteria: buildReservationCriteria(row) }))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+  }, [emailEvents, emailJourneyRuns, registrationRecords])
+  const reservationRunIdByRegistrationId = useMemo(() => {
+    const map = {}
+    for (const row of reservationJourneyTrackerRows) {
+      const registrationId = Number(row?.registrationId || 0)
+      const runId = Number(row?.runId || 0)
+      if (registrationId > 0 && runId > 0 && !map[registrationId]) {
+        map[registrationId] = runId
+      }
+    }
+    return map
+  }, [reservationJourneyTrackerRows])
+  const weekById = useMemo(() => {
+    const map = {}
+    for (const week of [...weekOptions.general, ...weekOptions.bootcamp, ...weekOptions.overnight]) {
+      map[week.id] = week
+    }
+    return map
+  }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
+  const weekNumberById = useMemo(() => {
+    const map = {}
+    weekOptions.general.forEach((week, index) => {
+      map[week.id] = { number: index + 1, label: `General Camp Week ${index + 1}` }
+    })
+    weekOptions.bootcamp.forEach((week, index) => {
+      map[week.id] = { number: index + 1, label: `Boot Camp Week ${index + 1}` }
+    })
+    weekOptions.overnight.forEach((week, index) => {
+      map[week.id] = { number: index + 1, label: `Overnight Week ${index + 1}` }
+    })
+    return map
+  }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
+  const accountingRows = useMemo(() => {
+    const rows = []
+    for (const record of registrationRecords) {
+      const rawMeta = parseMaybeJson(record.medical_notes, {}) || {}
+      const registrationType = String(rawMeta?.registrationType || '').trim()
+      const payload = rawMeta?.registration || {}
+      const students = Array.isArray(payload.students) && payload.students.length > 0 ? payload.students : []
+      const parentName = (payload.parentName || record.guardian_name || '').trim() || 'Parent/Guardian'
+      const parentEmail = (payload.contactEmail || record.guardian_email || '').trim()
+      const discountActive = isLimitedDiscountActiveForDate(config.tuition.discountEndDate, record.created_at)
+      const accountingEntries = Array.isArray(record.accounting_entries) ? record.accounting_entries : []
+      const normalizedStudents = students.length > 0 ? students : [{ fullName: record.guardian_name || 'Camper', schedule: {}, lunch: {} }]
+
+      normalizedStudents.forEach((student, index) => {
+        const camperName = String(student?.fullName || '').trim() || `Camper ${index + 1}`
+        const pricing = buildCamperPricing({
+          student,
+          studentIndex: index,
+          tuition: config.tuition,
+          discountActive,
+          lunchPrice: config.tuition.lunchPrice,
+          weekById,
+        })
+        const entry =
+          accountingEntries.find((item) => Number(item?.camper_index) === index) ||
+          accountingEntries.find((item) => String(item?.camper_name || '').trim() === camperName) ||
+          {}
+        const manualDiscount = Math.max(0, Number(entry.manual_discount || 0))
+        const paidAmount = Math.max(0, Number(entry.paid_amount || 0))
+        const totalAfterManualDiscount = Math.max(0, Number(pricing.total || 0) - manualDiscount)
+        const owedAmount = Math.max(0, totalAfterManualDiscount - paidAmount)
+        const selectedWeekIds = Array.from(new Set(pricing.weekIds))
+        const weekChipDetails = pricing.weekDetails.map((item) => ({
+          chipLabel: `${weekNumberById[item.weekId]?.label || item.label} · ${item.isFullWeek ? 'Full Week' : 'Partial'}`,
+          detailLines: item.detailLines,
+        }))
+        const weekOverlayLines = weekChipDetails.flatMap((item) => [item.chipLabel, ...item.detailLines])
+        const paymentMethod = String(entry.payment_method || '').trim().toLowerCase()
+        const invoiceCalendarLines = buildAccountingCalendarLines({
+          camperName,
+          student,
+          weekById,
+          weekNumberById,
+        })
+        const totalBreakdownLines = [
+          `General Camp: ${money(pricing.general)}`,
+          `General counts: ${formatWeekCountSummary(pricing.countsByProgram.general, 'general')}`,
+          `Boot Camp: ${money(pricing.bootcamp)}`,
+          `Boot Camp counts: ${formatWeekCountSummary(pricing.countsByProgram.bootcamp, 'bootcamp')}`,
+          `Overnight Camp: ${money(pricing.overnight)}`,
+          `Overnight counts: ${formatWeekCountSummary(pricing.countsByProgram.overnight, 'overnight')}`,
+          `Tuition subtotal before sibling discount: ${money(
+            Number(pricing.general || 0) + Number(pricing.bootcamp || 0) + Number(pricing.overnight || 0)
+          )}`,
+        ]
+        if (Number(pricing.countsByProgram.overnight.fullWeek || 0) > 0) {
+          const overnightInvoice = buildOvernightAccountingInvoice(
+            pricing.countsByProgram.overnight.fullWeek,
+            Number(config.tuition.regular.overnightWeek || 0),
+            Number(config.tuition.discount.overnightWeek || 0) || Number(config.tuition.regular.overnightWeek || 0),
+            discountActive
+          )
+          totalBreakdownLines.push(`Overnight regular subtotal: ${money(overnightInvoice.regularSubtotal)}`)
+          if (discountActive) {
+            totalBreakdownLines.push(`Overnight discounted week rate: ${money(overnightInvoice.discountedRate)}`)
+            if (overnightInvoice.secondWeekDiscount > 0) {
+              totalBreakdownLines.push(`Overnight week 2 extra discount: -${money(overnightInvoice.secondWeekDiscount)}`)
+            }
+          }
+        }
+        if (Number(pricing.siblingDiscount || 0) > 0) {
+          totalBreakdownLines.push(
+            `Sibling discount (${pricing.siblingDiscountPct}%): -${money(pricing.siblingDiscount)}`
+          )
+        }
+        totalBreakdownLines.push(`Lunch added after sibling discount: ${money(pricing.lunchCost)}`)
+        totalBreakdownLines.push(`Calculated total: ${money(pricing.total)}`)
+        if (manualDiscount > 0) {
+          totalBreakdownLines.push(`Manual discount: -${money(manualDiscount)}`)
+        }
+        totalBreakdownLines.push(`Displayed total: ${money(totalAfterManualDiscount)}`)
+        rows.push({
+          key: `${record.id}-${index}`,
+          registrationId: record.id,
+          camperIndex: index,
+          registrationType,
+          createdAt: record.created_at,
+          parentName,
+          parentEmail,
+          camperName,
+          selectedWeekIds,
+          weeksCount: selectedWeekIds.length,
+          weekLabels: selectedWeekIds.map((weekId) => toWeekLabel(weekId, weekById)),
+          weekChipDetails,
+          weekOverlayLines,
+          lunchDays: pricing.lunchDays,
+          lunchDaysCount: pricing.paidLunchCount,
+          lunchCost: pricing.lunchCost,
+          regularPriceTotal: pricing.regularTotal,
+          generalCost: pricing.general,
+          bootcampCost: pricing.bootcamp,
+          overnightCost: pricing.overnight,
+          tuitionTotal: pricing.total,
+          siblingDiscountPct: pricing.siblingDiscountPct,
+          siblingDiscountAmount: pricing.siblingDiscount,
+          totalBreakdownLines,
+          invoiceCalendarLines,
+          manualDiscount,
+          totalAfterManualDiscount,
+          paidAmount,
+          owedAmount,
+          paymentMethod: accountingPaymentMethods.includes(paymentMethod) ? paymentMethod : '',
+          archived: Boolean(entry.archived),
+        })
+      })
+    }
+    return rows
+  }, [config.tuition, registrationRecords, weekById, weekNumberById])
+  const activeAccountingRows = useMemo(
+    () => accountingRows.filter((row) => !row.archived && row.registrationType !== 'overnight-only'),
+    [accountingRows]
+  )
+  const archivedAccountingRows = useMemo(
+    () => accountingRows.filter((row) => row.archived && row.registrationType !== 'overnight-only'),
+    [accountingRows]
+  )
+  const overnightAccountingRows = useMemo(
+    () => accountingRows.filter((row) => row.registrationType === 'overnight-only'),
+    [accountingRows]
+  )
+  const activeOvernightAccountingRows = useMemo(
+    () => overnightAccountingRows.filter((row) => !row.archived),
+    [overnightAccountingRows]
+  )
+  const archivedOvernightAccountingRows = useMemo(
+    () => overnightAccountingRows.filter((row) => row.archived),
+    [overnightAccountingRows]
+  )
+  const overnightRosterByWeek = useMemo(() => {
+    const roster = {}
+    for (const week of weekOptions.overnight) {
+      roster[week.id] = {
+        week,
+        rows: [],
+      }
+    }
+    for (const row of overnightAccountingRows) {
+      const isPaid = Number(row.owedAmount || 0) <= 0 && Number(row.totalAfterManualDiscount || 0) > 0
+      if (!isPaid) continue
+      for (const weekId of Array.isArray(row.selectedWeekIds) ? row.selectedWeekIds : []) {
+        if (!roster[weekId]) {
+          roster[weekId] = {
+            week: weekById[weekId] || null,
+            rows: [],
+          }
+        }
+        roster[weekId].rows.push(row)
+      }
+    }
+    return Object.values(roster).sort((a, b) =>
+      String(a.week?.start || '').localeCompare(String(b.week?.start || ''))
+    )
+  }, [overnightAccountingRows, weekById, weekOptions.overnight])
+  const registrationFirstWeekStartById = useMemo(() => {
+    const map = {}
+    for (const row of accountingRows) {
+      const registrationId = Number(row.registrationId || 0)
+      if (registrationId <= 0) continue
+      const candidateStarts = (Array.isArray(row.selectedWeekIds) ? row.selectedWeekIds : [])
+        .map((weekId) => weekById[weekId]?.start || '')
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b))
+      const firstStart = candidateStarts[0] || ''
+      if (!firstStart) continue
+      if (!map[registrationId] || firstStart < map[registrationId]) {
+        map[registrationId] = firstStart
+      }
+    }
+    return map
+  }, [accountingRows, weekById])
+  const leadDueCounts = useMemo(() => {
+    const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
+    const dayOffsets = [0, 1, 3, 5, 7]
+    for (const row of leadJourneyTrackerRows) {
+      if (row.isRegistered || !row.createdAt) continue
+      const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+      if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
+        counts[nextColumn.key] += 1
+      }
+    }
+    return counts
+  }, [leadJourneyTrackerRows])
+  const leadUpcomingCounts = useMemo(() => {
+    const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
+    const dayOffsets = [0, 1, 3, 5, 7]
+    const now = Date.now()
+    const upcomingBoundary = now + 24 * 60 * 60 * 1000
+    for (const row of leadJourneyTrackerRows) {
+      if (row.isRegistered || !row.createdAt) continue
+      const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+      const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+      if (!Number.isNaN(dueTime) && dueTime > now && dueTime <= upcomingBoundary) {
+        counts[nextColumn.key] += 1
+      }
+    }
+    return counts
+  }, [leadJourneyTrackerRows])
+  const reservationDueKeyByRegistrationId = useMemo(() => {
+    const map = {}
+    const unpaidHourOffsets = [0, 12, 36, 66, 72]
+    const now = Date.now()
+    for (const row of reservationJourneyTrackerRows) {
+      const registrationId = Number(row.registrationId || 0)
+      if (registrationId <= 0 || !row.createdAt) continue
+
+      if (String(row.status || '') === 'paid') {
+        const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
+        if (!firstWeekStart) continue
+        const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
+        if (Number.isNaN(firstWeekStartDate.getTime())) continue
+        const startBoundary = addDays(firstWeekStartDate, 1)
+        if (Date.now() > startBoundary.getTime()) continue
+        const stageDefs = [
+          { key: 'paid_7d', daysBefore: 7 },
+          { key: 'paid_5d', daysBefore: 5 },
+          { key: 'paid_3d', daysBefore: 3 },
+          { key: 'paid_1d', daysBefore: 1 },
+        ]
+        for (const stage of stageDefs) {
+          if (isPaidPrepHandled(row.steps[stage.key]?.status)) {
+            continue
+          }
+          const scheduledAt = addDays(firstWeekStartDate, -stage.daysBefore)
+          if (now >= scheduledAt.getTime()) {
+            map[registrationId] = stage.key
+          }
+          break
+        }
+        continue
+      }
+
+      const nextColumn = reservationTrackerColumns
+        .filter((column) => String(column.key || '').startsWith('step_'))
+        .find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = addHoursToIso(row.createdAt, unpaidHourOffsets[Math.max(0, (nextColumn.stepNumber || 1) - 1)] || 0)
+      if (dueAt && new Date(dueAt).getTime() <= now) {
+        map[registrationId] = nextColumn.key
+      }
+    }
+    return map
+  }, [registrationFirstWeekStartById, reservationJourneyTrackerRows])
+  const reservationUpcomingKeyByRegistrationId = useMemo(() => {
+    const map = {}
+    const unpaidHourOffsets = [0, 12, 36, 66, 72]
+    const now = Date.now()
+    const upcomingBoundary = now + 24 * 60 * 60 * 1000
+    for (const row of reservationJourneyTrackerRows) {
+      const registrationId = Number(row.registrationId || 0)
+      if (registrationId <= 0 || !row.createdAt) continue
+
+      if (String(row.status || '') === 'paid') {
+        const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
+        if (!firstWeekStart) continue
+        const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
+        if (Number.isNaN(firstWeekStartDate.getTime())) continue
+        const startBoundary = addDays(firstWeekStartDate, 1)
+        if (now > startBoundary.getTime()) continue
+        const stageDefs = [
+          { key: 'paid_7d', daysBefore: 7 },
+          { key: 'paid_5d', daysBefore: 5 },
+          { key: 'paid_3d', daysBefore: 3 },
+          { key: 'paid_1d', daysBefore: 1 },
+        ]
+        for (const stage of stageDefs) {
+          if (isPaidPrepHandled(row.steps[stage.key]?.status)) {
+            continue
+          }
+          const scheduledAt = addDays(firstWeekStartDate, -stage.daysBefore).getTime()
+          if (scheduledAt > now && scheduledAt <= upcomingBoundary) {
+            map[registrationId] = stage.key
+          }
+          break
+        }
+        continue
+      }
+
+      const nextColumn = reservationTrackerColumns
+        .filter((column) => String(column.key || '').startsWith('step_'))
+        .find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = addHoursToIso(row.createdAt, unpaidHourOffsets[Math.max(0, (nextColumn.stepNumber || 1) - 1)] || 0)
+      const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+      if (!Number.isNaN(dueTime) && dueTime > now && dueTime <= upcomingBoundary) {
+        map[registrationId] = nextColumn.key
+      }
+    }
+    return map
+  }, [registrationFirstWeekStartById, reservationJourneyTrackerRows])
+  const reservationDueCounts = useMemo(() => {
+    const counts = Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, 0]))
+    for (const dueKey of Object.values(reservationDueKeyByRegistrationId)) {
+      if (counts[dueKey] !== undefined) {
+        counts[dueKey] += 1
+      }
+    }
+    return counts
+  }, [reservationDueKeyByRegistrationId])
+  const reservationUpcomingCounts = useMemo(() => {
+    const counts = Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, 0]))
+    for (const dueKey of Object.values(reservationUpcomingKeyByRegistrationId)) {
+      if (counts[dueKey] !== undefined) {
+        counts[dueKey] += 1
+      }
+    }
+    return counts
+  }, [reservationUpcomingKeyByRegistrationId])
+  const trackingDueSummary = useMemo(() => {
+    const lead = Object.values(leadDueCounts).reduce((sum, value) => sum + Number(value || 0), 0)
+    const reservation = Object.values(reservationDueCounts).reduce((sum, value) => sum + Number(value || 0), 0)
+    const leadUpcoming = Object.values(leadUpcomingCounts).reduce((sum, value) => sum + Number(value || 0), 0)
+    const reservationUpcoming = Object.values(reservationUpcomingCounts).reduce((sum, value) => sum + Number(value || 0), 0)
+    return {
+      lead,
+      reservation,
+      upcoming: leadUpcoming + reservationUpcoming,
+      total: lead + reservation,
+    }
+  }, [leadDueCounts, leadUpcomingCounts, reservationDueCounts, reservationUpcomingCounts])
+  const accountingDueEmailCount = useMemo(() => {
+    const activeRegistrationIds = new Set(
+      activeAccountingRows.map((row) => Number(row.registrationId || 0)).filter((value) => value > 0)
+    )
+    let total = 0
+    for (const registrationId of activeRegistrationIds) {
+      if (reservationDueKeyByRegistrationId[registrationId]) {
+        total += 1
+      }
+    }
+    return total
+  }, [activeAccountingRows, reservationDueKeyByRegistrationId])
+  const accountingUpcomingEmailCount = useMemo(() => {
+    const activeRegistrationIds = new Set(
+      activeAccountingRows.map((row) => Number(row.registrationId || 0)).filter((value) => value > 0)
+    )
+    let total = 0
+    for (const registrationId of activeRegistrationIds) {
+      if (reservationUpcomingKeyByRegistrationId[registrationId]) {
+        total += 1
+      }
+    }
+    return total
+  }, [activeAccountingRows, reservationUpcomingKeyByRegistrationId])
+  const getLeadTrackerTimingState = (row, column) => {
+    if (row?.isRegistered || !row?.createdAt || !column?.key) {
+      return ''
+    }
+    const nextColumn = leadTrackerColumns.find((item) => !isTrackerStepHandled(row.steps[item.key]?.status))
+    if (!nextColumn || nextColumn.key !== column.key) {
+      return ''
+    }
+    const dueOffsets = [0, 1, 3, 5, 7]
+    const dueAt = addDaysToIso(row.createdAt, dueOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+    const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+    if (Number.isNaN(dueTime)) {
+      return ''
+    }
+    const now = Date.now()
+    if (dueTime <= now) {
+      return 'due'
+    }
+    if (dueTime <= now + 24 * 60 * 60 * 1000) {
+      return 'upcoming'
+    }
+    return ''
+  }
+  const getReservationTrackerTimingState = (row, column) => {
+    if (!row?.createdAt || !column?.key) {
+      return ''
+    }
+    const now = Date.now()
+    const upcomingBoundary = now + 24 * 60 * 60 * 1000
+
+    if (String(row.status || '') === 'paid') {
+      const registrationId = Number(row.registrationId || 0)
+      if (registrationId <= 0) {
+        return ''
+      }
+      const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
+      if (!firstWeekStart) {
+        return ''
+      }
+      const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
+      if (Number.isNaN(firstWeekStartDate.getTime())) {
+        return ''
+      }
+      const startBoundary = addDays(firstWeekStartDate, 1)
+      if (now > startBoundary.getTime()) {
+        return ''
+      }
+      const stageDefs = [
+        { key: 'paid_7d', daysBefore: 7 },
+        { key: 'paid_5d', daysBefore: 5 },
+        { key: 'paid_3d', daysBefore: 3 },
+        { key: 'paid_1d', daysBefore: 1 },
+      ]
+      const nextStage = stageDefs.find((stage) => !isPaidPrepHandled(row.steps[stage.key]?.status))
+      if (!nextStage || nextStage.key !== column.key) {
+        return ''
+      }
+      const scheduledAt = addDays(firstWeekStartDate, -nextStage.daysBefore).getTime()
+      if (scheduledAt <= now) {
+        return 'due'
+      }
+      if (scheduledAt <= upcomingBoundary) {
+        return 'upcoming'
+      }
+      return ''
+    }
+
+    const unpaidHourOffsets = [0, 12, 36, 66, 72]
+    const nextColumn = reservationTrackerColumns
+      .filter((item) => String(item.key || '').startsWith('step_'))
+      .find((item) => !isTrackerStepHandled(row.steps[item.key]?.status))
+    if (!nextColumn || nextColumn.key !== column.key) {
+      return ''
+    }
+    const dueAt = addHoursToIso(row.createdAt, unpaidHourOffsets[Math.max(0, (nextColumn.stepNumber || 1) - 1)] || 0)
+    const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+    if (Number.isNaN(dueTime)) {
+      return ''
+    }
+    if (dueTime <= now) {
+      return 'due'
+    }
+    if (dueTime <= upcomingBoundary) {
+      return 'upcoming'
+    }
+    return ''
+  }
+  const accountingTotals = useMemo(() => {
+    const source = activeAccountingRows
+    const methodTotals = Object.fromEntries(accountingPaymentMethods.map((method) => [method, 0]))
+    for (const row of source) {
+      if (row.paymentMethod && methodTotals[row.paymentMethod] !== undefined) {
+        methodTotals[row.paymentMethod] += Number(row.paidAmount || 0)
+      }
+    }
+    return {
+      totalTuition: source.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
+      totalPaid: source.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
+      totalOwed: source.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
+      methodTotals,
+      activeRows: source.length,
+      archivedRows: archivedAccountingRows.length,
+    }
+  }, [activeAccountingRows, archivedAccountingRows.length])
+  const tabEmptyCounts = useMemo(() => {
+    const countMissingString = (value) => (String(value || '').trim() ? 0 : 1)
+    const countMissingPositive = (value) => (Number(value || 0) > 0 ? 0 : 1)
+    const mediaCount =
+      countMissingString(config.media.welcomeLogoUrl) +
+      countMissingString(config.media.heroImageUrl) +
+      countMissingString(config.media.surveyVideoUrl) +
+      countMissingString(config.media.surveyStep1FlyerUrl) +
+      countMissingString(config.media.surveyMobileBgUrl) +
+      countMissingString(config.media.wechatQrUrl) +
+      (Array.isArray(config.media.surveyStepImageUrls)
+        ? config.media.surveyStepImageUrls.reduce((sum, url) => sum + countMissingString(url), 0)
+        : 6) +
+      (Array.isArray(config.media.registrationStepImageUrls)
+        ? config.media.registrationStepImageUrls.reduce((sum, url) => sum + countMissingString(url), 0)
+        : 4) +
+      (Array.isArray(config.media.overnightLandingImageUrls)
+        ? config.media.overnightLandingImageUrls.reduce((sum, url) => sum + countMissingString(url), 0)
+        : 6) +
+      (Array.isArray(config.media.levelUpScreenshotUrls) && config.media.levelUpScreenshotUrls.length > 0 ? 0 : 1)
+
+    const tuitionCount = [
+      config.tuition.regular.fullWeek,
+      config.tuition.regular.fullDay,
+      config.tuition.regular.amHalf,
+      config.tuition.regular.pmHalf,
+      config.tuition.regular.overnightWeek,
+      config.tuition.regular.overnightDay,
+      config.tuition.discount.fullWeek,
+      config.tuition.discount.fullDay,
+      config.tuition.discount.amHalf,
+      config.tuition.discount.pmHalf,
+      config.tuition.discount.overnightWeek,
+      config.tuition.discount.overnightDay,
+      config.tuition.lunchPrice,
+      config.tuition.bootcampPremiumPct,
+      config.tuition.siblingDiscountPct,
+    ].reduce((sum, value) => sum + countMissingPositive(value), 0) + countMissingString(config.tuition.discountEndDate)
+
+    const programsCount = ['general', 'bootcamp', 'overnight'].reduce((sum, key) => {
+      const program = config.programs[key]
+      return (
+        sum +
+        countMissingString(program.startDate) +
+        countMissingString(program.endDate) +
+        (Array.isArray(program.selectedWeeks) && program.selectedWeeks.length > 0 ? 0 : 1)
+      )
+    }, 0)
+
+    const journeyCount = (Array.isArray(config.emailJourney) ? config.emailJourney : []).reduce(
+      (sum, step) =>
+        sum +
+        countMissingString(step.dayLabel) +
+        countMissingString(step.title) +
+        countMissingString(step.subject) +
+        countMissingString(step.body),
+      0
+    )
+
+    const testimonialsCount = (Array.isArray(config.testimonials) ? config.testimonials : []).reduce(
+      (sum, item) =>
+        sum +
+        countMissingString(item.studentName) +
+        countMissingString(item.headline) +
+        countMissingString(item.story) +
+        countMissingString(item.outcome),
+      0
+    )
+
+    return {
+      media: mediaCount,
+      tuition: tuitionCount,
+      programs: programsCount,
+      journey: journeyCount,
+      accounting: 0,
+      leads: 0,
+      testimonials: testimonialsCount,
+      tracking: 0,
+      account: 0,
+    }
+  }, [config])
+  const activeLeadJourneyTemplate = config.emailJourney[activeJourneyTab] || config.emailJourney[0]
+  const activeReservationTemplate =
+    reservationJourneyTemplates[activeReservationJourneyTab] || reservationJourneyTemplates[0]
+
+  function getLevelUpScreenshotCaption(index) {
+    return (
+      levelUpScreenshotCaptions[index] ||
+      'Additional app screen: progress, safety, scheduling, or family convenience.'
+    )
+  }
 
   function updateMedia(field, value) {
     setConfig((current) => ({
@@ -462,20 +2374,6 @@ export default function AdminPage() {
         ...current.media,
         [field]: value,
       },
-    }))
-  }
-
-  function updateEmailJourneyStep(index, field, value) {
-    setConfig((current) => ({
-      ...current,
-      emailJourney: current.emailJourney.map((item, itemIndex) =>
-        itemIndex === index
-          ? {
-              ...item,
-              [field]: value,
-            }
-          : item
-      ),
     }))
   }
 
@@ -515,23 +2413,124 @@ export default function AdminPage() {
     }))
   }
 
-  function renderTestTemplate(text) {
-    const registrationLink =
-      typeof window !== 'undefined' ? `${window.location.origin}/#register` : '{registration_link}'
-    return String(text || '')
-      .replaceAll('{first_name}', 'Test Parent')
-      .replaceAll('{recommended_plan}', 'General Camp + 2 weeks Competition Team Boot Camp')
-      .replaceAll('{registration_link}', registrationLink)
+  function applyPremiumJourneyTemplates() {
+    setConfig((current) => ({
+      ...current,
+      emailJourney: premiumJourneyTemplates.map((item) => ({ ...item })),
+    }))
+    setSavedMessage('Premium survey lead nurture templates loaded. Click Save Changes to publish.')
+    setErrorMessage('')
   }
 
-  async function sendTestEmailForStep(stepIndex) {
+  function renderJourneyTemplate(text) {
+    const registrationLink = 'https://summer.newushu.com/register'
+    return String(text || '')
+      .replaceAll('{first_name}', 'Calvin')
+      .replaceAll('{parent_name}', 'Calvin')
+      .replaceAll('{guardian_name}', 'Calvin Chen')
+      .replaceAll(
+        '{recommended_plan}',
+        'General Camp with progression options. If your camper wishes to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.'
+      )
+      .replaceAll('{registration_link}', registrationLink)
+      .replaceAll(
+        '{payment_methods}',
+        'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd'
+      )
+      .replaceAll('{reservation_deadline}', 'May 20, 5:00 PM')
+      .replaceAll(
+        '{registration_summary}',
+        '- Camper: Ethan (age 9)\n- Program: General Camp\n- Weeks: Jul 7-11, Jul 14-18\n- Lunch: Mon/Wed/Fri'
+      )
+      .replaceAll('{amount_due}', '$1,680.00')
+      .replaceAll('{app_launch_date}', 'June 20')
+  }
+
+  function buildJourneyPreviewHtmlFromTemplate(stepIndex, template, flowKey = 'lead') {
+    const subject = renderJourneyTemplate(template?.subject || '')
+    const bodyGroups = renderJourneyTemplate(template?.body || '')
+      .split(/\n\s*\n/)
+      .map((group) =>
+        group
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+      )
+      .filter((group) => group.length > 0)
+    const body = bodyGroups
+      .map(
+        (group, index) => `
+          <div style="margin:16px 0 0;padding:16px 18px;border:1px solid ${index === 0 ? '#bfdbfe' : '#dbe5f0'};border-radius:18px;background:${index === 0 ? 'linear-gradient(180deg,#ffffff 0%,#f8fbff 100%)' : '#ffffff'};box-shadow:0 10px 24px rgba(15,23,42,0.05);">
+            ${group
+              .map((line) => `<p style="margin:0 0 10px;font-size:16px;color:#334155;">${line}</p>`)
+              .join('')}
+          </div>
+        `
+      )
+      .join('')
+    const ctaLink = 'https://summer.newushu.com/register'
+    const isReservationFlow = flowKey === 'reservation'
+    const ctaLabel = isReservationFlow
+      ? 'Complete Payment & Confirm Weeks'
+      : 'View Programs & Start Registration'
+    const detailCard = isReservationFlow
+      ? `<div style="margin:16px 0;padding:12px;border:1px solid #f59e0b;border-radius:12px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
+          <p style="margin:0 0 8px;font-weight:700;color:#9a3412;">Payment Methods</p>
+          <p style="margin:0;white-space:pre-line;">Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd</p>
+        </div>`
+      : `<div style="margin:16px 0;padding:12px;border:1px solid #86efac;border-radius:12px;background:linear-gradient(180deg,#f0fdf4 0%,#dcfce7 100%);">
+          <p style="margin:0 0 8px;font-weight:700;color:#166534;">Recommended Fit</p>
+          <p style="margin:0;white-space:pre-line;color:#14532d;">General Camp + 2 Weeks Competition Team Boot Camp</p>
+        </div>`
+    const attachmentCard = isReservationFlow
+      ? `<div style="margin:12px 0 0;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#f8fafc;">
+          <p style="margin:0;font-weight:700;color:#334155;">Attachment on send: camp-payment-summary.pdf</p>
+        </div>`
+      : ''
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body style="margin:0;padding:20px;background:#ecfeff;">
+    <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #bae6fd;border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(2,132,199,0.16);font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
+      <div style="padding:15px 20px;background:linear-gradient(135deg,#0ea5e9 0%,#2563eb 100%);color:#ffffff;">
+        ${config.media?.welcomeLogoUrl ? `<img src="${config.media.welcomeLogoUrl}" alt="New England Wushu Summer Camp" style="display:block;max-height:52px;margin:0 0 10px;" />` : ''}
+        <p style="margin:0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;font-weight:800;">New England Wushu Summer Camp</p>
+        <p style="margin:6px 0 0;font-size:13px;opacity:0.95;">${isReservationFlow ? 'Registration support and next steps' : 'Summer 2026 family update'}</p>
+      </div>
+      <div style="padding:22px 20px 14px;">
+        <div style="padding:16px 18px;border:1px solid #dbeafe;border-radius:20px;background:linear-gradient(180deg,#f8fbff 0%,#eef8ff 100%);">
+          <h2 style="margin:0 0 10px;font-size:27px;line-height:1.2;color:#0f172a;">${subject}</h2>
+          <p style="margin:0;font-size:15px;color:#475569;">${isReservationFlow ? 'Important registration details, next steps, and family support in one place.' : 'Summer camp recommendations, next steps, and family support.'}</p>
+        </div>
+        <div style="margin:0 0 14px;">${body}</div>
+        <div style="margin:16px 0 0;">
+          <a href="${ctaLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:linear-gradient(135deg,#0284c7 0%,#2563eb 100%);color:#ffffff;text-decoration:none;font-weight:800;">
+            ${ctaLabel}
+          </a>
+        </div>
+        ${detailCard}
+        ${attachmentCard}
+        <div style="margin:12px 0 0;padding:12px;border:1px solid #93c5fd;border-radius:12px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);">
+          <p style="margin:0 0 6px;font-weight:700;color:#1d4ed8;">New This Year: Level Up App</p>
+          <p style="margin:0;color:#1e3a8a;">Download opens on June 20 for lunch access, daily photos/videos, and instructor notes.</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`
+  }
+
+  async function sendTestEmailForStep(stepIndex, template, flowKey = 'lead') {
     const recipient = testEmail.trim()
     if (!/\S+@\S+\.\S+/.test(recipient)) {
       setErrorMessage('Enter a valid test email first.')
       return
     }
 
-    const template = config.emailJourney[stepIndex]
     if (!template?.subject || !template?.body) {
       setErrorMessage(`Step ${stepIndex + 1} is missing subject or body.`)
       return
@@ -544,15 +2543,16 @@ export default function AdminPage() {
     const response = await fetch('/api/email/send-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        toEmail: recipient,
-        stepNumber: stepIndex + 1,
-        template: {
-          subject: renderTestTemplate(template.subject),
-          body: renderTestTemplate(template.body),
-        },
-      }),
-    })
+        body: JSON.stringify({
+          toEmail: recipient,
+          stepNumber: stepIndex + 1,
+          flowKey,
+          template: {
+            subject: renderJourneyTemplate(template.subject),
+            body: renderJourneyTemplate(template.body),
+          },
+        }),
+      })
 
     const result = await response.json()
     if (!response.ok) {
@@ -566,7 +2566,7 @@ export default function AdminPage() {
         .from('email_journey_runs')
         .insert({
           email: recipient,
-          status: result?.previewOnly ? 'test_preview_only' : 'test_sent',
+          status: result?.previewOnly ? `test_preview_only_${flowKey}` : `test_sent_${flowKey}`,
           current_step: stepIndex + 1,
           last_sent_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -579,20 +2579,531 @@ export default function AdminPage() {
         run_id: runId,
         email: recipient,
         step_number: stepIndex + 1,
-        event_type: result?.previewOnly ? 'test_preview_only' : 'test_sent',
-        subject: renderTestTemplate(template.subject),
-        body_preview: renderTestTemplate(template.body).slice(0, 400),
-        event_payload: result,
+        event_type: result?.previewOnly ? `test_preview_only_${flowKey}` : `test_sent_${flowKey}`,
+        subject: renderJourneyTemplate(template.subject),
+        body_preview: renderJourneyTemplate(template.body).slice(0, 400),
+        event_payload: {
+          ...result,
+          flowKey,
+        },
       })
     }
 
     setSavedMessage(
       result?.previewOnly
-        ? 'Template preview succeeded. Configure SendGrid to send real test emails.'
+        ? 'Template preview succeeded. Configure SES to send real test emails.'
         : `Step ${stepIndex + 1} test email sent to ${recipient}.`
     )
     setSendingTestStep(0)
     refreshEmailTracking()
+  }
+
+  async function updateReservationRunPaymentStatus(run, markPaid) {
+    if (!supabaseEnabled || !supabase || !run?.id) {
+      setErrorMessage('Supabase is not configured for payment status updates.')
+      return
+    }
+
+    setUpdatingRunId(run.id)
+    setErrorMessage('')
+    setSavedMessage('')
+
+    const nextStatus = markPaid ? 'paid' : 'active'
+    const nextSendAt = markPaid ? new Date().toISOString() : new Date().toISOString()
+    const nowIso = new Date().toISOString()
+
+    const updateResponse = await supabase
+      .from('email_journey_runs')
+      .update({
+        status: nextStatus,
+        next_send_at: nextSendAt,
+        updated_at: nowIso,
+      })
+      .eq('id', run.id)
+
+    if (updateResponse.error) {
+      setErrorMessage(`Unable to update run status: ${updateResponse.error.message}`)
+      setUpdatingRunId(0)
+      return
+    }
+
+    const eventType = markPaid ? 'payment_marked_paid' : 'payment_marked_unpaid'
+    await supabase.from('email_journey_events').insert({
+      run_id: run.id,
+      email: run.email,
+      step_number: null,
+      event_type: eventType,
+      subject: markPaid ? 'Payment marked received' : 'Payment status returned to unpaid follow-up',
+      body_preview: markPaid
+        ? 'Marked paid in admin. Unpaid reminders stopped. Paid prep journey enabled.'
+        : 'Marked unpaid in admin. 72-hour reminder flow resumed.',
+      event_payload: {
+        markedAt: nowIso,
+      },
+    })
+
+    setSavedMessage(
+      markPaid
+        ? `Marked ${run.email} as paid. Unpaid reminders are stopped and prep journey scheduling is active.`
+        : `Marked ${run.email} as unpaid. Submitted-registration reminder flow is active again.`
+    )
+    setUpdatingRunId(0)
+    refreshEmailTracking()
+  }
+
+  async function processDueJourneyEmails() {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for journey processing.')
+      return
+    }
+
+    setProcessingJourneyEmails(true)
+    setSavedMessage('')
+    setErrorMessage('')
+    setJourneyProcessSummary(null)
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setProcessingJourneyEmails(false)
+      return
+    }
+
+    try {
+      const [leadResponse, reservationResponse] = await Promise.all([
+        fetch('/api/email/lead-journey', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ action: 'process' }),
+        }),
+        fetch('/api/email/reservation-journey', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ action: 'process' }),
+        }),
+      ])
+
+      const leadResult = await leadResponse.json().catch(() => ({}))
+      const reservationResult = await reservationResponse.json().catch(() => ({}))
+
+      if (!leadResponse.ok || !reservationResponse.ok) {
+        setErrorMessage(
+          leadResult?.error ||
+            reservationResult?.error ||
+            'Manual journey processing failed.'
+        )
+        setProcessingJourneyEmails(false)
+        return
+      }
+
+      setJourneyProcessSummary({
+        lead: {
+          sent: leadResult?.emailed || 0,
+          queued: leadResult?.queued || 0,
+          checked: leadResult?.processed || 0,
+          candidates: leadResult?.debug?.queue?.candidates || 0,
+          skippedRegistered: leadResult?.debug?.queue?.skippedRegistered || 0,
+          skippedActive: leadResult?.debug?.queue?.skippedActive || 0,
+          skippedExistingStepOne: leadResult?.debug?.queue?.skippedExistingStepOne || 0,
+          revived: leadResult?.debug?.queue?.revived || 0,
+          newRuns: leadResult?.debug?.queue?.enqueuedNew || 0,
+          bootstrapped: leadResult?.debug?.stepOne?.bootstrapped || 0,
+          stepOneSent: leadResult?.debug?.stepOne?.emailed || 0,
+        },
+        reservation: {
+          sent: reservationResult?.emailed || 0,
+          checked: reservationResult?.processed || 0,
+        },
+      })
+      setSavedMessage('Processed due emails.')
+      refreshEmailTracking()
+    } catch (error) {
+      setErrorMessage(error?.message || 'Manual journey processing failed.')
+    }
+
+    setProcessingJourneyEmails(false)
+  }
+
+  function renderAccountingDetailChip(detailKey, label, items = [], displayCount = null) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return null
+    }
+    const expanded = accountingOverlay.key === detailKey
+    return (
+      <div key={detailKey} className="accountingDetailGroup">
+        <button
+          type="button"
+          className={`accountingDetailChip ${expanded ? 'active' : ''}`}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const overlayWidth = Math.min(360, window.innerWidth - 24)
+            const left = Math.max(12, Math.min(rect.left, window.innerWidth - overlayWidth - 12))
+            const top = Math.min(rect.bottom + 10, window.innerHeight - 24)
+            const pointerLeft = Math.max(18, Math.min(rect.left + rect.width / 2 - left, overlayWidth - 18))
+
+            setAccountingOverlay((current) =>
+              current.key === detailKey
+                ? { key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 }
+                : { key: detailKey, label, items, top, left, pointerLeft }
+            )
+          }}
+        >
+          {label}: {displayCount ?? items.length}
+        </button>
+      </div>
+    )
+  }
+
+  async function manuallySendJourneyCell({ flow, row, column }) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for manual journey sends.')
+      return
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      return
+    }
+
+    const rowKey = row?.runId || row?.registrationId || row?.email || 'unknown'
+    const sendingKey = `${flow}-${rowKey}-${column.key}`
+    setSendingJourneyCellKey(sendingKey)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const body =
+        flow === 'lead'
+          ? {
+              action: 'manual_send',
+              email: row?.email,
+              runId: row?.runId || null,
+              stepNumber: column?.stepNumber,
+            }
+          : {
+              action: 'manual_send',
+              runId: row?.runId,
+              stepKey: column?.key,
+              stepNumber: column?.stepNumber,
+            }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Manual send failed.')
+      }
+      setSavedMessage(
+        result?.previewOnly
+          ? `Manual send created a preview for ${row?.email || 'this row'} ${column?.label || ''}. SES live sending is not active for that message.`
+          : `Manual send completed for ${row?.email || 'this row'} ${column?.label || ''}.`
+      )
+      refreshEmailTracking()
+    } catch (error) {
+      setErrorMessage(error?.message || 'Manual send failed.')
+    }
+
+    setSendingJourneyCellKey('')
+  }
+
+  async function syncReservationPaymentForRun(runId, markPaid) {
+    const normalizedRunId = Number(runId || 0)
+    if (normalizedRunId <= 0 || !supabaseEnabled || !supabase) {
+      return
+    }
+    const nextStatus = markPaid ? 'paid' : 'active'
+    await supabase
+      .from('email_journey_runs')
+      .update({
+        status: nextStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', normalizedRunId)
+      .in('status', ['active', 'queued', 'paid', 'canceled_unpaid'])
+  }
+
+  async function updateAccountingEntryField(row, updates = {}) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for accounting updates.')
+      return false
+    }
+    const key = `${row.registrationId}-${row.camperIndex}`
+    setUpdatingAccountingKey(key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
+    if (!sourceRecord) {
+      setErrorMessage('Registration row not found.')
+      setUpdatingAccountingKey('')
+      return false
+    }
+
+    const currentEntries = Array.isArray(sourceRecord.accounting_entries) ? sourceRecord.accounting_entries : []
+    const existingIndex = currentEntries.findIndex((item) => Number(item?.camper_index) === Number(row.camperIndex))
+    const base =
+      existingIndex >= 0
+        ? currentEntries[existingIndex]
+        : {
+            camper_index: row.camperIndex,
+            camper_name: row.camperName,
+            archived: false,
+            paid_amount: 0,
+            manual_discount: 0,
+            payment_method: '',
+          }
+    const next = {
+      ...base,
+      ...updates,
+      camper_index: row.camperIndex,
+      camper_name: row.camperName,
+      paid_amount: Math.max(0, Number(updates.paid_amount ?? base.paid_amount ?? 0)),
+      manual_discount: Math.max(0, Number(updates.manual_discount ?? base.manual_discount ?? 0)),
+      payment_method: String(updates.payment_method ?? base.payment_method ?? '').trim().toLowerCase(),
+      archived: Boolean(updates.archived ?? base.archived ?? false),
+    }
+    if (!accountingPaymentMethods.includes(next.payment_method)) {
+      next.payment_method = ''
+    }
+
+    const merged = [...currentEntries]
+    if (existingIndex >= 0) {
+      merged[existingIndex] = next
+    } else {
+      merged.push(next)
+    }
+
+    const response = await supabase
+      .from('registrations')
+      .update({ accounting_entries: merged })
+      .eq('id', sourceRecord.id)
+
+    if (response.error) {
+      setErrorMessage(
+        `Accounting update failed: ${response.error.message}. Run the new SQL migration to add accounting fields if needed.`
+      )
+      setUpdatingAccountingKey('')
+      return false
+    }
+
+    const nextOwed = Math.max(0, Number(row.totalAfterManualDiscount || 0) - Number(next.paid_amount || 0))
+    const shouldMarkPaid = nextOwed <= 0 && next.archived === false
+    await syncReservationPaymentForRun(reservationRunIdByRegistrationId[row.registrationId], shouldMarkPaid)
+    setRegistrationRecords((current) =>
+      current.map((item) =>
+        Number(item.id) === Number(sourceRecord.id) ? { ...item, accounting_entries: merged } : item
+      )
+    )
+    setSavedMessage('Accounting row updated.')
+    setUpdatingAccountingKey('')
+    refreshEmailTracking()
+    return true
+  }
+
+  function updateAccountingDraft(row, updates = {}) {
+    setAccountingDrafts((current) => ({
+      ...current,
+      [row.key]: {
+        manualDiscount:
+          updates.manualDiscount ?? current[row.key]?.manualDiscount ?? Number(row.manualDiscount || 0),
+        archived: updates.archived ?? current[row.key]?.archived ?? Boolean(row.archived),
+      },
+    }))
+  }
+
+  async function saveAccountingDraft(row) {
+    const draft = accountingDrafts[row.key]
+    if (!draft) {
+      return
+    }
+    const hasChanges =
+      Number(draft.manualDiscount || 0) !== Number(row.manualDiscount || 0) ||
+      Boolean(draft.archived) !== Boolean(row.archived)
+    if (!hasChanges) {
+      setAccountingDrafts((current) => {
+        const next = { ...current }
+        delete next[row.key]
+        return next
+      })
+      return
+    }
+    const ok = await updateAccountingEntryField(row, {
+      manual_discount: Number(draft.manualDiscount || 0),
+      archived: Boolean(draft.archived),
+    })
+    if (ok) {
+      setAccountingDrafts((current) => {
+        const next = { ...current }
+        delete next[row.key]
+        return next
+      })
+    }
+  }
+
+  async function updateOvernightWeeks(row, nextWeekIds = []) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for overnight week updates.')
+      return false
+    }
+    const key = `${row.registrationId}-${row.camperIndex}`
+    setUpdatingAccountingKey(key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
+    if (!sourceRecord) {
+      setErrorMessage('Registration row not found.')
+      setUpdatingAccountingKey('')
+      return false
+    }
+
+    const rawMeta = parseMaybeJson(sourceRecord.medical_notes, {}) || {}
+    const registration = rawMeta?.registration || {}
+    const students = Array.isArray(registration.students) ? registration.students : []
+    if (!students[row.camperIndex]) {
+      setErrorMessage('Overnight camper row not found.')
+      setUpdatingAccountingKey('')
+      return false
+    }
+
+    const normalizedWeekIds = Array.from(new Set(nextWeekIds.filter(Boolean)))
+    const nextStudents = students.map((student, index) =>
+      index === Number(row.camperIndex)
+        ? {
+            ...student,
+            overnightWeekIds: normalizedWeekIds,
+          }
+        : student
+    )
+
+    const response = await supabase
+      .from('registrations')
+      .update({
+        medical_notes: JSON.stringify({
+          ...rawMeta,
+          registration: {
+            ...registration,
+            students: nextStudents,
+          },
+        }),
+      })
+      .eq('id', sourceRecord.id)
+
+    if (response.error) {
+      setErrorMessage(`Overnight week update failed: ${response.error.message}`)
+      setUpdatingAccountingKey('')
+      return false
+    }
+
+    setRegistrationRecords((current) =>
+      current.map((item) =>
+        Number(item.id) === Number(sourceRecord.id)
+          ? {
+              ...item,
+              medical_notes: JSON.stringify({
+                ...rawMeta,
+                registration: {
+                  ...registration,
+                  students: nextStudents,
+                },
+              }),
+            }
+          : item
+      )
+    )
+    setSavedMessage('Overnight weeks updated.')
+    setUpdatingAccountingKey('')
+    return true
+  }
+
+  async function sendAccountingInvoice(row) {
+    const toEmail = String(row.parentEmail || '').trim()
+    if (!/\S+@\S+\.\S+/.test(toEmail)) {
+      setErrorMessage('Parent email is required to send invoice.')
+      return
+    }
+    const key = `${row.registrationId}-${row.camperIndex}`
+    setSendingInvoiceKey(key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
+    const rawMeta = sourceRecord ? parseMaybeJson(sourceRecord.medical_notes, {}) || {} : {}
+    const payload = rawMeta?.registration || {}
+    if (!payload || !Array.isArray(payload.students) || payload.students.length === 0) {
+      setErrorMessage('Registration summary payload not found for this row.')
+      setSendingInvoiceKey('')
+      return
+    }
+
+    const summaryRegistration = {
+      ...payload,
+      parentName: payload.parentName || row.parentName,
+      contactEmail: payload.contactEmail || row.parentEmail,
+      paymentMethod: row.paymentMethod || payload.paymentMethod || '',
+    }
+    const summaryDocument = buildRegistrationSummaryDocument({
+      registration: summaryRegistration,
+      tuition: config.tuition,
+      weeksById: weekById,
+      generatedAtLabel: new Date(sourceRecord?.created_at || Date.now()).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      applyLimitedDiscount: isLimitedDiscountActiveForDate(
+        config.tuition.discountEndDate,
+        sourceRecord?.created_at
+      ),
+      businessName: config.tuition.businessName || 'New England Wushu',
+      businessAddress: config.tuition.businessAddress || '',
+    })
+
+    const response = await fetch('/api/email/accounting-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        toEmail,
+        parentName: row.parentName,
+        camperName: row.camperName,
+        paymentMethod: row.paymentMethod,
+        summaryHtml: summaryDocument.html,
+        summaryText: summaryDocument.plainText,
+        pdfBase64: summaryDocument.pdfBase64,
+      }),
+    })
+
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      setErrorMessage(result?.error || 'Invoice send failed.')
+      setSendingInvoiceKey('')
+      return
+    }
+    setSavedMessage(result?.previewOnly ? 'Invoice preview generated. Configure SES to send live.' : `Invoice sent to ${toEmail}.`)
+    setSendingInvoiceKey('')
   }
 
   async function generateAiReplyDraft() {
@@ -682,6 +3193,187 @@ export default function AdminPage() {
     }))
   }
 
+  function updateFacilityImage(locationKey, index, value) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        [locationKey]: Array.from({ length: 6 }).map((_, imageIndex) =>
+          imageIndex === index ? value : current.media?.[locationKey]?.[imageIndex] || ''
+        ),
+      },
+    }))
+  }
+
+  function updateOvernightLandingImage(index, value) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        overnightLandingImageUrls: Array.from({
+          length: Math.max(
+            overnightLandingSlots.length,
+            Array.isArray(current.media.overnightLandingImageUrls)
+              ? current.media.overnightLandingImageUrls.length
+              : 0,
+            index + 1
+          ),
+        }).map((_, imageIndex) =>
+          imageIndex === index ? value : current.media.overnightLandingImageUrls?.[imageIndex] || ''
+        ),
+      },
+    }))
+  }
+
+  function updateOvernightRegistrationImage(index, value) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        overnightRegistrationImageUrls: Array.from({ length: 3 }).map((_, imageIndex) =>
+          imageIndex === index ? value : current.media.overnightRegistrationImageUrls?.[imageIndex] || ''
+        ),
+      },
+    }))
+  }
+
+  function appendOvernightLandingImages(urls = []) {
+    const normalizedUrls = urls.map((item) => String(item || '').trim()).filter(Boolean)
+    if (normalizedUrls.length === 0) {
+      return
+    }
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        overnightGalleryImageUrls: [
+          ...(Array.isArray(current.media.overnightGalleryImageUrls)
+            ? current.media.overnightGalleryImageUrls.filter(Boolean)
+            : []),
+          ...normalizedUrls,
+        ],
+      },
+    }))
+  }
+
+  function toggleOvernightGalleryLibrarySelection(url) {
+    const normalizedUrl = String(url || '').trim()
+    if (!normalizedUrl) {
+      return
+    }
+    setSelectedOvernightGalleryLibraryUrls((current) =>
+      current.includes(normalizedUrl)
+        ? current.filter((item) => item !== normalizedUrl)
+        : [...current, normalizedUrl]
+    )
+  }
+
+  function closeOvernightGalleryLibraryPicker() {
+    setOpenOvernightLandingLibraryPicker(null)
+    setSelectedOvernightGalleryLibraryUrls([])
+  }
+
+  function addSelectedOvernightGalleryLibraryImages() {
+    if (selectedOvernightGalleryLibraryUrls.length === 0) {
+      return
+    }
+    appendOvernightLandingImages(selectedOvernightGalleryLibraryUrls)
+    setSelectedOvernightGalleryLibraryUrls([])
+    setOpenOvernightLandingLibraryPicker(null)
+  }
+
+  function updateOvernightGalleryImage(index, value) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        overnightGalleryImageUrls: Array.from({
+          length: Math.max(
+            Array.isArray(current.media.overnightGalleryImageUrls)
+              ? current.media.overnightGalleryImageUrls.length
+              : 0,
+            index + 1
+          ),
+        }).map((_, imageIndex) =>
+          imageIndex === index ? value : current.media.overnightGalleryImageUrls?.[imageIndex] || ''
+        ),
+      },
+    }))
+  }
+
+  function removeOvernightGalleryImage(index) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        overnightGalleryImageUrls: (Array.isArray(current.media.overnightGalleryImageUrls)
+          ? current.media.overnightGalleryImageUrls
+          : []
+        ).filter((_, imageIndex) => imageIndex !== index),
+      },
+    }))
+    setOpenOvernightLandingLibraryPicker((current) => (current === index ? null : current))
+  }
+
+  function updateLevelUpScreenshotSlot(index, value) {
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        levelUpScreenshotUrls: Array.from({ length: levelUpScreenshotCaptions.length }).map(
+          (_, imageIndex) =>
+            imageIndex === index ? value : current.media.levelUpScreenshotUrls?.[imageIndex] || ''
+        ),
+      },
+    }))
+  }
+
+  function updateLevelUpScreenshotPosition(index, axis, value) {
+    const numeric = Number(value)
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        levelUpScreenshotPositions: Array.from({ length: levelUpScreenshotCaptions.length }).map(
+          (_, itemIndex) => {
+            const existing = current.media.levelUpScreenshotPositions?.[itemIndex] || {
+              x: 0,
+              y: 0,
+              zoom: 100,
+            }
+            if (itemIndex !== index) {
+              return existing
+            }
+            if (axis === 'zoom') {
+              return {
+                ...existing,
+                zoom: Number.isFinite(numeric) ? Math.max(80, Math.min(140, numeric)) : 100,
+              }
+            }
+            return {
+              ...existing,
+              [axis]: Number.isFinite(numeric) ? Math.max(-50, Math.min(50, numeric)) : 0,
+            }
+          }
+        ),
+      },
+    }))
+  }
+
+  function getLevelUpScreenshotStyle(index) {
+    const pos = config.media.levelUpScreenshotPositions?.[index] || { x: 0, y: 0, zoom: 100 }
+    return {
+      objectPosition: `${50 + Number(pos.x || 0)}% ${50 + Number(pos.y || 0)}%`,
+      transform: `scale(${Number(pos.zoom || 100) / 100})`,
+      transformOrigin: 'center center',
+    }
+  }
+
+  function assignLevelUpScreenshotFromLibrary(index, url) {
+    updateLevelUpScreenshotSlot(index, url)
+    setOpenLevelUpScreenshotLibraryPicker(null)
+  }
+
   function assignSurveyStepImageFromLibrary(index, url) {
     updateSurveyStepImage(index, url)
     setOpenStepLibraryPicker(null)
@@ -690,6 +3382,26 @@ export default function AdminPage() {
   function assignRegistrationStepImageFromLibrary(index, url) {
     updateRegistrationStepImage(index, url)
     setOpenRegistrationStepLibraryPicker(null)
+  }
+
+  function assignFacilityImageFromLibrary(locationKey, index, url) {
+    updateFacilityImage(locationKey, index, url)
+    setOpenFacilityLibraryPicker(null)
+  }
+
+  function assignOvernightLandingImageFromLibrary(index, url) {
+    updateOvernightLandingImage(index, url)
+    closeOvernightGalleryLibraryPicker()
+  }
+
+  function assignCampTypeShowcaseImageFromLibrary(campKey, index, url) {
+    updateCampTypeMedia(campKey, index, 'url', url)
+    setOpenCampTypeShowcaseLibraryPicker(null)
+  }
+
+  function assignOvernightRegistrationImageFromGallery(index, url) {
+    updateOvernightRegistrationImage(index, url)
+    setOpenOvernightRegistrationLibraryPicker(null)
   }
 
   async function uploadRegistrationStepImage(index, event) {
@@ -711,6 +3423,80 @@ export default function AdminPage() {
     const first = uploaded[0]
     if (first?.publicUrl) {
       updateRegistrationStepImage(index, first.publicUrl)
+    }
+
+    await refreshMediaLibrary()
+    setUploading(false)
+    event.target.value = ''
+  }
+
+  async function uploadOvernightLandingImage(index, event) {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) {
+      return
+    }
+
+    setUploading(true)
+    setErrorMessage('')
+
+    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
+    if (error) {
+      setErrorMessage(`Upload failed: ${error.message}`)
+      setUploading(false)
+      return
+    }
+
+    const first = uploaded[0]
+    if (first?.publicUrl) {
+      updateOvernightLandingImage(index, first.publicUrl)
+    }
+
+    await refreshMediaLibrary()
+    setUploading(false)
+    event.target.value = ''
+  }
+
+  async function uploadOvernightGalleryImages(event) {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) {
+      return
+    }
+
+    setUploading(true)
+    setErrorMessage('')
+
+    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
+    if (error) {
+      setErrorMessage(`Upload failed: ${error.message}`)
+      setUploading(false)
+      return
+    }
+
+    appendOvernightLandingImages(uploaded.map((item) => item.publicUrl))
+    await refreshMediaLibrary()
+    setUploading(false)
+    event.target.value = ''
+  }
+
+  async function uploadFacilityImage(locationKey, index, event) {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) {
+      return
+    }
+
+    setUploading(true)
+    setErrorMessage('')
+
+    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
+    if (error) {
+      setErrorMessage(`Upload failed: ${error.message}`)
+      setUploading(false)
+      return
+    }
+
+    const first = uploaded[0]
+    if (first?.publicUrl) {
+      updateFacilityImage(locationKey, index, first.publicUrl)
     }
 
     await refreshMediaLibrary()
@@ -740,6 +3526,169 @@ export default function AdminPage() {
     const pos = config.media.surveyStepImagePositions[index] || { x: 0, y: 0 }
     return {
       objectPosition: `${50 + Number(pos.x || 0)}% ${50 + Number(pos.y || 0)}%`,
+    }
+  }
+
+  function getLandingCarouselSlotUrl(slot) {
+    if (slot === 1) {
+      return (config.media.heroImageUrl || '').trim()
+    }
+    if (slot === 2) {
+      return (config.media.surveyStepImageUrls?.[0] || '').trim()
+    }
+    if (slot === 3) {
+      return (config.media.surveyStepImageUrls?.[1] || '').trim()
+    }
+    if (slot === 4) {
+      return (config.media.surveyStepImageUrls?.[2] || '').trim()
+    }
+    return ''
+  }
+
+  function updateLandingCarouselSlotUrl(slot, value) {
+    const safeValue = String(value || '')
+    if (slot === 1) {
+      updateMedia('heroImageUrl', safeValue)
+      return
+    }
+    if (slot >= 2 && slot <= 4) {
+      updateSurveyStepImage(slot - 2, safeValue)
+    }
+  }
+
+  function updateCampTypeShowcaseField(campKey, field, value) {
+    setConfig((current) => ({
+      ...current,
+      campTypeShowcase: {
+        ...current.campTypeShowcase,
+        [campKey]: {
+          ...current.campTypeShowcase[campKey],
+          [field]: value,
+        },
+      },
+    }))
+  }
+
+  function updateCampTypeHighlights(campKey, value) {
+    const nextHighlights = String(value || '')
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 6)
+    updateCampTypeShowcaseField(campKey, 'highlights', nextHighlights)
+  }
+
+  function updateCampTypeMedia(campKey, index, field, value) {
+    setConfig((current) => ({
+      ...current,
+      campTypeShowcase: {
+        ...current.campTypeShowcase,
+        [campKey]: {
+          ...current.campTypeShowcase[campKey],
+          media: Array.from({ length: 3 }).map((_, itemIndex) => {
+            const existing = current.campTypeShowcase?.[campKey]?.media?.[itemIndex] || { url: '', caption: '', tone: 'general' }
+            return itemIndex === index ? { ...existing, [field]: value } : existing
+          }),
+        },
+      },
+    }))
+  }
+
+  async function uploadCampTypeShowcaseImage(campKey, index, event) {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) {
+      return
+    }
+
+    setUploading(true)
+    setErrorMessage('')
+
+    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
+    if (error) {
+      setErrorMessage(`Upload failed: ${error.message}`)
+      setUploading(false)
+      return
+    }
+
+    const first = uploaded[0]
+    if (first?.publicUrl) {
+      updateCampTypeMedia(campKey, index, 'url', first.publicUrl)
+    }
+
+    await refreshMediaLibrary()
+    setUploading(false)
+    event.target.value = ''
+  }
+
+  async function uploadLandingCarouselSlotImage(slot, event) {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) {
+      return
+    }
+
+    setUploading(true)
+    setErrorMessage('')
+    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
+    if (error) {
+      setErrorMessage(`Upload failed: ${error.message}`)
+      setUploading(false)
+      event.target.value = ''
+      return
+    }
+
+    const first = uploaded[0]
+    if (first?.publicUrl) {
+      updateLandingCarouselSlotUrl(slot, first.publicUrl)
+    }
+
+    await refreshMediaLibrary()
+    setUploading(false)
+    event.target.value = ''
+  }
+
+  function assignLandingCarouselSlotImageFromLibrary(slot, url) {
+    updateLandingCarouselSlotUrl(slot, url)
+    setOpenLandingCarouselLibraryPicker(null)
+  }
+
+  function updateLandingCarouselImagePosition(index, axis, value) {
+    const numeric = Number(value)
+    setConfig((current) => ({
+      ...current,
+      media: {
+        ...current.media,
+        landingCarouselImagePositions: Array.from({ length: 4 }).map((_, itemIndex) => {
+          const existing = current.media.landingCarouselImagePositions?.[itemIndex] || {
+            x: 0,
+            y: 0,
+            zoom: 100,
+          }
+          if (itemIndex !== index) {
+            return existing
+          }
+
+          if (axis === 'zoom') {
+            return {
+              ...existing,
+              zoom: Number.isFinite(numeric) ? Math.max(80, Math.min(140, numeric)) : 100,
+            }
+          }
+
+          return {
+            ...existing,
+            [axis]: Number.isFinite(numeric) ? Math.max(-50, Math.min(50, numeric)) : 0,
+          }
+        }),
+      },
+    }))
+  }
+
+  function getLandingCarouselImageStyle(index) {
+    const pos = config.media.landingCarouselImagePositions?.[index] || { x: 0, y: 0, zoom: 100 }
+    return {
+      objectPosition: `${50 + Number(pos.x || 0)}% ${50 + Number(pos.y || 0)}%`,
+      transform: `scale(${Number(pos.zoom || 100) / 100})`,
+      transformOrigin: 'center center',
     }
   }
 
@@ -883,32 +3832,6 @@ export default function AdminPage() {
     event.target.value = ''
   }
 
-  async function uploadSurveyVideo(event) {
-    const fileList = event.target.files
-    if (!fileList || fileList.length === 0) {
-      return
-    }
-
-    setUploading(true)
-    setErrorMessage('')
-
-    const { uploaded, error } = await uploadFilesToMediaBucket(fileList)
-    if (error) {
-      setErrorMessage(`Upload failed: ${error.message}`)
-      setUploading(false)
-      return
-    }
-
-    const first = uploaded[0]
-    if (first?.publicUrl) {
-      updateMedia('surveyVideoUrl', first.publicUrl)
-    }
-
-    await refreshMediaLibrary()
-    setUploading(false)
-    event.target.value = ''
-  }
-
   async function uploadSurveyFlyer(event) {
     const fileList = event.target.files
     if (!fileList || fileList.length === 0) {
@@ -1005,9 +3928,9 @@ export default function AdminPage() {
     })
   }
 
-  function toggleWeek(programKey, weekId) {
+  function toggleWeek(programKey, weekId, field = 'selectedWeeks') {
     setConfig((current) => {
-      const existing = new Set(current.programs[programKey].selectedWeeks)
+      const existing = new Set(current.programs[programKey][field] || [])
       if (existing.has(weekId)) {
         existing.delete(weekId)
       } else {
@@ -1020,37 +3943,67 @@ export default function AdminPage() {
           ...current.programs,
           [programKey]: {
             ...current.programs[programKey],
-            selectedWeeks: Array.from(existing),
+            [field]: Array.from(existing),
           },
         },
       }
     })
   }
 
-  function selectAllWeeks(programKey) {
+  function selectAllWeeks(programKey, field = 'selectedWeeks') {
     setConfig((current) => ({
       ...current,
       programs: {
         ...current.programs,
         [programKey]: {
           ...current.programs[programKey],
-          selectedWeeks: weekOptions[programKey].map((option) => option.id),
+          [field]: weekOptions[programKey].map((option) => option.id),
         },
       },
     }))
   }
 
-  function clearWeeks(programKey) {
+  function clearWeeks(programKey, field = 'selectedWeeks') {
     setConfig((current) => ({
       ...current,
       programs: {
         ...current.programs,
         [programKey]: {
           ...current.programs[programKey],
-          selectedWeeks: [],
+          [field]: [],
         },
       },
     }))
+  }
+
+  function renderBucketImagePicker(fieldLabel, selectedUrl, onPick) {
+    if (imageLibrary.length === 0) {
+      return <p className="subhead">No bucket images yet.</p>
+    }
+
+    return (
+      <div className="inlineMediaPicker">
+        <p className="subhead">{fieldLabel}: choose from bucket previews</p>
+        <div className="inlineMediaPickerGrid">
+          {imageLibrary.map((item) => (
+            <button
+              key={`inline-${fieldLabel}-${item.path}`}
+              type="button"
+              className={`inlineMediaPickerItem ${selectedUrl === item.publicUrl ? 'selected' : ''}`}
+              onClick={() => onPick(item.publicUrl)}
+            >
+              <img
+                src={getResizedPreviewUrl(item.publicUrl, 240, 140)}
+                alt={item.name}
+                loading="lazy"
+                decoding="async"
+              />
+              <span>{item.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   async function saveChanges() {
@@ -1104,8 +4057,54 @@ export default function AdminPage() {
       </section>
 
       <section className="card section">
+        <div className="adminTopTabs" role="tablist" aria-label="Admin sections">
+          {adminTabBlueprint.map((tab) => {
+            const count = tabEmptyCounts[tab.id] || 0
+            const active = activeAdminTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`adminTopTabBtn ${active ? 'active' : ''}`}
+                onClick={() => setActiveAdminTab(tab.id)}
+              >
+                <span>{tab.label}</span>
+                {count > 0 ? (
+                  <span className="adminTabIssueWrap">
+                    <span className="adminTabIssueDot" aria-hidden="true" />
+                    <span className="adminTabIssueBadge">{count}</span>
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      {activeAdminTab === 'media' ? (
+      <section className="card section">
         <h2>Media</h2>
         <p className="subhead">Bucket: <code>{getMediaBucketName()}</code></p>
+        <div className="adminSubTabs" role="tablist" aria-label="Media sections">
+          {mediaSubtabBlueprint.map((tab) => {
+            const active = activeMediaSubtab === tab.id
+            return (
+              <button
+                key={`media-subtab-${tab.id}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`adminSubTabBtn ${active ? 'active' : ''}`}
+                onClick={() => setActiveMediaSubtab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+        {activeMediaSubtab === 'overview' ? (
         <div className="adminGrid">
           <label>
             Welcome logo URL
@@ -1115,6 +4114,9 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('welcomeLogoUrl', event.target.value)}
               placeholder="https://..."
             />
+            {renderBucketImagePicker('Welcome logo', config.media.welcomeLogoUrl, (value) =>
+              updateMedia('welcomeLogoUrl', value)
+            )}
           </label>
 
           <label>
@@ -1130,6 +4132,9 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('heroImageUrl', event.target.value)}
               placeholder="https://..."
             />
+            {renderBucketImagePicker('Hero image', config.media.heroImageUrl, (value) =>
+              updateMedia('heroImageUrl', value)
+            )}
           </label>
 
           <label>
@@ -1140,11 +4145,7 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('surveyVideoUrl', event.target.value)}
               placeholder="https://..."
             />
-          </label>
-
-          <label>
-            Upload survey video
-            <input type="file" accept="video/*" onChange={uploadSurveyVideo} />
+            <small>Video is URL-only (YouTube or direct video link).</small>
           </label>
 
           <label>
@@ -1155,6 +4156,9 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('surveyStep1FlyerUrl', event.target.value)}
               placeholder="https://..."
             />
+            {renderBucketImagePicker('Step 1 flyer', config.media.surveyStep1FlyerUrl, (value) =>
+              updateMedia('surveyStep1FlyerUrl', value)
+            )}
           </label>
 
           <label>
@@ -1170,6 +4174,9 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('surveyMobileBgUrl', event.target.value)}
               placeholder="https://..."
             />
+            {renderBucketImagePicker('Mobile background', config.media.surveyMobileBgUrl, (value) =>
+              updateMedia('surveyMobileBgUrl', value)
+            )}
           </label>
 
           <label>
@@ -1187,6 +4194,9 @@ export default function AdminPage() {
             <input type="file" accept="image/*" onChange={uploadWeChatQr} />
           </label>
         </div>
+        ) : null}
+        {activeMediaSubtab === 'overview' || activeMediaSubtab === 'carousel' ? (
+        <>
         {config.media.welcomeLogoUrl ? (
           <div className="mediaLogoPreview">
             <p className="subhead">Current welcome logo preview</p>
@@ -1198,6 +4208,414 @@ export default function AdminPage() {
             />
           </div>
         ) : null}
+        {config.media.heroImageUrl ? (
+          <div className="mediaLogoPreview">
+            <p className="subhead">Desktop hero preview (shown above the two start choices)</p>
+            <img
+              src={getResizedPreviewUrl(config.media.heroImageUrl, 1280, 640)}
+              alt="Desktop hero preview"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        ) : null}
+        <section className="subCard">
+          <h3>Landing page media map (what to edit)</h3>
+          <p className="subhead">
+            Each item below maps directly to a visible section on the main landing page.
+          </p>
+          <div className="journeyGrid">
+            <article className="journeyCard">
+              <p className="journeyDay">Welcome Header</p>
+              <h4>Welcome logo</h4>
+              <p>
+                <strong>Field:</strong> Welcome logo URL
+              </p>
+              <p>
+                <strong>Status:</strong>{' '}
+                {config.media.welcomeLogoUrl ? 'Assigned' : 'Missing'}
+              </p>
+            </article>
+            <article className="journeyCard">
+              <p className="journeyDay">Desktop Landing Top</p>
+              <h4>Hero image above start choices</h4>
+              <p>
+                <strong>Field:</strong> Hero image URL
+              </p>
+              <p>
+                <strong>Status:</strong>{' '}
+                {config.media.heroImageUrl ? 'Assigned' : 'Missing'}
+              </p>
+            </article>
+            <article className="journeyCard">
+              <p className="journeyDay">Landing Phone Carousel</p>
+              <h4>Level Up screenshots</h4>
+              <p>
+                <strong>Slots:</strong>{' '}
+                {
+                  config.media.levelUpScreenshotUrls.filter((url) => url && url.trim().length > 0).length
+                }{' '}
+                / {levelUpScreenshotCaptions.length} assigned
+              </p>
+              <p>
+                <strong>Edit area:</strong> Level Up screenshot slots
+              </p>
+            </article>
+            <article className="journeyCard">
+              <p className="journeyDay">Program Finder (Survey)</p>
+              <h4>Survey step images</h4>
+              <p>
+                <strong>Slots:</strong>{' '}
+                {
+                  config.media.surveyStepImageUrls.filter((url) => url && url.trim().length > 0).length
+                }{' '}
+                / {surveyStepQuestions.length} assigned
+              </p>
+              <p>
+                <strong>Edit area:</strong> Program Finder step images
+              </p>
+            </article>
+            <article className="journeyCard">
+              <p className="journeyDay">Registration Flow</p>
+              <h4>Registration step visuals</h4>
+              <p>
+                <strong>Slots:</strong>{' '}
+                {
+                  (config.media.registrationStepImageUrls || []).filter(
+                    (url) => url && url.trim().length > 0
+                  ).length
+                }{' '}
+                / {registrationStepQuestions.length} assigned
+              </p>
+              <p>
+                <strong>Edit area:</strong> Registration step images
+              </p>
+            </article>
+            <article className="journeyCard">
+              <p className="journeyDay">Overnight Landing</p>
+              <h4>Overnight page visuals</h4>
+              <p>
+                <strong>Slots:</strong>{' '}
+                {
+                  (config.media.overnightLandingImageUrls || []).filter(
+                    (url) => url && url.trim().length > 0
+                  ).length
+                }{' '}
+                / {overnightLandingSlots.length} assigned
+              </p>
+              <p>
+                <strong>Gallery:</strong> {(config.media.overnightGalleryImageUrls || []).filter((url) => url && url.trim().length > 0).length} images
+              </p>
+              <p>
+                <strong>Edit area:</strong> Overnight landing page images
+              </p>
+            </article>
+          </div>
+        </section>
+        <section className="subCard">
+          <h3>Landing hero carousel slot guide</h3>
+          <p className="subhead">
+            Use this when selecting images so each carousel position matches the correct caption.
+          </p>
+          <div className="journeyGrid">
+            {landingCarouselSlotGuide.map((item) => (
+              <article key={`carousel-guide-${item.slot}`} className="journeyCard">
+                <p className="journeyDay">Slot {item.slot}</p>
+                <h4>{item.binding}</h4>
+                <p>
+                  <strong>Source:</strong> {item.sourceLabel}
+                </p>
+                <p>
+                  <strong>Caption:</strong> {item.caption}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="subCard">
+          <h3>Selected landing carousel photos</h3>
+          <p className="subhead">
+            This shows exactly what is currently used in the landing carousel on the main page. Use X/Y/Zoom to match the live viewport.
+          </p>
+          <div className="surveyStepAssetGrid">
+            {landingCarouselSlotGuide.map((item) => {
+              const slotUrl = getLandingCarouselSlotUrl(item.slot)
+              const slotIndex = item.slot - 1
+              const slotPos = config.media.landingCarouselImagePositions?.[slotIndex] || {
+                x: 0,
+                y: 0,
+                zoom: 100,
+              }
+              return (
+                <article key={`carousel-selected-${item.slot}`} className="surveyStepAssetCard">
+                  <h4>Slot {item.slot}: {item.binding}</h4>
+                  <div className="surveyContextFrame">
+                    {slotUrl ? (
+                      <img
+                        src={getResizedPreviewUrl(slotUrl, 640, 360)}
+                        alt={`Landing carousel slot ${item.slot}`}
+                        style={getLandingCarouselImageStyle(slotIndex)}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    ) : (
+                      <div className="surveyVisualPlaceholder">No image assigned</div>
+                    )}
+                  </div>
+                  <p className="subhead">
+                    <strong>Source:</strong> {item.sourceLabel}
+                  </p>
+                  <p className="subhead">
+                    <strong>Caption:</strong> {item.caption}
+                  </p>
+                  <p className="subhead">
+                    <strong>Current URL:</strong> {slotUrl || 'None'}
+                  </p>
+                  <label>
+                    Image URL
+                    <input
+                      type="url"
+                      value={slotUrl}
+                      onChange={(event) => updateLandingCarouselSlotUrl(item.slot, event.target.value)}
+                      placeholder="https://..."
+                    />
+                  </label>
+                  <div className="adminActions">
+                    <label className="button secondary">
+                      Upload from computer
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => uploadLandingCarouselSlotImage(item.slot, event)}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() =>
+                        setOpenLandingCarouselLibraryPicker((current) =>
+                          current === item.slot ? null : item.slot
+                        )
+                      }
+                    >
+                      {openLandingCarouselLibraryPicker === item.slot
+                        ? 'Close media library'
+                        : 'Choose from media library'}
+                    </button>
+                  </div>
+                  {openLandingCarouselLibraryPicker === item.slot ? (
+                    <div className="surveyLibraryPickerGrid">
+                      {imageLibrary.length === 0 ? (
+                        <p className="subhead">No image files found in media library.</p>
+                      ) : (
+                        imageLibrary.map((libraryItem) => (
+                          <button
+                            key={`landing-carousel-${item.slot}-${libraryItem.path}`}
+                            type="button"
+                            className="surveyLibraryPickerItem"
+                            onClick={() => assignLandingCarouselSlotImageFromLibrary(item.slot, libraryItem.publicUrl)}
+                          >
+                            <img
+                              src={getResizedPreviewUrl(libraryItem.publicUrl, 260, 146)}
+                              alt={libraryItem.name}
+                              loading="lazy"
+                              decoding="async"
+                            />
+                            <span>{libraryItem.name}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                  <div className="sliderRow">
+                    <label>
+                      X ({Math.round(slotPos.x || 0)})
+                      <input
+                        type="range"
+                        min="-50"
+                        max="50"
+                        value={slotPos.x || 0}
+                        onChange={(event) =>
+                          updateLandingCarouselImagePosition(slotIndex, 'x', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Y ({Math.round(slotPos.y || 0)})
+                      <input
+                        type="range"
+                        min="-50"
+                        max="50"
+                        value={slotPos.y || 0}
+                        onChange={(event) =>
+                          updateLandingCarouselImagePosition(slotIndex, 'y', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Zoom ({Math.round(slotPos.zoom || 100)}%)
+                      <input
+                        type="range"
+                        min="80"
+                        max="140"
+                        value={slotPos.zoom || 100}
+                        onChange={(event) =>
+                          updateLandingCarouselImagePosition(slotIndex, 'zoom', event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+        <section className="subCard">
+          <h3>Camp type showcase editor</h3>
+          <p className="subhead">
+            Edit the copy and photo slots used in the "Choose Your Camp Type" section on the landing page.
+          </p>
+          <div className="surveyStepAssetGrid">
+            {campTypeShowcaseAdminCards.map((camp) => {
+              const entry = config.campTypeShowcase?.[camp.key] || defaultAdminConfig.campTypeShowcase[camp.key]
+              return (
+                <article key={`camp-type-showcase-admin-${camp.key}`} className="surveyStepAssetCard">
+                  <h4>{camp.label}</h4>
+                  <label>
+                    Title
+                    <input
+                      type="text"
+                      value={entry.title || ''}
+                      onChange={(event) => updateCampTypeShowcaseField(camp.key, 'title', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Summary
+                    <textarea
+                      rows={3}
+                      value={entry.summary || ''}
+                      onChange={(event) => updateCampTypeShowcaseField(camp.key, 'summary', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Best fit text
+                    <textarea
+                      rows={3}
+                      value={entry.suitedFor || ''}
+                      onChange={(event) => updateCampTypeShowcaseField(camp.key, 'suitedFor', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Highlights
+                    <textarea
+                      rows={5}
+                      value={(entry.highlights || []).join('\n')}
+                      onChange={(event) => updateCampTypeHighlights(camp.key, event.target.value)}
+                      placeholder="One highlight per line"
+                    />
+                  </label>
+                  <div className="surveyStepAssetGrid">
+                    {(entry.media || []).map((item, index) => (
+                      <article key={`camp-type-showcase-media-${camp.key}-${index}`} className="surveyStepAssetCard">
+                        <h4>Photo Slot {index + 1}</h4>
+                        <div className="surveyContextFrame">
+                          {item.url ? (
+                            <img
+                              src={getResizedPreviewUrl(item.url, 640, 360)}
+                              alt={`${camp.label} slot ${index + 1}`}
+                              loading="lazy"
+                              decoding="async"
+                            />
+                          ) : (
+                            <div className="surveyVisualPlaceholder">No photo assigned</div>
+                          )}
+                        </div>
+                        <label>
+                          Photo URL
+                          <input
+                            type="url"
+                            value={item.url || ''}
+                            onChange={(event) => updateCampTypeMedia(camp.key, index, 'url', event.target.value)}
+                            placeholder="https://..."
+                          />
+                        </label>
+                        <div className="adminActions">
+                          <label className="button secondary">
+                            Upload from computer
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => uploadCampTypeShowcaseImage(camp.key, index, event)}
+                              style={{ display: 'none' }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() =>
+                              setOpenCampTypeShowcaseLibraryPicker((current) =>
+                                current?.campKey === camp.key && current?.index === index ? null : { campKey: camp.key, index }
+                              )
+                            }
+                          >
+                            {openCampTypeShowcaseLibraryPicker?.campKey === camp.key && openCampTypeShowcaseLibraryPicker?.index === index
+                              ? 'Close media library'
+                              : 'Choose from media library'}
+                          </button>
+                        </div>
+                        {openCampTypeShowcaseLibraryPicker?.campKey === camp.key && openCampTypeShowcaseLibraryPicker?.index === index ? (
+                          <div className="surveyLibraryPickerGrid">
+                            {imageLibrary.length === 0 ? (
+                              <p className="subhead">No image files found in media library.</p>
+                            ) : (
+                              imageLibrary.map((libraryItem) => (
+                                <button
+                                  key={`camp-type-library-${camp.key}-${index}-${libraryItem.path}`}
+                                  type="button"
+                                  className="surveyLibraryPickerItem"
+                                  onClick={() => assignCampTypeShowcaseImageFromLibrary(camp.key, index, libraryItem.publicUrl)}
+                                >
+                                  <img
+                                    src={getResizedPreviewUrl(libraryItem.publicUrl, 260, 146)}
+                                    alt={libraryItem.name}
+                                    loading="lazy"
+                                    decoding="async"
+                                  />
+                                  <span>{libraryItem.name}</span>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        ) : null}
+                        <label>
+                          Caption
+                          <textarea
+                            rows={3}
+                            value={item.caption || ''}
+                            onChange={(event) => updateCampTypeMedia(camp.key, index, 'caption', event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Banner tone
+                          <select
+                            value={item.tone || 'general'}
+                            onChange={(event) => updateCampTypeMedia(camp.key, index, 'tone', event.target.value)}
+                          >
+                            <option value="general">General</option>
+                            <option value="bootcamp">Boot Camp</option>
+                            <option value="overnight">Overnight</option>
+                            <option value="lunch">Lunch</option>
+                          </select>
+                        </label>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
         {config.media.surveyVideoUrl ? (
           <div className="adminSurveyVideoPreview">
             <p className="subhead">Current survey video preview</p>
@@ -1235,7 +4653,10 @@ export default function AdminPage() {
             />
           </div>
         ) : null}
+        </>
+        ) : null}
 
+        {activeMediaSubtab === 'levelup' ? (
         <div className="adminGrid mediaControls">
           <label>
             Manual screenshot URL
@@ -1268,9 +4689,14 @@ export default function AdminPage() {
               onChange={(event) => updateMedia('wechatQrUrl', event.target.value)}
               placeholder="https://..."
             />
+            {renderBucketImagePicker('WeChat QR', config.media.wechatQrUrl, (value) =>
+              updateMedia('wechatQrUrl', value)
+            )}
           </label>
         </div>
+        ) : null}
 
+        {activeMediaSubtab === 'levelup' ? (
         <div className="adminActions">
           <button
             type="button"
@@ -1280,7 +4706,183 @@ export default function AdminPage() {
             Add manual URL to phone list
           </button>
         </div>
+        ) : null}
+        {activeMediaSubtab === 'levelup' ? (
+        <section className="subCard">
+          <h3>Level Up live viewport</h3>
+          <p className="subhead">Use this exact phone viewport while editing screenshot size, X, Y, and zoom.</p>
+          {config.media.levelUpScreenshotUrls.length === 0 ? (
+            <p className="subhead">No screenshots selected yet.</p>
+          ) : (
+            <>
+              <div className="adminPhoneStage">
+                <div className="phoneFrame adminPhoneFrame">
+                  <div className="phoneNotch" />
+                  <div className="phoneScreen">
+                    <img
+                      className="phoneImage"
+                      src={getResizedPreviewUrl(activePreviewUrl, 520, 920)}
+                      alt="Phone render preview"
+                      style={{
+                        width: `${config.media.levelUpScreenshotSize}%`,
+                        ...getLevelUpScreenshotStyle(activePreviewIndex),
+                      }}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </div>
+                </div>
+              </div>
+              <p className="subhead">Tap a screenshot to preview and adjust in this same viewport.</p>
+              <div className="thumbGrid">
+                {config.media.levelUpScreenshotUrls.map((url, index) => (
+                  <div
+                    key={`${url}-${index}-live`}
+                    className={`thumbItem ${activePreviewIndex === index ? 'selected' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="thumbPreviewBtn"
+                      onClick={() => setActivePreviewIndex(index)}
+                    >
+                      <img
+                        src={getResizedPreviewUrl(url, 280, 380)}
+                        alt="Selected screenshot preview"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    </button>
+                    <p className="subhead">
+                      <strong>Slot {index + 1}:</strong> {getLevelUpScreenshotCaption(index)}
+                    </p>
+                    <div className="thumbActions">
+                      <button type="button" className="button secondary" onClick={() => removeScreenshotUrl(url)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+        ) : null}
 
+        {activeMediaSubtab === 'levelup' ? (
+        <section className="subCard">
+          <h3>Level Up screenshot slots (main landing page)</h3>
+          <p className="subhead">
+            Assign each slot by caption so the phone carousel shows the right screenshot with the
+            right message.
+          </p>
+          <div className="surveyStepAssetGrid">
+            {levelUpScreenshotCaptions.map((caption, index) => (
+              <article key={`level-up-slot-${index}`} className="surveyStepAssetCard">
+                <h4>Slot {index + 1}</h4>
+                <p className="subhead">
+                  <strong>Caption:</strong> {caption}
+                </p>
+                <div className="surveyContextFrame">
+                  {config.media.levelUpScreenshotUrls?.[index] ? (
+                    <img
+                      src={getResizedPreviewUrl(config.media.levelUpScreenshotUrls[index], 640, 360)}
+                      alt={`Level Up screenshot slot ${index + 1}`}
+                      style={getLevelUpScreenshotStyle(index)}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div className="surveyVisualPlaceholder">No screenshot assigned</div>
+                  )}
+                </div>
+                <label>
+                  Screenshot URL
+                  <input
+                    type="url"
+                    value={config.media.levelUpScreenshotUrls?.[index] || ''}
+                    onChange={(event) => updateLevelUpScreenshotSlot(index, event.target.value)}
+                    placeholder="https://..."
+                  />
+                </label>
+                <div className="sliderRow">
+                  <label>
+                    X ({Math.round(config.media.levelUpScreenshotPositions?.[index]?.x || 0)})
+                    <input
+                      type="range"
+                      min="-50"
+                      max="50"
+                      value={config.media.levelUpScreenshotPositions?.[index]?.x || 0}
+                      onChange={(event) => updateLevelUpScreenshotPosition(index, 'x', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Y ({Math.round(config.media.levelUpScreenshotPositions?.[index]?.y || 0)})
+                    <input
+                      type="range"
+                      min="-50"
+                      max="50"
+                      value={config.media.levelUpScreenshotPositions?.[index]?.y || 0}
+                      onChange={(event) => updateLevelUpScreenshotPosition(index, 'y', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Zoom ({Math.round(config.media.levelUpScreenshotPositions?.[index]?.zoom || 100)}%)
+                    <input
+                      type="range"
+                      min="80"
+                      max="140"
+                      value={config.media.levelUpScreenshotPositions?.[index]?.zoom || 100}
+                      onChange={(event) => updateLevelUpScreenshotPosition(index, 'zoom', event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="adminActions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() =>
+                      setOpenLevelUpScreenshotLibraryPicker((current) =>
+                        current === index ? null : index
+                      )
+                    }
+                  >
+                    {openLevelUpScreenshotLibraryPicker === index
+                      ? 'Close media library'
+                      : 'Choose from media library'}
+                  </button>
+                </div>
+                {openLevelUpScreenshotLibraryPicker === index ? (
+                  <div className="surveyLibraryPickerGrid">
+                    {imageLibrary.length === 0 ? (
+                      <p className="subhead">No image files found in media library.</p>
+                    ) : (
+                      imageLibrary.map((item) => (
+                        <button
+                          key={`level-up-slot-${index}-${item.path}`}
+                          type="button"
+                          className="surveyLibraryPickerItem"
+                          onClick={() => assignLevelUpScreenshotFromLibrary(index, item.publicUrl)}
+                        >
+                          <img
+                            src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                            alt={item.name}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <span>{item.name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+        ) : null}
+
+        {activeMediaSubtab === 'steps' ? (
+        <>
         <section className="subCard">
           <h3>Program Finder step images</h3>
           <p className="subhead">Assign one image per survey step/question.</p>
@@ -1339,38 +4941,29 @@ export default function AdminPage() {
                     onClick={() =>
                       setOpenStepLibraryPicker((current) => (current === index ? null : index))
                     }
-                    disabled={mediaLibrary.length === 0}
+                    disabled={imageLibrary.length === 0}
                   >
                     {openStepLibraryPicker === index ? 'Close media library' : 'Choose from media library'}
                   </button>
                 </div>
                 {openStepLibraryPicker === index ? (
                   <div className="surveyLibraryPickerGrid">
-                    {mediaLibrary.length === 0 ? (
-                      <p className="subhead">No media files found.</p>
+                    {imageLibrary.length === 0 ? (
+                      <p className="subhead">No image files found in media library.</p>
                     ) : (
-                      mediaLibrary.map((item) => (
+                      imageLibrary.map((item) => (
                         <button
                           key={`step-${index}-${item.path}`}
                           type="button"
                           className="surveyLibraryPickerItem"
                           onClick={() => assignSurveyStepImageFromLibrary(index, item.publicUrl)}
                         >
-                          {isVideoUrl(item.publicUrl) ? (
-                            <video
-                              src={item.publicUrl}
-                              muted
-                              playsInline
-                              preload="metadata"
-                            />
-                          ) : (
-                            <img
-                              src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
-                              alt={item.name}
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          )}
+                          <img
+                            src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                            alt={item.name}
+                            loading="lazy"
+                            decoding="async"
+                          />
                           <span>{item.name}</span>
                         </button>
                       ))
@@ -1432,26 +5025,22 @@ export default function AdminPage() {
                 </div>
                 {openRegistrationStepLibraryPicker === index ? (
                   <div className="surveyLibraryPickerGrid">
-                    {mediaLibrary.length === 0 ? (
-                      <p className="subhead">No media files found in bucket.</p>
+                    {imageLibrary.length === 0 ? (
+                      <p className="subhead">No image files found in media library.</p>
                     ) : (
-                      mediaLibrary.map((item) => (
+                      imageLibrary.map((item) => (
                         <button
                           key={`registration-step-${index}-${item.path}`}
                           type="button"
                           className="surveyLibraryPickerItem"
                           onClick={() => assignRegistrationStepImageFromLibrary(index, item.publicUrl)}
                         >
-                          {isVideoUrl(item.publicUrl) ? (
-                            <video src={item.publicUrl} muted playsInline preload="metadata" />
-                          ) : (
-                            <img
-                              src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
-                              alt={item.name}
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          )}
+                          <img
+                            src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                            alt={item.name}
+                            loading="lazy"
+                            decoding="async"
+                          />
                           <span>{item.name}</span>
                         </button>
                       ))
@@ -1464,64 +5053,420 @@ export default function AdminPage() {
         </section>
 
         <section className="subCard">
+          <h3>Location facility photos</h3>
+          <p className="subhead">
+            These photo sets appear in registration step 1 based on the family&apos;s selected location. Families can open a small album to preview the facility before continuing.
+          </p>
+          {[
+            {
+              key: 'burlingtonFacilityImageUrls',
+              label: 'Burlington facility photos',
+              locationCode: 'burlington',
+            },
+            {
+              key: 'actonFacilityImageUrls',
+              label: 'Acton facility photos',
+              locationCode: 'acton',
+            },
+          ].map((group) => (
+            <div key={group.key} className="subCard" style={{ marginTop: '1rem' }}>
+              <h4>{group.label}</h4>
+              <div className="surveyStepAssetGrid">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <article key={`${group.key}-${index}`} className="surveyStepAssetCard">
+                    <h4>Photo {index + 1}</h4>
+                    <div className="surveyContextFrame">
+                      {config.media?.[group.key]?.[index] ? (
+                        <img
+                          src={getResizedPreviewUrl(config.media[group.key][index], 640, 360)}
+                          alt={`${group.label} photo ${index + 1}`}
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : (
+                        <div className="surveyVisualPlaceholder">No image assigned</div>
+                      )}
+                    </div>
+                    <label>
+                      Image URL
+                      <input
+                        type="url"
+                        value={config.media?.[group.key]?.[index] || ''}
+                        onChange={(event) => updateFacilityImage(group.key, index, event.target.value)}
+                        placeholder="https://..."
+                      />
+                    </label>
+                    <div className="adminActions">
+                      <label className="button secondary">
+                        Upload from computer
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => uploadFacilityImage(group.key, index, event)}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() =>
+                          setOpenFacilityLibraryPicker((current) =>
+                            current?.locationCode === group.locationCode && current?.index === index
+                              ? null
+                              : { locationCode: group.locationCode, index }
+                          )
+                        }
+                      >
+                        {openFacilityLibraryPicker?.locationCode === group.locationCode &&
+                        openFacilityLibraryPicker?.index === index
+                          ? 'Close media library'
+                          : 'Choose from media library'}
+                      </button>
+                    </div>
+                    {openFacilityLibraryPicker?.locationCode === group.locationCode &&
+                    openFacilityLibraryPicker?.index === index ? (
+                      <div className="surveyLibraryPickerGrid">
+                        {imageLibrary.length === 0 ? (
+                          <p className="subhead">No image files found in media library.</p>
+                        ) : (
+                          imageLibrary.map((item) => (
+                            <button
+                              key={`${group.key}-${index}-${item.path}`}
+                              type="button"
+                              className="surveyLibraryPickerItem"
+                              onClick={() => assignFacilityImageFromLibrary(group.key, index, item.publicUrl)}
+                            >
+                              <img
+                                src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                                alt={item.name}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <span>{item.name}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="subCard">
+          <h3>Overnight Top Carousel Slot Guide</h3>
+          <p className="subhead">
+            These 6 images control the overnight hero carousel and highlighted landing visuals on <code>/overnight</code>.
+          </p>
+          <div className="journeyGrid">
+            {overnightLandingSlots.map((slot, index) => (
+              <article key={`overnight-slot-guide-${slot.key}`} className="journeyCard">
+                <p className="journeyDay">Slot {index + 1}</p>
+                <h4>{slot.label}</h4>
+                <p>
+                  <strong>Caption:</strong> {slot.caption}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="subCard">
+          <h3>Overnight landing page images</h3>
+          <p className="subhead">Assign the 6 fixed visuals used in the overnight top carousel and section highlights. The gallery below is unlimited and managed separately.</p>
+          <div className="adminActions" style={{ marginBottom: '1rem' }}>
+            <label className="button secondary">
+              Mass Upload Overnight Gallery Photos
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={uploadOvernightGalleryImages}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <h4>Overnight gallery manager</h4>
+            <p className="subhead">This is the unlimited overnight gallery. Images here come from the mass upload button or can be selected from your uploaded media.</p>
+            <div className="adminActions" style={{ marginBottom: '0.85rem' }}>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => {
+                  setOpenOvernightLandingLibraryPicker((current) => {
+                    const next = current === 'gallery' ? null : 'gallery'
+                    if (next !== 'gallery') {
+                      setSelectedOvernightGalleryLibraryUrls([])
+                    }
+                    return next
+                  })
+                }}
+              >
+                {openOvernightLandingLibraryPicker === 'gallery' ? 'Close media library' : 'Add from media library'}
+              </button>
+              {openOvernightLandingLibraryPicker === 'gallery' ? (
+                <>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setSelectedOvernightGalleryLibraryUrls([])}
+                    disabled={selectedOvernightGalleryLibraryUrls.length === 0}
+                  >
+                    Clear selection
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={addSelectedOvernightGalleryLibraryImages}
+                    disabled={selectedOvernightGalleryLibraryUrls.length === 0}
+                  >
+                    Add selected ({selectedOvernightGalleryLibraryUrls.length})
+                  </button>
+                </>
+              ) : null}
+            </div>
+            {openOvernightLandingLibraryPicker === 'gallery' ? (
+              <div className="surveyLibraryPickerGrid" style={{ marginBottom: '0.85rem' }}>
+                {imageLibrary.length === 0 ? (
+                  <p className="subhead">No image files found in media library.</p>
+                ) : (
+                  imageLibrary.map((item) => (
+                    <button
+                      key={`overnight-gallery-library-${item.path}`}
+                      type="button"
+                      className={`surveyLibraryPickerItem ${
+                        selectedOvernightGalleryLibraryUrls.includes(item.publicUrl) ? 'selected' : ''
+                      }`}
+                      onClick={() => toggleOvernightGalleryLibrarySelection(item.publicUrl)}
+                    >
+                      <img
+                        src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                        alt={item.name}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <span>{item.name}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+            {(config.media.overnightGalleryImageUrls || []).filter(Boolean).length === 0 ? (
+              <p className="subhead">No overnight gallery images selected yet.</p>
+            ) : (
+              <div className="surveyStepAssetGrid">
+                {config.media.overnightGalleryImageUrls
+                  .map((url, index) => ({ url: String(url || '').trim(), index }))
+                  .filter((item) => item.url)
+                  .map((item) => (
+                    <article key={`overnight-gallery-manager-${item.index}`} className="surveyStepAssetCard">
+                      <div className="surveyContextFrame">
+                        <img
+                          src={getResizedPreviewUrl(item.url, 640, 360)}
+                          alt={`Overnight gallery ${item.index + 1}`}
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </div>
+                      <p className="subhead">
+                        <strong>Gallery image {item.index + 1}</strong>
+                      </p>
+                      <label>
+                        Image URL
+                        <input
+                          type="url"
+                          value={item.url}
+                          onChange={(event) => updateOvernightGalleryImage(item.index, event.target.value)}
+                          placeholder="https://..."
+                        />
+                      </label>
+                      <div className="adminActions">
+                        <button
+                          type="button"
+                          className="button secondary"
+                          onClick={() => removeOvernightGalleryImage(item.index)}
+                        >
+                          Remove from gallery
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+              </div>
+            )}
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <h4>Overnight registration flow images</h4>
+            <p className="subhead">Choose up to 3 centered images from the overnight gallery to display above the overnight registration form.</p>
+            <div className="surveyStepAssetGrid">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <article key={`overnight-registration-image-${index}`} className="surveyStepAssetCard">
+                  <h4>Registration image {index + 1}</h4>
+                  <div className="surveyContextFrame">
+                    {config.media.overnightRegistrationImageUrls?.[index] ? (
+                      <img
+                        src={getResizedPreviewUrl(config.media.overnightRegistrationImageUrls[index], 640, 360)}
+                        alt={`Overnight registration image ${index + 1}`}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    ) : (
+                      <div className="surveyVisualPlaceholder">No image assigned</div>
+                    )}
+                  </div>
+                  <label>
+                    Image URL
+                    <input
+                      type="url"
+                      value={config.media.overnightRegistrationImageUrls?.[index] || ''}
+                      onChange={(event) => updateOvernightRegistrationImage(index, event.target.value)}
+                      placeholder="https://..."
+                    />
+                  </label>
+                  <div className="adminActions">
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() =>
+                        setOpenOvernightRegistrationLibraryPicker((current) => (current === index ? null : index))
+                      }
+                      disabled={(config.media.overnightGalleryImageUrls || []).filter(Boolean).length === 0}
+                    >
+                      {openOvernightRegistrationLibraryPicker === index ? 'Close overnight gallery' : 'Choose from overnight gallery'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => updateOvernightRegistrationImage(index, '')}
+                    >
+                      Clear image
+                    </button>
+                  </div>
+                  {openOvernightRegistrationLibraryPicker === index ? (
+                    <div className="surveyLibraryPickerGrid">
+                      {(config.media.overnightGalleryImageUrls || []).filter(Boolean).length === 0 ? (
+                        <p className="subhead">Add images to the overnight gallery first.</p>
+                      ) : (
+                        config.media.overnightGalleryImageUrls
+                          .map((url, galleryIndex) => ({ url: String(url || '').trim(), galleryIndex }))
+                          .filter((item) => item.url)
+                          .map((item) => (
+                            <button
+                              key={`overnight-registration-gallery-${index}-${item.galleryIndex}`}
+                              type="button"
+                              className="surveyLibraryPickerItem"
+                              onClick={() => assignOvernightRegistrationImageFromGallery(index, item.url)}
+                            >
+                              <img
+                                src={getResizedPreviewUrl(item.url, 260, 146)}
+                                alt={`Overnight gallery option ${item.galleryIndex + 1}`}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <span>Gallery image {item.galleryIndex + 1}</span>
+                            </button>
+                          ))
+                      )}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="surveyStepAssetGrid">
+            {overnightLandingSlots.map((slot, index) => (
+              <article key={slot.key} className="surveyStepAssetCard">
+                <h4>{slot.label}</h4>
+                <div className="surveyContextFrame">
+                  {config.media.overnightLandingImageUrls?.[index] ? (
+                    <img
+                      src={getResizedPreviewUrl(config.media.overnightLandingImageUrls[index], 640, 360)}
+                      alt={`${slot.label} preview`}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div className="surveyVisualPlaceholder">No image assigned</div>
+                  )}
+                </div>
+                <p className="subhead">
+                  <strong>Carousel caption:</strong> {slot.caption}
+                </p>
+                <label>
+                  Image URL
+                  <input
+                    type="url"
+                    value={config.media.overnightLandingImageUrls?.[index] || ''}
+                    onChange={(event) => updateOvernightLandingImage(index, event.target.value)}
+                    placeholder="https://..."
+                  />
+                </label>
+                <div className="adminActions">
+                  <label className="button secondary">
+                    Upload from computer
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => uploadOvernightLandingImage(index, event)}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() =>
+                      setOpenOvernightLandingLibraryPicker((current) => {
+                        setSelectedOvernightGalleryLibraryUrls([])
+                        return current === index ? null : index
+                      })
+                    }
+                  >
+                    {openOvernightLandingLibraryPicker === index ? 'Close media library' : 'Choose from media library'}
+                  </button>
+                </div>
+                {openOvernightLandingLibraryPicker === index ? (
+                  <div className="surveyLibraryPickerGrid">
+                    {imageLibrary.length === 0 ? (
+                      <p className="subhead">No image files found in media library.</p>
+                    ) : (
+                      imageLibrary.map((item) => (
+                        <button
+                          key={`overnight-landing-${index}-${item.path}`}
+                          type="button"
+                          className="surveyLibraryPickerItem"
+                          onClick={() => assignOvernightLandingImageFromLibrary(index, item.publicUrl)}
+                        >
+                          <img
+                            src={getResizedPreviewUrl(item.publicUrl, 260, 146)}
+                            alt={item.name}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <span>{item.name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+        </>
+        ) : null}
+
+        {activeMediaSubtab === 'library' ? (
+        <section className="subCard">
           <h3>Upload to bucket for later use</h3>
           <p className="subhead">Upload files now, then assign them to sections from Media Library.</p>
           <input type="file" accept="image/*,video/*" multiple onChange={uploadToLibrary} />
         </section>
+        ) : null}
 
+        {activeMediaSubtab === 'library' ? (
         <div className="adminPreviewGrid">
-          <article className="previewCard">
-            <h3>Selected phone screenshots</h3>
-            {config.media.levelUpScreenshotUrls.length === 0 ? (
-              <p className="subhead">No screenshots selected yet.</p>
-            ) : (
-              <>
-                <div className="adminPhoneStage">
-                  <div className="phoneFrame adminPhoneFrame">
-                    <div className="phoneNotch" />
-                    <div className="phoneScreen">
-                      <img
-                        className="phoneImage"
-                        src={getResizedPreviewUrl(activePreviewUrl, 520, 920)}
-                        alt="Phone render preview"
-                        style={{ width: `${config.media.levelUpScreenshotSize}%` }}
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <p className="subhead">Tap a screenshot below to preview it in the phone render.</p>
-                <div className="thumbGrid">
-                  {config.media.levelUpScreenshotUrls.map((url, index) => (
-                    <div
-                      key={url}
-                      className={`thumbItem ${activePreviewIndex === index ? 'selected' : ''}`}
-                    >
-                      <button
-                        type="button"
-                        className="thumbPreviewBtn"
-                        onClick={() => setActivePreviewIndex(index)}
-                      >
-                        <img
-                          src={getResizedPreviewUrl(url, 280, 380)}
-                          alt="Selected screenshot preview"
-                          loading="lazy"
-                          decoding="async"
-                        />
-                      </button>
-                      <div className="thumbActions">
-                        <button type="button" className="button secondary" onClick={() => removeScreenshotUrl(url)}>
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </article>
-
           <article className="previewCard">
             <h3>Media library</h3>
             <div className="adminActions">
@@ -1553,7 +5498,10 @@ export default function AdminPage() {
                           className="phoneImage"
                           src={getResizedPreviewUrl(activeLibraryPreviewUrl, 520, 920)}
                           alt="Media library phone preview"
-                          style={{ width: `${config.media.levelUpScreenshotSize}%` }}
+                          style={{
+                            width: `${config.media.levelUpScreenshotSize}%`,
+                            ...getLevelUpScreenshotStyle(activePreviewIndex),
+                          }}
                           loading="lazy"
                           decoding="async"
                         />
@@ -1599,13 +5547,6 @@ export default function AdminPage() {
 	                      >
 	                        Use as hero
                       </button>
-	                      <button
-	                        type="button"
-	                        className="button secondary"
-	                        onClick={() => updateMedia('surveyVideoUrl', item.publicUrl)}
-	                      >
-	                        Use as survey video
-	                      </button>
 	                      <button
 	                        type="button"
 	                        className="button secondary"
@@ -1712,8 +5653,11 @@ export default function AdminPage() {
             )}
           </article>
         </div>
+        ) : null}
       </section>
+      ) : null}
 
+      {activeAdminTab === 'tuition' ? (
       <section className="card section">
         <h2>Tuition table</h2>
         <div className="adminGrid">
@@ -1727,13 +5671,18 @@ export default function AdminPage() {
           </label>
           <label>
             Competition Team premium (% over General)
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={config.tuition.bootcampPremiumPct}
-              onChange={(event) => updateTuitionField('bootcampPremiumPct', event.target.value)}
-            />
+            <div className="tuitionSliderControl">
+              <input
+                type="range"
+                min="0"
+                max="60"
+                step="1"
+                value={config.tuition.bootcampPremiumPct}
+                onChange={(event) => updateTuitionField('bootcampPremiumPct', event.target.value)}
+              />
+              <strong className="tuitionSliderValue">{Number(config.tuition.bootcampPremiumPct || 0)}%</strong>
+            </div>
+            <small>Boot Camp prices auto-round to the nearest $5.</small>
           </label>
           <label>
             Sibling discount (% from 2nd camper)
@@ -1759,6 +5708,23 @@ export default function AdminPage() {
               value={config.tuition.discountCode}
               onChange={(event) => updateTuitionField('discountCode', event.target.value)}
               placeholder="Example: SUMMER350"
+            />
+          </label>
+          <label>
+            Invoice business name
+            <input
+              value={config.tuition.businessName}
+              onChange={(event) => updateTuitionField('businessName', event.target.value)}
+              placeholder="Example: New England Wushu"
+            />
+          </label>
+          <label>
+            Invoice business address
+            <textarea
+              rows="3"
+              value={config.tuition.businessAddress}
+              onChange={(event) => updateTuitionField('businessAddress', event.target.value)}
+              placeholder="Street address, city, state, zip"
             />
           </label>
         </div>
@@ -1882,11 +5848,14 @@ export default function AdminPage() {
           </table>
         </div>
       </section>
+      ) : null}
 
-      {Object.entries(programMeta).map(([programKey, meta]) => {
+      {activeAdminTab === 'programs'
+        ? Object.entries(programMeta).map(([programKey, meta]) => {
         const program = config.programs[programKey]
         const options = weekOptions[programKey]
         const selectedCount = program.selectedWeeks.length
+        const actonSelectedCount = Array.isArray(program.actonSelectedWeeks) ? program.actonSelectedWeeks.length : 0
 
         return (
           <section key={programKey} className="card section">
@@ -1926,29 +5895,82 @@ export default function AdminPage() {
             {options.length === 0 ? (
               <p className="subhead">Set a valid start and end date to generate options.</p>
             ) : (
-              <div className="adminWeekList">
-                {options.map((week) => (
-                  <label key={week.id} className="weekRow">
-                    <input
-                      type="checkbox"
-                      checked={program.selectedWeeks.includes(week.id)}
-                      onChange={() => toggleWeek(programKey, week.id)}
-                    />
-                    <span>{formatWeekLabel(week)}</span>
-                  </label>
-                ))}
-              </div>
+              <>
+                <div className="adminWeekList">
+                  {options.map((week) => (
+                    <label key={week.id} className="weekRow">
+                      <input
+                        type="checkbox"
+                        checked={program.selectedWeeks.includes(week.id)}
+                        onChange={() => toggleWeek(programKey, week.id)}
+                      />
+                      <span>{formatWeekLabel(week)}</span>
+                    </label>
+                  ))}
+                </div>
+                {programKey === 'general' ? (
+                  <div className="subCard">
+                    <h3>Acton General Camp Weeks</h3>
+                    <p className="subhead">
+                      Acton can have a different General Camp schedule. Families selecting Acton only see weeks checked here.
+                    </p>
+                    <div className="adminActions">
+                      <button type="button" className="button secondary" onClick={() => selectAllWeeks('general', 'actonSelectedWeeks')}>
+                        Select all Acton weeks
+                      </button>
+                      <button type="button" className="button secondary" onClick={() => clearWeeks('general', 'actonSelectedWeeks')}>
+                        Clear Acton weeks
+                      </button>
+                      <span>{actonSelectedCount} selected for Acton</span>
+                    </div>
+                    <div className="adminWeekList">
+                      {options.map((week) => (
+                        <label key={`acton-${week.id}`} className="weekRow">
+                          <input
+                            type="checkbox"
+                            checked={program.actonSelectedWeeks.includes(week.id)}
+                            onChange={() => toggleWeek('general', week.id, 'actonSelectedWeeks')}
+                          />
+                          <span>{formatWeekLabel(week)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
         )
-      })}
+      })
+        : null}
 
+      {activeAdminTab === 'journey' ? (
       <section className="card section">
         <h2>Email Journey Builder</h2>
         <p className="subhead">
-          Configure follow-up email sequence for families who click "I need time to think" on the survey.
+          Two automation flows: families who shared email but did not submit registration, and submitted-registration 72-hour payment reminders.
         </p>
-        <div className="adminGrid">
+        <div className="journeyFlowTabs" role="tablist" aria-label="Journey flow type">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeJourneyFlow === 'lead'}
+            className={`journeyFlowTabBtn ${activeJourneyFlow === 'lead' ? 'active' : ''}`}
+            onClick={() => setActiveJourneyFlow('lead')}
+          >
+            Survey Lead Nurture
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeJourneyFlow === 'reservation'}
+            className={`journeyFlowTabBtn ${activeJourneyFlow === 'reservation' ? 'active' : ''}`}
+            onClick={() => setActiveJourneyFlow('reservation')}
+          >
+            Submitted Registration 72h
+          </button>
+        </div>
+        <div className="adminGrid journeyBuilderGrid">
           <label>
             Test recipient email
             <input
@@ -1959,18 +5981,31 @@ export default function AdminPage() {
             />
           </label>
           <div className="adminActions">
+            {activeJourneyFlow === 'lead' ? (
+              <button type="button" className="button secondary" onClick={applyPremiumJourneyTemplates}>
+                Load Premium Templates
+              </button>
+            ) : null}
             <button
               type="button"
               className="button secondary"
-              onClick={() => sendTestEmailForStep(activeJourneyTab)}
+              onClick={() =>
+                sendTestEmailForStep(
+                  activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
+                  activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  activeJourneyFlow
+                )
+              }
               disabled={sendingTestStep > 0}
             >
-              {sendingTestStep === activeJourneyTab + 1 ? 'Sending test...' : `Send Test for Step ${activeJourneyTab + 1}`}
+              {sendingTestStep === (activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+                ? 'Sending test...'
+                : `Send Test for Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
             </button>
           </div>
         </div>
         <div className="journeyGrid">
-          {emailJourneyBlueprint.map((item) => (
+          {(activeJourneyFlow === 'lead' ? emailJourneyBlueprint : reservationJourneyBlueprint).map((item) => (
             <article key={item.step} className="journeyCard">
               <p className="journeyDay">{item.step}</p>
               <h4>{item.objective}</h4>
@@ -1979,51 +6014,90 @@ export default function AdminPage() {
           ))}
         </div>
         <div className="surveySubTabs">
-          {config.emailJourney.map((item, index) => (
+          {(activeJourneyFlow === 'lead' ? config.emailJourney : reservationJourneyTemplates).map((item, index) => (
             <button
               key={`${item.dayLabel}-${index}`}
               type="button"
-              className={`subTabBtn ${activeJourneyTab === index ? 'active' : ''}`}
-              onClick={() => setActiveJourneyTab(index)}
+              className={`subTabBtn ${
+                activeJourneyFlow === 'lead'
+                  ? activeJourneyTab === index
+                    ? 'active'
+                    : ''
+                  : activeReservationJourneyTab === index
+                    ? 'active'
+                    : ''
+              }`}
+              onClick={() =>
+                activeJourneyFlow === 'lead'
+                  ? setActiveJourneyTab(index)
+                  : setActiveReservationJourneyTab(index)
+              }
             >
-              Step {index + 1}
+              {activeJourneyFlow === 'lead'
+                ? `Step ${index + 1}`
+                : reservationJourneyBlueprint[index]?.step || `Step ${index + 1}`}
             </button>
           ))}
         </div>
         <article className="journeyCard adminJourneyCard">
-          <p className="journeyDay">{config.emailJourney[activeJourneyTab]?.dayLabel || ''}</p>
-          <h4>{config.emailJourney[activeJourneyTab]?.title || `Step ${activeJourneyTab + 1}`}</h4>
-          <div className="adminGrid">
-            <label>
-              Send timing label
-              <input
-                value={config.emailJourney[activeJourneyTab]?.dayLabel || ''}
-                onChange={(event) => updateEmailJourneyStep(activeJourneyTab, 'dayLabel', event.target.value)}
-              />
-            </label>
-            <label>
-              Card title
-              <input
-                value={config.emailJourney[activeJourneyTab]?.title || ''}
-                onChange={(event) => updateEmailJourneyStep(activeJourneyTab, 'title', event.target.value)}
-              />
-            </label>
-            <label className="full">
-              Email subject
-              <input
-                value={config.emailJourney[activeJourneyTab]?.subject || ''}
-                onChange={(event) => updateEmailJourneyStep(activeJourneyTab, 'subject', event.target.value)}
-              />
-            </label>
-            <label className="full">
-              Email body draft
-              <textarea
-                rows="4"
-                value={config.emailJourney[activeJourneyTab]?.body || ''}
-                onChange={(event) => updateEmailJourneyStep(activeJourneyTab, 'body', event.target.value)}
-              />
-            </label>
+          <p className="journeyDay">Selected Step</p>
+          <h4>
+            {(activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate)?.title ||
+              `Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+          </h4>
+          <p className="subhead">
+            Manual send checks all due journey thresholds and logs each email as it goes. If a step is overdue, it sends immediately on this run.
+          </p>
+          <div className="adminActions">
+            <button
+              type="button"
+              className="button"
+              onClick={processDueJourneyEmails}
+              disabled={processingJourneyEmails}
+            >
+              {processingJourneyEmails ? 'Processing all due emails...' : 'Send All Due Journey Emails Now'}
+            </button>
+            <span>
+              {(activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate)?.dayLabel || ''}
+            </span>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() =>
+                sendTestEmailForStep(
+                  activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
+                  activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  activeJourneyFlow
+                )
+              }
+              disabled={sendingTestStep > 0}
+            >
+              {sendingTestStep === (activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+                ? 'Sending test...'
+                : `Send Test for Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+            </button>
           </div>
+          <p className="subhead">
+            {activeJourneyFlow === 'lead'
+              ? 'Click step tabs to review premium survey-lead emails in live preview.'
+              : 'Click step tabs to review premium submitted-registration reminder emails in live preview.'}
+          </p>
+        </article>
+        <article className="journeyCard adminJourneyCard">
+          <p className="journeyDay">
+            Live Preview (Step {activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1})
+          </p>
+          <iframe
+            title={`Journey email preview step ${
+              activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1
+            }`}
+            className="adminEmailPreviewFrame"
+            srcDoc={buildJourneyPreviewHtmlFromTemplate(
+              activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
+              activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+              activeJourneyFlow
+            )}
+          />
         </article>
 
         <article className="journeyCard adminJourneyCard">
@@ -2105,7 +6179,704 @@ export default function AdminPage() {
           ) : null}
         </article>
       </section>
+      ) : null}
 
+      {activeAdminTab === 'accounting' ? (
+      <section className="card section">
+        <h2>Registration Accounting</h2>
+        <p className="subhead">
+          Camper-level accounting from submitted registrations. Archive rows when complete, and restore anytime.
+        </p>
+        <div className="adminActions">
+          <button
+            type="button"
+            className="button"
+            onClick={processDueJourneyEmails}
+            disabled={processingJourneyEmails}
+          >
+            {processingJourneyEmails ? 'Processing all due emails...' : 'Send All Due Journey Emails Now'}
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={refreshRegistrationAccounting}
+            disabled={loadingAccounting}
+          >
+            {loadingAccounting ? 'Refreshing...' : 'Refresh registrations'}
+          </button>
+          <span>
+            Due journey emails: <strong className="trackerDueCountBadge">{accountingDueEmailCount}</strong>
+          </span>
+          <span>
+            Upcoming 24h: <strong className="trackerUpcomingCountBadge">{accountingUpcomingEmailCount}</strong>
+          </span>
+        </div>
+        <div className="accountingDashboardGrid">
+          <article className="accountingStatCard">
+            <span>Total Tuition</span>
+            <strong>{money(accountingTotals.totalTuition)}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Total Paid</span>
+            <strong>{money(accountingTotals.totalPaid)}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Total Owed</span>
+            <strong>{money(accountingTotals.totalOwed)}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Active Rows</span>
+            <strong>{accountingTotals.activeRows}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Archived Rows</span>
+            <strong>{accountingTotals.archivedRows}</strong>
+          </article>
+        </div>
+        <div className="accountingDashboardGrid accountingMethodGrid">
+          {accountingPaymentMethods.map((method) => (
+            <article key={`method-total-${method}`} className="accountingStatCard accountingMethodCard">
+              <span>{method.toUpperCase()}</span>
+              <strong>{money(accountingTotals.methodTotals[method])}</strong>
+            </article>
+          ))}
+        </div>
+        <div className="accountingPricingGrid">
+          {accountingPricingReference.map((card) => (
+            <article key={card.key} className="accountingPricingCard">
+              <div className="accountingPricingHead">
+                <p>{card.title}</p>
+                <strong>{money(card.activeFullWeek)}</strong>
+              </div>
+              <div className="accountingPricingSubhead">
+                <span>{card.activeLabel}</span>
+                {card.showRegularNote ? <small>Regular: {money(card.regularFullWeek)}</small> : null}
+              </div>
+              <p className="accountingPricingNote">{card.note}</p>
+              {card.rows.length > 0 ? (
+                <div className="accountingPricingRows">
+                  {card.rows.map((row) => {
+                    const activeValue = accountingDiscountActive ? row.discountedValue : row.value
+                    return (
+                      <div key={`${card.key}-${row.label}`} className="accountingPricingRow">
+                        <span>{row.label}</span>
+                        <div>
+                          <strong>{money(activeValue)}</strong>
+                          {accountingDiscountActive && row.discountedValue !== row.value ? (
+                            <small>Regular: {money(row.value)}</small>
+                          ) : null}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="accountingPricingRows">
+                  <div className="accountingPricingRow accountingPricingRowMuted">
+                    <span>No AM / PM / full-day pricing shown</span>
+                  </div>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Active Registration Rows</h3>
+            <p className="subhead">Current camper balances and payment tracking.</p>
+          </div>
+          <div className="tuitionTableWrap">
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Family / Submission</th>
+                  <th>Camper</th>
+                  <th>Weeks</th>
+                  <th>Lunch Days</th>
+                  <th>Regular Price</th>
+                  <th>Sibling Discount</th>
+                  <th>Total</th>
+                  <th>Manual Discount</th>
+                  <th>Paid</th>
+                  <th>Owed</th>
+                  <th>Method</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeAccountingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="12" className="accountingEmptyCell">
+                      No submitted camper rows yet.
+                    </td>
+                  </tr>
+                ) : (
+                  activeAccountingRows.map((row) => {
+                    const key = `${row.registrationId}-${row.camperIndex}`
+                    const draft = accountingDrafts[row.key]
+                    const manualDiscountValue = draft?.manualDiscount ?? row.manualDiscount
+                    const archivedValue = draft?.archived ?? row.archived
+                    const hasPendingAccountingChanges =
+                      Number(manualDiscountValue || 0) !== Number(row.manualDiscount || 0) ||
+                      Boolean(archivedValue) !== Boolean(row.archived)
+                    return (
+                      <tr key={`accounting-row-${key}`}>
+                        <td>
+                          <strong>{row.parentName}</strong>
+                          <div>{row.parentEmail || '-'}</div>
+                          <div>{formatAdminDateTime(row.createdAt)}</div>
+                        </td>
+                        <td>
+                          <strong>{row.camperName}</strong>
+                          <div>Sibling discount: {row.siblingDiscountPct}%</div>
+                        </td>
+                        <td>
+                          <div className="accountingDetailStack">
+                            {row.weeksCount > 0
+                              ? renderAccountingDetailChip(
+                                  `${key}-weeks`,
+                                  'Weeks',
+                                  row.weekOverlayLines,
+                                  row.weeksCount
+                                )
+                              : null}
+                            {row.weeksCount === 0 ? <span>-</span> : null}
+                          </div>
+                        </td>
+                        <td>
+                          {row.lunchDaysCount > 0
+                            ? renderAccountingDetailChip(`${key}-lunch`, 'Lunch Days', row.lunchDays, row.lunchDaysCount)
+                            : '-'}
+                        </td>
+                        <td>{money(row.regularPriceTotal)}</td>
+                        <td>
+                          {row.siblingDiscountAmount > 0
+                            ? `${money(row.siblingDiscountAmount)} (${row.siblingDiscountPct}%)`
+                            : '-'}
+                        </td>
+                        <td>
+                          {renderAccountingDetailChip(
+                            `${key}-total-breakdown`,
+                            money(row.totalAfterManualDiscount),
+                            row.totalBreakdownLines
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={manualDiscountValue}
+                            onChange={(event) =>
+                              updateAccountingDraft(row, { manualDiscount: Number(event.target.value || 0) })
+                            }
+                            disabled={updatingAccountingKey === key}
+                          />
+                        </td>
+                        <td>
+                          <div className="accountingPaidCell">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={String(row.paidAmount ?? '')}
+                              onChange={(event) => {
+                                const sanitized = String(event.target.value || '').replace(/[^\d.]/g, '')
+                                updateAccountingEntryField(row, {
+                                  paid_amount: Number(sanitized || 0),
+                                })
+                              }}
+                              disabled={updatingAccountingKey === key}
+                            />
+                            <button
+                              type="button"
+                              className="accountingQuickFillBtn"
+                              onClick={() =>
+                                updateAccountingEntryField(row, {
+                                  paid_amount: Number(row.totalAfterManualDiscount || 0),
+                                })
+                              }
+                              disabled={updatingAccountingKey === key || Number(row.owedAmount || 0) <= 0}
+                            >
+                              Use Owed
+                            </button>
+                          </div>
+                        </td>
+                        <td>{money(row.owedAmount)}</td>
+                        <td>
+                          <select
+                            value={row.paymentMethod}
+                            onChange={(event) =>
+                              updateAccountingEntryField(row, { payment_method: event.target.value })
+                            }
+                            disabled={updatingAccountingKey === key}
+                          >
+                            <option value="">Select</option>
+                            {accountingPaymentMethods.map((method) => (
+                              <option key={`method-${method}`} value={method}>
+                                {method.toUpperCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <div className="adminActions">
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => updateAccountingDraft(row, { archived: !archivedValue })}
+                              disabled={updatingAccountingKey === key}
+                            >
+                              {archivedValue ? 'Keep Active' : 'Archive'}
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => saveAccountingDraft(row)}
+                              disabled={updatingAccountingKey === key || !hasPendingAccountingChanges}
+                            >
+                              Save Row
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => sendAccountingInvoice(row)}
+                              disabled={sendingInvoiceKey === key}
+                            >
+                              {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Archived Rows</h3>
+            <p className="subhead">Completed or filed camper rows kept separate from the active table.</p>
+          </div>
+          <div className="tuitionTableWrap">
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Family / Submission</th>
+                  <th>Camper</th>
+                  <th>Weeks</th>
+                  <th>Lunch Days</th>
+                  <th>Regular Price</th>
+                  <th>Sibling Discount</th>
+                  <th>Total</th>
+                  <th>Manual Discount</th>
+                  <th>Paid</th>
+                  <th>Owed</th>
+                  <th>Method</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archivedAccountingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="12" className="accountingEmptyCell">
+                      No archived camper rows yet.
+                    </td>
+                  </tr>
+                ) : (
+                  archivedAccountingRows.map((row) => {
+                    const key = `${row.registrationId}-${row.camperIndex}`
+                    return (
+                      <tr key={`archived-accounting-row-${key}`}>
+                        <td>
+                          <strong>{row.parentName}</strong>
+                          <div>{row.parentEmail || '-'}</div>
+                          <div>{formatAdminDateTime(row.createdAt)}</div>
+                        </td>
+                        <td>
+                          <strong>{row.camperName}</strong>
+                          <div>Sibling discount: {row.siblingDiscountPct}%</div>
+                        </td>
+                        <td>
+                          <div className="accountingDetailStack">
+                            {row.weeksCount > 0
+                              ? renderAccountingDetailChip(
+                                  `${key}-archived-weeks`,
+                                  'Weeks',
+                                  row.weekOverlayLines,
+                                  row.weeksCount
+                                )
+                              : null}
+                            {row.weeksCount === 0 ? <span>-</span> : null}
+                          </div>
+                        </td>
+                        <td>
+                          {row.lunchDaysCount > 0
+                            ? renderAccountingDetailChip(
+                                `${key}-archived-lunch`,
+                                'Lunch Days',
+                                row.lunchDays,
+                                row.lunchDaysCount
+                              )
+                            : '-'}
+                        </td>
+                        <td>{money(row.regularPriceTotal)}</td>
+                        <td>
+                          {row.siblingDiscountAmount > 0
+                            ? `${money(row.siblingDiscountAmount)} (${row.siblingDiscountPct}%)`
+                            : '-'}
+                        </td>
+                        <td>
+                          {renderAccountingDetailChip(
+                            `${key}-archived-total-breakdown`,
+                            money(row.totalAfterManualDiscount),
+                            row.totalBreakdownLines
+                          )}
+                        </td>
+                        <td>{money(row.manualDiscount)}</td>
+                        <td>{money(row.paidAmount)}</td>
+                        <td>{money(row.owedAmount)}</td>
+                        <td>{row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}</td>
+                        <td>
+                          <div className="adminActions">
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => updateAccountingEntryField(row, { archived: false })}
+                              disabled={updatingAccountingKey === key}
+                            >
+                              Restore
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => sendAccountingInvoice(row)}
+                              disabled={sendingInvoiceKey === key}
+                            >
+                              {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {accountingOverlay.key ? (
+          <div
+            className="accountingOverlayWrap"
+            onClick={() => setAccountingOverlay({ key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 })}
+          >
+            <div
+              className="accountingOverlayBox"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="false"
+              aria-label={accountingOverlay.label || 'Accounting details'}
+              style={{
+                top: `${accountingOverlay.top}px`,
+                left: `${accountingOverlay.left}px`,
+              }}
+            >
+              <span
+                className="accountingOverlayPointer"
+                style={{ left: `${accountingOverlay.pointerLeft}px` }}
+                aria-hidden="true"
+              />
+              <div className="accountingOverlayHeader">
+                <strong>{accountingOverlay.label}</strong>
+                <button
+                  type="button"
+                  className="accountingOverlayClose"
+                  onClick={() => setAccountingOverlay({ key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 })}
+                  aria-label="Close accounting details"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="accountingOverlayList">
+                {accountingOverlay.items.map((item, index) => (
+                  <span key={`${accountingOverlay.key}-${index}`} className="accountingOverlayItem">
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </section>
+      ) : null}
+
+      {activeAdminTab === 'overnight-accounting' ? (
+      <section className="card section">
+        <h2>Overnight Accounting</h2>
+        <p className="subhead">
+          Overnight camp uses its own registration/payment workflow. Tuition covers lodging and food only; outings are billed separately.
+        </p>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Active Overnight Rows</h3>
+            <p className="subhead">Track payment status and adjust registered weeks for overnight campers.</p>
+          </div>
+          <div className="tuitionTableWrap">
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Family / Submission</th>
+                  <th>Camper</th>
+                  <th>Weeks</th>
+                  <th>Total</th>
+                  <th>Paid</th>
+                  <th>Owed</th>
+                  <th>Method</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeOvernightAccountingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="accountingEmptyCell">
+                      No overnight registrations yet.
+                    </td>
+                  </tr>
+                ) : (
+                  activeOvernightAccountingRows.map((row) => {
+                    const key = `${row.registrationId}-${row.camperIndex}`
+                    return (
+                      <tr key={`overnight-accounting-row-${key}`}>
+                        <td>
+                          <strong>{row.parentName}</strong>
+                          <div>{row.parentEmail || '-'}</div>
+                          <div>{formatAdminDateTime(row.createdAt)}</div>
+                        </td>
+                        <td>
+                          <strong>{row.camperName}</strong>
+                          <div>No sibling discount</div>
+                        </td>
+                        <td>
+                          <div className="overnightWeekCheckboxes">
+                            {weekOptions.overnight.map((week) => {
+                              const checked = row.selectedWeekIds.includes(week.id)
+                              return (
+                                <label key={`overnight-accounting-week-${key}-${week.id}`} className="overnightWeekCheckbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      const nextWeekIds = event.target.checked
+                                        ? [...row.selectedWeekIds, week.id]
+                                        : row.selectedWeekIds.filter((item) => item !== week.id)
+                                      updateOvernightWeeks(row, nextWeekIds)
+                                    }}
+                                    disabled={updatingAccountingKey === key}
+                                  />
+                                  <span>{formatWeekLabel(week)}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </td>
+                        <td>{renderAccountingDetailChip(`${key}-overnight-total-breakdown`, money(row.totalAfterManualDiscount), row.totalBreakdownLines)}</td>
+                        <td>
+                          <div className="accountingPaidCell">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={String(row.paidAmount ?? '')}
+                              onChange={(event) => {
+                                const sanitized = String(event.target.value || '').replace(/[^\d.]/g, '')
+                                updateAccountingEntryField(row, {
+                                  paid_amount: Number(sanitized || 0),
+                                })
+                              }}
+                              disabled={updatingAccountingKey === key}
+                            />
+                            <button
+                              type="button"
+                              className="accountingQuickFillBtn"
+                              onClick={() =>
+                                updateAccountingEntryField(row, {
+                                  paid_amount: Number(row.totalAfterManualDiscount || 0),
+                                })
+                              }
+                              disabled={updatingAccountingKey === key || Number(row.owedAmount || 0) <= 0}
+                            >
+                              Use Owed
+                            </button>
+                          </div>
+                        </td>
+                        <td>{money(row.owedAmount)}</td>
+                        <td>
+                          <select
+                            value={row.paymentMethod}
+                            onChange={(event) =>
+                              updateAccountingEntryField(row, { payment_method: event.target.value })
+                            }
+                            disabled={updatingAccountingKey === key}
+                          >
+                            <option value="">Select</option>
+                            {accountingPaymentMethods.map((method) => (
+                              <option key={`overnight-method-${method}`} value={method}>
+                                {method.toUpperCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <div className="adminActions">
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => updateAccountingEntryField(row, { archived: true })}
+                              disabled={updatingAccountingKey === key}
+                            >
+                              Archive
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => sendAccountingInvoice(row)}
+                              disabled={sendingInvoiceKey === key}
+                            >
+                              {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Paid Week Rosters</h3>
+            <p className="subhead">Campers appear here once their overnight balance is fully paid.</p>
+          </div>
+          <div className="adminGrid">
+            {overnightRosterByWeek.map((group) => (
+              <article key={`overnight-roster-${group.week?.id || 'unknown'}`} className="subCard">
+                <h3>{group.week ? formatWeekLabel(group.week) : 'Unmapped week'}</h3>
+                <p className="subhead">{group.rows.length} paid camper{group.rows.length === 1 ? '' : 's'}</p>
+                {group.rows.length === 0 ? (
+                  <p className="subhead">No paid overnight campers for this week yet.</p>
+                ) : (
+                  <div className="accountingDetailStack">
+                    {group.rows.map((row) => (
+                      <div key={`overnight-roster-row-${group.week?.id || 'unknown'}-${row.key}`} className="accountingRosterLine">
+                        <strong>{row.camperName}</strong> · {row.parentName} · {row.paymentMethod ? row.paymentMethod.toUpperCase() : 'Method TBD'}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Archived Overnight Rows</h3>
+            <p className="subhead">Completed or filed overnight rows.</p>
+          </div>
+          <div className="tuitionTableWrap">
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Family / Submission</th>
+                  <th>Camper</th>
+                  <th>Weeks</th>
+                  <th>Total</th>
+                  <th>Paid</th>
+                  <th>Owed</th>
+                  <th>Method</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {archivedOvernightAccountingRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="accountingEmptyCell">No archived overnight rows yet.</td>
+                  </tr>
+                ) : (
+                  archivedOvernightAccountingRows.map((row) => (
+                    <tr key={`overnight-archived-row-${row.key}`}>
+                      <td><strong>{row.parentName}</strong><div>{row.parentEmail || '-'}</div><div>{formatAdminDateTime(row.createdAt)}</div></td>
+                      <td><strong>{row.camperName}</strong></td>
+                      <td>{row.weeksCount > 0 ? renderAccountingDetailChip(`${row.key}-overnight-archived-weeks`, 'Weeks', row.weekOverlayLines, row.weeksCount) : '-'}</td>
+                      <td>{money(row.totalAfterManualDiscount)}</td>
+                      <td>{money(row.paidAmount)}</td>
+                      <td>{money(row.owedAmount)}</td>
+                      <td>{row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="button secondary"
+                          onClick={() => updateAccountingEntryField(row, { archived: false })}
+                          disabled={updatingAccountingKey === `${row.registrationId}-${row.camperIndex}`}
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      ) : null}
+
+      {activeAdminTab === 'leads' ? (
+      <section className="card section">
+        <h2>Survey Leads</h2>
+        <p className="subhead">Families who submitted email in the survey flow, including partial completions.</p>
+        <div className="adminActions">
+          <button type="button" className="button secondary" onClick={refreshLeadProfiles} disabled={loadingLeads}>
+            {loadingLeads ? 'Refreshing...' : 'Refresh leads'}
+          </button>
+          <span>Total leads: {leadProfiles.length}</span>
+        </div>
+        {leadProfiles.length === 0 ? (
+          <p className="subhead">No leads yet.</p>
+        ) : (
+          <div className="tuitionTableWrap">
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Campers</th>
+                  <th>Ages</th>
+                  <th>Source</th>
+                  <th>Last Step</th>
+                  <th>Submitted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leadProfiles.map((lead) => (
+                  <tr key={`lead-${lead.id}`}>
+                    <td>{lead.email}</td>
+                    <td>{lead.camper_count || '-'}</td>
+                    <td>{Array.isArray(lead.camper_ages) && lead.camper_ages.length > 0 ? lead.camper_ages.join(', ') : '-'}</td>
+                    <td>{lead.source || '-'}</td>
+                    <td>{lead.last_completed_step || '-'}</td>
+                    <td>{lead.created_at ? new Date(lead.created_at).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      ) : null}
+
+      {activeAdminTab === 'testimonials' ? (
       <section className="card section">
         <h2>Testimonials</h2>
         <p className="subhead">Manage student stories shown on the testimonials page.</p>
@@ -2172,17 +6943,29 @@ export default function AdminPage() {
           )}
         </div>
       </section>
+      ) : null}
 
+      {activeAdminTab === 'tracking' ? (
       <section className="card section">
         <h2>Email Tracking</h2>
         <p className="subhead">
           Track who has been sent emails, delivery activity, and incoming replies.
         </p>
         <p className="subhead">
-          Automation endpoint: <code>POST /api/email/auto-reply</code> with header <code>x-cron-secret</code>.
-          Use cron to run every 5-10 minutes.
+          Use <strong>Mark Paid</strong> to stop 72-hour unpaid reminders and activate paid-family prep emails at 7 days, 5 days, 3 days, and 1 day before camp.
+        </p>
+        <p className="subhead">
+          Use <strong>Send Due Journey Emails Now</strong> to manually send any due lead-nurture or reservation emails. The processor checks threshold timing and only sends steps that are due and not already sent.
         </p>
         <div className="adminActions">
+          <button
+            type="button"
+            className="button"
+            onClick={processDueJourneyEmails}
+            disabled={processingJourneyEmails}
+          >
+            {processingJourneyEmails ? 'Processing all due emails...' : 'Send All Due Journey Emails Now'}
+          </button>
           <button
             type="button"
             className="button secondary"
@@ -2191,6 +6974,18 @@ export default function AdminPage() {
           >
             {loadingEmailTracking ? 'Refreshing...' : 'Refresh tracking'}
           </button>
+          <span>
+            Due emails: <strong className="trackerDueCountBadge">{trackingDueSummary.total}</strong>
+          </span>
+          <span>
+            Leads: <strong className="trackerDueCountBadge">{trackingDueSummary.lead}</strong>
+          </span>
+          <span>
+            Registered: <strong className="trackerDueCountBadge">{trackingDueSummary.reservation}</strong>
+          </span>
+          <span>
+            Upcoming 24h: <strong className="trackerUpcomingCountBadge">{trackingDueSummary.upcoming}</strong>
+          </span>
           <label>
             Filter replies by email
             <select value={replyFilterEmail} onChange={(event) => setReplyFilterEmail(event.target.value)}>
@@ -2207,31 +7002,190 @@ export default function AdminPage() {
           <span>Unread replies: {emailReplies.filter((item) => item.is_unread).length}</span>
         </div>
 
-        <div className="adminPreviewGrid">
-          <article className="previewCard">
-            <h3>Journey runs</h3>
-            {emailJourneyRuns.length === 0 ? (
-              <p className="subhead">No runs yet.</p>
+        <div className="trackingStack">
+          <article className="previewCard trackerCard">
+            <h3>Lead Journey Tracker</h3>
+            <p className="subhead">Top table: survey and partial-registration leads who should receive the nurture sequence.</p>
+            {leadJourneyTrackerRows.length === 0 ? (
+              <p className="subhead">No lead journeys yet.</p>
             ) : (
-              <div className="tuitionTableWrap">
-                <table className="tuitionTable">
+              <div className="tuitionTableWrap trackerTableWrap">
+                <table className="tuitionTable trackerTable">
                   <thead>
                     <tr>
-                      <th>Email</th>
-                      <th>Status</th>
-                      <th>Step</th>
-                      <th>Last Sent</th>
+                      <th className="trackerMetaCol">Email</th>
+                      <th className="trackerMetaCol">Source</th>
+                      <th className="trackerMetaCol">Run</th>
+                      <th className="trackerMetaCol">Criteria</th>
+                      {leadTrackerColumns.map((column) => (
+                        <th key={column.key} title={column.description} className="trackerStepHeader">
+                          <span>
+                            {column.label}
+                            {leadDueCounts[column.key] > 0 ? (
+                              <em className="trackerDueCountBadge">{leadDueCounts[column.key]}</em>
+                            ) : null}
+                            {leadUpcomingCounts[column.key] > 0 ? (
+                              <em className="trackerUpcomingCountBadge">{leadUpcomingCounts[column.key]}</em>
+                            ) : null}
+                          </span>
+                          <small>{column.timingLabel}</small>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {emailJourneyRuns.map((row) => (
-                      <tr key={`run-${row.id}`}>
+                    {leadJourneyTrackerRows.map((row) => (
+                      <tr key={`lead-track-${row.email}`}>
                         <td>{row.email}</td>
+                        <td>{row.source || '-'}</td>
                         <td>{row.status || '-'}</td>
-                        <td>{row.current_step || '-'}</td>
-                        <td>{row.last_sent_at ? new Date(row.last_sent_at).toLocaleString() : '-'}</td>
+                        <td className="trackerCriteriaCell">
+                          {row.criteria?.map((line) => (
+                            <div key={`${row.email}-${line}`}>{line}</div>
+                          ))}
+                        </td>
+                        {leadTrackerColumns.map((column) => {
+                          const timingState = getLeadTrackerTimingState(row, column)
+                          return (
+                            <td key={`${row.email}-${column.key}`} className="trackerStepCell">
+                              <div className="trackerCellActions">
+                                {timingState ? (
+                                  <span
+                                    className={`trackerCellDot trackerCellDot-${timingState}`}
+                                    title={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                    aria-label={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                  />
+                                ) : null}
+                                <span
+                                  className={`trackerBadge ${row.steps[column.key]?.status || 'pending'}`}
+                                  title={row.steps[column.key]?.at ? new Date(row.steps[column.key].at).toLocaleString() : ''}
+                                >
+                                  {getTrackerCellLabel(row.steps[column.key])}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="trackerCellSendBtn"
+                                  onClick={() => manuallySendJourneyCell({ flow: 'lead', row, column })}
+                                  disabled={row.isRegistered || sendingJourneyCellKey === `lead-${row.runId || row.email}-${column.key}`}
+                                >
+                                  {row.isRegistered
+                                    ? 'Blocked'
+                                    : sendingJourneyCellKey === `lead-${row.runId || row.email}-${column.key}`
+                                      ? 'Sending...'
+                                      : 'Send'}
+                                </button>
+                              </div>
+                            </td>
+                          )
+                        })}
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+
+          <article className="previewCard trackerCard">
+            <h3>Registered Journey Tracker</h3>
+            <p className="subhead">Bottom table: families who submitted registration and their reminder or paid-prep sequence.</p>
+            {reservationJourneyTrackerRows.length === 0 ? (
+              <p className="subhead">No registered-family journeys yet.</p>
+            ) : (
+              <div className="tuitionTableWrap trackerTableWrap">
+                <table className="tuitionTable trackerTable">
+                  <thead>
+                    <tr>
+                      <th className="trackerMetaCol">Action</th>
+                      <th className="trackerMetaCol">Email</th>
+                      <th className="trackerMetaCol">Run</th>
+                      <th className="trackerMetaCol">Criteria</th>
+                      {reservationTrackerColumns.map((column) => (
+                        <th key={column.key} title={column.description} className="trackerStepHeader">
+                          <span>
+                            {column.label}
+                            {reservationDueCounts[column.key] > 0 ? (
+                              <em className="trackerDueCountBadge">{reservationDueCounts[column.key]}</em>
+                            ) : null}
+                            {reservationUpcomingCounts[column.key] > 0 ? (
+                              <em className="trackerUpcomingCountBadge">{reservationUpcomingCounts[column.key]}</em>
+                            ) : null}
+                          </span>
+                          <small>{column.timingLabel}</small>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reservationJourneyTrackerRows.map((row) => {
+                      const run = emailJourneyRuns.find((item) => Number(item?.id) === Number(row.runId))
+                      return (
+                        <tr key={`reservation-track-${row.key}`}>
+                          <td>
+                            {row.runId && run ? (
+                              run.status === 'paid' ? (
+                                <button
+                                  type="button"
+                                  className="button secondary"
+                                  onClick={() => updateReservationRunPaymentStatus(run, false)}
+                                  disabled={updatingRunId === run.id}
+                                >
+                                  {updatingRunId === run.id ? 'Updating...' : 'Mark Unpaid'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="button secondary"
+                                  onClick={() => updateReservationRunPaymentStatus(run, true)}
+                                  disabled={updatingRunId === run.id}
+                                >
+                                  {updatingRunId === run.id ? 'Updating...' : 'Mark Paid'}
+                                </button>
+                              )
+                            ) : (
+                              '-'
+                            )}
+                          </td>
+                          <td>{row.email}</td>
+                          <td>{row.status || '-'}</td>
+                          <td className="trackerCriteriaCell">
+                            {row.criteria?.map((line) => (
+                              <div key={`${row.key}-${line}`}>{line}</div>
+                            ))}
+                          </td>
+                          {reservationTrackerColumns.map((column) => {
+                            const timingState = getReservationTrackerTimingState(row, column)
+                            return (
+                              <td key={`${row.key}-${column.key}`} className="trackerStepCell">
+                                <div className="trackerCellActions">
+                                  {timingState ? (
+                                    <span
+                                      className={`trackerCellDot trackerCellDot-${timingState}`}
+                                      title={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                      aria-label={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                    />
+                                  ) : null}
+                                  <span
+                                    className={`trackerBadge ${row.steps[column.key]?.status || 'pending'}`}
+                                    title={row.steps[column.key]?.at ? new Date(row.steps[column.key].at).toLocaleString() : ''}
+                                  >
+                                    {getTrackerCellLabel(row.steps[column.key])}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="trackerCellSendBtn"
+                                    onClick={() => manuallySendJourneyCell({ flow: 'reservation', row, column })}
+                                    disabled={!row.runId || sendingJourneyCellKey === `reservation-${row.runId}-${column.key}`}
+                                  >
+                                    {!row.runId ? 'No run' : sendingJourneyCellKey === `reservation-${row.runId}-${column.key}` ? 'Sending...' : 'Send'}
+                                  </button>
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2307,7 +7261,9 @@ export default function AdminPage() {
           )}
         </article>
       </section>
+      ) : null}
 
+      {activeAdminTab === 'account' ? (
       <section className="card section">
         <div className="adminFooter">
           <button type="button" className="button" onClick={saveChanges} disabled={saving}>
@@ -2322,11 +7278,35 @@ export default function AdminPage() {
         </div>
         {savedMessage ? <p className="message">{savedMessage}</p> : null}
       </section>
+      ) : null}
 
       <div className="adminFloatingSaveBar" role="region" aria-label="Save admin settings">
         <div className="adminFloatingSaveMeta">
           <strong>Save all settings</strong>
           <span>{savedMessage || (saving ? 'Saving changes...' : 'Unsaved edits on this page')}</span>
+          {journeyProcessSummary ? (
+            <div className="adminProcessSummary">
+              <div className="adminProcessGroup">
+                <span className="adminProcessLabel">Lead</span>
+                <span className="adminProcessChip success">{journeyProcessSummary.lead.sent} sent</span>
+                <span className="adminProcessChip">{journeyProcessSummary.lead.queued} queued</span>
+                <span className="adminProcessChip">{journeyProcessSummary.lead.checked} checked</span>
+                <span className="adminProcessChip">{journeyProcessSummary.lead.candidates} candidates</span>
+                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedRegistered} registered</span>
+                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedActive} active</span>
+                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedExistingStepOne} existing step 1</span>
+                <span className="adminProcessChip accent">{journeyProcessSummary.lead.revived} revived</span>
+                <span className="adminProcessChip accent">{journeyProcessSummary.lead.newRuns} new runs</span>
+                <span className="adminProcessChip accent">{journeyProcessSummary.lead.bootstrapped} bootstrapped</span>
+                <span className="adminProcessChip success">{journeyProcessSummary.lead.stepOneSent} step 1 sent</span>
+              </div>
+              <div className="adminProcessGroup">
+                <span className="adminProcessLabel">Reservation</span>
+                <span className="adminProcessChip success">{journeyProcessSummary.reservation.sent} sent</span>
+                <span className="adminProcessChip">{journeyProcessSummary.reservation.checked} checked</span>
+              </div>
+            </div>
+          ) : null}
         </div>
         <button type="button" className="button" onClick={saveChanges} disabled={saving}>
           {saving ? 'Saving...' : 'Save all'}

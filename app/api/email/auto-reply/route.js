@@ -1,4 +1,5 @@
 import { supabaseServer, supabaseServerEnabled } from '../../../../lib/supabaseServer'
+import { isSesConfigured, sendWithSes } from '../../../../lib/emailProvider'
 
 function buildFallbackReply(fromEmail, subject, message) {
   return `Hi,\n\nThank you for your email${fromEmail ? `, ${fromEmail}` : ''}. We received your message${
@@ -53,33 +54,21 @@ async function generateDraftWithGemini(reply, apiKey) {
   return { draft, configured: true }
 }
 
-async function sendReplyWithSendGrid({ toEmail, subject, bodyText, apiKey, fromEmail }) {
+async function sendReplyWithSes({ toEmail, subject, bodyText }) {
   const html = `
     <div style="font-family: Arial, sans-serif; line-height:1.55; color:#0f172a; max-width:640px;">
       <p style="white-space:pre-line; margin:0 0 16px;">${bodyText}</p>
     </div>
   `
 
-  const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: toEmail }] }],
-      from: { email: fromEmail, name: 'New England Wushu' },
-      subject: subject?.startsWith('Re:') ? subject : `Re: ${subject || 'Your question'}`,
-      content: [
-        { type: 'text/plain', value: bodyText },
-        { type: 'text/html', value: html },
-      ],
-    }),
+  const response = await sendWithSes({
+    toEmail,
+    subject: subject?.startsWith('Re:') ? subject : `Re: ${subject || 'Your question'}`,
+    bodyText,
+    html,
   })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(errorText || response.statusText)
+  if (!response.sent) {
+    throw new Error(response.error || 'SES send failed.')
   }
 }
 
@@ -96,8 +85,6 @@ export async function POST(request) {
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY || ''
-    const sendgridApiKey = process.env.SENDGRID_API_KEY || ''
-    const sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || ''
     const autoSendEnabled = String(process.env.AUTO_SEND_AI_REPLIES || '').toLowerCase() === 'true'
 
     const { data: replies, error: repliesError } = await supabaseServer
@@ -122,7 +109,7 @@ export async function POST(request) {
         const draftText = draftResult.draft
         const nowIso = new Date().toISOString()
 
-        const nextStatus = autoSendEnabled && sendgridApiKey && sendgridFromEmail ? 'sending' : 'drafted'
+        const nextStatus = autoSendEnabled && isSesConfigured() ? 'sending' : 'drafted'
         await supabaseServer
           .from('email_replies')
           .update({
@@ -147,13 +134,11 @@ export async function POST(request) {
         })
         draftedCount += 1
 
-        if (autoSendEnabled && sendgridApiKey && sendgridFromEmail) {
-          await sendReplyWithSendGrid({
+        if (autoSendEnabled && isSesConfigured()) {
+          await sendReplyWithSes({
             toEmail: reply.from_email || reply.email,
             subject: reply.subject || 'Your question',
             bodyText: draftText,
-            apiKey: sendgridApiKey,
-            fromEmail: sendgridFromEmail,
           })
 
           await supabaseServer

@@ -1,9 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { defaultAdminConfig, formatWeekLabel, getSelectedWeeks } from '../lib/campAdmin'
+import {
+  buildProgramWeekOptions,
+  defaultAdminConfig,
+  formatDateLabel,
+  formatWeekLabel,
+  getSelectedWeeks,
+} from '../lib/campAdmin'
 import { fetchAdminConfigFromSupabase } from '../lib/campAdminApi'
+import { buildPaymentPageHref } from '../lib/paymentPageLink'
+import { buildRegistrationSummaryDocument } from '../lib/registrationSummaryDocument'
 import { supabase, supabaseEnabled } from '../lib/supabase'
 
 const dayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -20,10 +28,120 @@ const registrationSteps = [
   { id: 3, title: 'Lunch days' },
   { id: 4, title: 'Review & submit' },
 ]
+const desktopCampNavItems = [
+  { href: '#camp-info', label: 'Top' },
+  { href: '#why-camp', label: 'Highlights' },
+  { href: '#student-stories', label: 'Stories' },
+  { href: '#weekly-structure', label: 'Sample Week' },
+]
 const MAX_CAMPERS = 6
 const REGISTRATION_DRAFT_KEY = 'new-england-wushu-registration-draft-v1'
 const SURVEY_DRAFT_KEY = 'new-england-wushu-survey-draft-v1'
+const SURVEY_STEP_DRAFT_KEY = 'new-england-wushu-survey-step-draft-v1'
+const ASSISTANT_COLLAPSED_KEY = 'new-england-wushu-assistant-collapsed-v1'
 const SUPPORT_EMAIL = 'info@newushu.com'
+const PAYMENT_METHOD_OPTIONS = [
+  { value: 'zelle', label: 'Zelle (wushu688@gmail.com)' },
+  { value: 'venmo', label: 'Venmo (@newushu)' },
+  { value: 'check', label: 'Check (mail to 123 Muller Rd, payable to Newushu)' },
+  { value: 'other', label: 'Other / will confirm by reply' },
+]
+const INCLUDED_LUNCH_DAY_KEY = 'Thu'
+const LOCATION_OPTIONS = [
+  {
+    value: 'burlington',
+    label: 'Burlington',
+    towns: ['Lexington', 'Woburn', 'Bedford', 'Wilmington', 'Billerica', 'Winchester', 'Arlington', 'Belmont'],
+  },
+  {
+    value: 'acton',
+    label: 'Acton',
+    towns: ['Concord', 'Boxborough', 'Littleton', 'Westford', 'Maynard', 'Stow', 'Sudbury', 'Carlisle'],
+  },
+]
+const DAY_CAMP_WEEKLY_POINTS = 2500
+const DAY_CAMP_FULL_DAY_POINTS = 500
+const DAY_CAMP_HALF_DAY_POINTS = 100
+const OVERNIGHT_WEEKLY_POINTS = 5000
+const DOB_YEAR_OPTIONS = Array.from({ length: 26 }, (_, index) => String(new Date().getFullYear() - 2 - index))
+
+function getLocationLabel(value) {
+  const option = LOCATION_OPTIONS.find((item) => item.value === String(value || '').trim())
+  return option?.label || 'No location selected'
+}
+
+function getGeneralProgramForLocation(programConfig, locationValue) {
+  if (String(locationValue || '').trim() === 'acton') {
+    return {
+      ...programConfig,
+      selectedWeeks: Array.isArray(programConfig?.actonSelectedWeeks) ? programConfig.actonSelectedWeeks : [],
+    }
+  }
+  return programConfig
+}
+
+function getDobYear(dob) {
+  const match = String(dob || '').trim().match(/^(\d{4})-\d{2}-\d{2}$/)
+  return match ? match[1] : ''
+}
+
+function setDobYear(dob, yearValue) {
+  const year = String(yearValue || '').trim()
+  if (!/^\d{4}$/.test(year)) {
+    return ''
+  }
+  const raw = String(dob || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return `${year}${raw.slice(4)}`
+  }
+  return `${year}-01-01`
+}
+
+function getFacilityImageUrls(media, locationValue) {
+  if (String(locationValue || '').trim() === 'acton') {
+    return Array.isArray(media?.actonFacilityImageUrls) ? media.actonFacilityImageUrls.filter(Boolean) : []
+  }
+  if (String(locationValue || '').trim() === 'burlington') {
+    return Array.isArray(media?.burlingtonFacilityImageUrls)
+      ? media.burlingtonFacilityImageUrls.filter(Boolean)
+      : []
+  }
+  return []
+}
+
+function getSiteBaseUrl() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
+  }
+  return process.env.NEXT_PUBLIC_SITE_URL || 'https://summer.newushu.com'
+}
+
+function isIncludedLunchDay(dayKey) {
+  return String(dayKey || '') === INCLUDED_LUNCH_DAY_KEY
+}
+
+function getDayNotableText(dayKey) {
+  if (dayKey === 'Wed') {
+    return 'Water balloons day: bring a change of clothes.'
+  }
+  if (dayKey === 'Thu') {
+    return 'BBQ lunch included in tuition (packing lunch is optional).'
+  }
+  if (dayKey === 'Fri') {
+    return 'Family performance showcase day.'
+  }
+  return ''
+}
+
+function isPaidLunchSelectionKey(key) {
+  return !String(key || '').endsWith(`:${INCLUDED_LUNCH_DAY_KEY}`)
+}
+
+function getPaymentMethodLabel(value) {
+  const normalized = String(value || '').trim()
+  const option = PAYMENT_METHOD_OPTIONS.find((item) => item.value === normalized)
+  return option?.label || normalized || 'not selected'
+}
 const surveyGoals = [
   { value: 'fun', label: 'Fun', zhLabel: '趣味' },
   { value: 'exercise', label: 'Exercise', zhLabel: '锻炼' },
@@ -38,20 +156,76 @@ const surveyActivities = [
   { value: 'conditioning', label: 'Fitness conditioning', zhLabel: '体能强化' },
   { value: 'partner-work', label: 'Partner work', zhLabel: '搭档协作' },
 ]
+const overnightActivityOptions = [
+  'Taolu forms training',
+  'Weapons basics',
+  'Advanced weapons practice',
+  'Sanda fundamentals',
+  'Self-defense drills',
+  'Tumbling basics',
+  'Acrobatics progression',
+  'Flexibility training',
+  'Mobility and recovery',
+  'Strength and conditioning',
+  'Speed and agility drills',
+  'Balance and coordination games',
+  'Partner drills',
+  'Small-group team challenges',
+  'Leadership activities',
+  'Confidence-building drills',
+  'Performance practice',
+  'Showcase preparation',
+  'Mindfulness and focus practice',
+  'Character-building sessions',
+  'Sportsmanship and discipline lessons',
+  'Goal-setting workshops',
+  'Video review and technique feedback',
+  'Nature walks/outdoor exploration',
+  'City or park outings',
+  'Cultural activities',
+  'Board/card game social time',
+  'Creative team projects',
+  'Campfire-style reflection time',
+  'Free play and social bonding',
+]
 const SURVEY_TOTAL_STEPS = 7
 
 const perks = [
   {
-    title: 'Daily training tracks',
-    text: 'Age-based groups for movement, drills, confidence, and skill progress.',
+    title: 'Fun, Challenging, Game-Based Training',
+    zhTitle: '有趣且有挑战的游戏化训练',
+    text: 'Keep your child active, engaged, and excited with high-energy games, team challenges, and skill-building every day.',
+    zhText: '通过高能游戏、团队挑战与每日技能训练，让孩子持续活跃、投入并保持兴奋。',
   },
   {
-    title: 'Certified coaches',
-    text: 'Experienced instructors with first-aid awareness and youth coaching focus.',
+    title: 'Internationally Certified Coaches',
+    zhTitle: '国际认证教练团队',
+    text: 'Train with national and international-level coaches who are excellent with kids and follow clear safety standards.',
+    zhText: '由国家级与国际级背景教练带领，教练擅长青少年教学并严格执行清晰安全标准。',
   },
   {
-    title: 'Weekly showcase',
-    text: 'Campers demonstrate progress every Friday in a short family showcase.',
+    title: 'See Daily Progress Updates',
+    zhTitle: '每天可见成长更新',
+    text: 'Follow daily logs, photos, and videos so you can clearly see your camper learning and improving week by week.',
+    zhText: '通过每日日志、照片和视频，清晰看到孩子每周的学习与进步。',
+  },
+  {
+    title: 'Lunch Convenience, No Packing Needed',
+    zhTitle: '午餐省心，不用每天备餐',
+    text: "Choose lunch by day so you don't need to pack lunch every camp day.",
+    zhText: '按天选择午餐，无需每天为营地准备便当。',
+  },
+  {
+    title: 'Small Groups, More Coach Attention',
+    zhTitle: '小班分组，更多教练关注',
+    text: 'Your child trains in small level-based groups so coaches can give clearer corrections and support.',
+    zhText: '孩子在按水平分组的小班中训练，教练能提供更清晰的动作纠正与成长支持。',
+  },
+  {
+    title: 'Weekly Showcase, Real Confidence',
+    zhTitle: '每周展示，建立真实自信',
+    text: 'Finish each week with a family showcase so campers practice performing, speaking up, and feeling proud.',
+    zhText: '每周通过家庭展示收尾，帮助孩子练习表达、展示与建立成就感。',
   },
 ]
 
@@ -67,8 +241,8 @@ const campTypes = [
     name: 'Competition Team Boot Camp',
     audience: 'For Taolu team and serious competition-track students',
     details:
-      'Focused technical training, routine polish, performance quality, and competition mindset.',
-    note: 'Two weeks required for students who want to join the fall competition team.',
+      'A strong pathway to national and international Taolu track training, with focused technical work and routine polish.',
+    note: 'Many of our national and international team members participate in this Boot Camp.',
   },
   {
     name: 'Overnight Camp',
@@ -80,11 +254,181 @@ const campTypes = [
 ]
 
 const schedule = [
-  { day: 'Monday', activity: 'Footwork foundations + team games' },
-  { day: 'Tuesday', activity: 'Technique stations + confidence drills' },
-  { day: 'Wednesday', activity: 'Agility circuits + partner practice' },
-  { day: 'Thursday', activity: 'Mini challenges + supervised sparring' },
-  { day: 'Friday', activity: 'Showcase prep + parent performance' },
+  {
+    day: 'Monday',
+    dayZh: '周一',
+    amTheme: 'Socialization + basics',
+    amThemeZh: '社交融入 + 基础训练',
+    pmTheme: 'Introduction to apparatus (ages 7+)',
+    pmThemeZh: '器械入门（7岁以上）',
+    amBlocks: '1) Team welcome games 2) Stance + footwork fundamentals 3) Basic forms practice',
+    amBlocksZh: '1) 团队破冰游戏 2) 马步与步法基础 3) 基础套路练习',
+    lunchBlock: 'Standard lunch block (camp lunch optional).',
+    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
+    pmBlocks: '1) Apparatus safety intro (7+) 2) Balance + control drills 3) Performance practice sets',
+    pmBlocksZh: '1) 器械安全入门（7岁以上）2) 平衡与控制训练 3) 展示练习组',
+    snackBlock: 'Afternoon snack + hydration reset',
+    snackBlockZh: '下午加餐 + 补水调整',
+    dayWhy: 'Monday builds belonging, routine, and confidence early so campers start strong.',
+    dayWhyZh: '周一帮助孩子快速建立归属感、节奏感与自信心，为整周打好开局。',
+    under6Focus:
+      'Ages 3-6 do not train with apparatus. They focus on locomotor patterns, balance, bilateral coordination, and attention control.',
+    under6FocusZh:
+      '3-6岁不进行器械训练，重点发展移动模式、平衡、双侧协调与专注控制。',
+  },
+  {
+    day: 'Tuesday',
+    dayZh: '周二',
+    amTheme: 'Basic skills + weapons foundations',
+    amThemeZh: '基本功 + 器械基础',
+    pmTheme: 'Sanda skill foundations',
+    pmThemeZh: '散打技术基础',
+    amBlocks: '1) Warm-up mobility 2) Core Wushu technique stations 3) Weapons foundations (eligible groups)',
+    amBlocksZh: '1) 热身与灵活性 2) 武术核心技术分站 3) 器械基础（适龄组）',
+    lunchBlock: 'Standard lunch block (camp lunch optional).',
+    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
+    pmBlocks: '1) Sanda guard + movement 2) Reaction timing drills 3) Supervised partner application',
+    pmBlocksZh: '1) 散打站姿与移动 2) 反应节奏训练 3) 教练监督对练应用',
+    snackBlock: 'Afternoon snack + hydration reset',
+    snackBlockZh: '下午加餐 + 补水调整',
+    dayWhy: 'Tuesday builds technical precision and control while keeping training fun and active.',
+    dayWhyZh: '周二在保持训练趣味和活力的同时，强化技术精度与动作控制。',
+    specialEventTitle: 'Park Power Play',
+    specialEventTitleZh: '公园活力时段',
+    specialEventNote: 'Outdoor play session at the park next door for movement, teamwork, and fresh-air reset.',
+    specialEventNoteZh: '安排隔壁公园户外活动时段，强化体能、协作与户外放松。',
+    specialEventTone: 'tuesday',
+    under6Focus:
+      'Ages 3-6 continue motor-skill development through rhythm, direction changes, spatial awareness, and core stability drills.',
+    under6FocusZh:
+      '3-6岁通过节奏、变向、空间感与核心稳定训练持续提升大运动能力。',
+  },
+  {
+    day: 'Wednesday',
+    dayZh: '周三',
+    amTheme: 'Self-defense skills',
+    amThemeZh: '自我防护技能',
+    pmTheme: 'Character-building challenge blocks',
+    pmThemeZh: '品格培养训练',
+    amBlocks: '1) Awareness + safety language 2) Boundary-setting practice 3) Confidence-based self-defense drills',
+    amBlocksZh: '1) 安全意识与表达 2) 边界感练习 3) 建立自信的防护训练',
+    lunchBlock: 'Standard lunch block (camp lunch optional).',
+    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
+    pmBlocks: '1) Team challenge stations 2) Discipline + focus circuits 3) Reflection + goal check',
+    pmBlocksZh: '1) 团队任务分站 2) 纪律与专注训练 3) 复盘与目标检查',
+    snackBlock: 'Afternoon snack + hydration reset',
+    snackBlockZh: '下午加餐 + 补水调整',
+    dayWhy: 'Wednesday strengthens character, self-control, and respectful teamwork under pressure.',
+    dayWhyZh: '周三强化品格、自我控制与压力下的合作礼仪。',
+    specialEventTitle: 'Water Balloons',
+    specialEventTitleZh: '水球日',
+    specialEventNote: 'Bring a change of clothes for supervised water balloons and cooling play.',
+    specialEventNoteZh: '请带一套替换衣物，孩子将参加教练看护下的水球活动与清凉游戏。',
+    specialEventTone: 'wednesday',
+    under6Focus:
+      'Ages 3-6 use games-based drills to strengthen proprioception, impulse control, and confidence through successful repetitions.',
+    under6FocusZh:
+      '3-6岁通过游戏化训练提升本体感、冲动控制与成功体验带来的自信。',
+  },
+  {
+    day: 'Thursday',
+    dayZh: '周四',
+    amTheme: 'Team-building + socialization',
+    amThemeZh: '团队协作 + 社交发展',
+    pmTheme: 'Integrated skills + BBQ lunch day',
+    pmThemeZh: '综合技能训练 + 周四烧烤午餐',
+    amBlocks: '1) Partner communication games 2) Group coordination tasks 3) Leadership rotations',
+    amBlocksZh: '1) 双人沟通游戏 2) 小组协作任务 3) 轮换领导练习',
+    lunchBlock: 'Thursday BBQ lunch (included in tuition).',
+    lunchBlockZh: '周四烧烤午餐（学费已包含）。',
+    pmBlocks: '1) Wushu + Sanda integration 2) Self-defense review 3) Coach corrections + checkpoint notes',
+    pmBlocksZh: '1) 武术+散打整合 2) 防护复习 3) 教练修正与阶段记录',
+    snackBlock: 'Afternoon snack + hydration reset',
+    snackBlockZh: '下午加餐 + 补水调整',
+    dayWhy: 'Thursday grows social confidence and teamwork while reinforcing real skill retention.',
+    dayWhyZh: '周四在强化技能巩固的同时，提升社交自信与团队协作能力。',
+    specialEventTitle: 'BBQ Thursday',
+    specialEventTitleZh: '周四烧烤日',
+    specialEventNote: 'Camp-provided BBQ lunch day with team games and social activities built into the schedule.',
+    specialEventNoteZh: '营地提供烧烤午餐，并安排团队游戏与社交活动。',
+    specialEventTone: 'thursday',
+    under6Focus:
+      'Ages 3-6 train in short, structured blocks to support motor learning, emotional regulation, and safe social participation.',
+    under6FocusZh:
+      '3-6岁采用短时结构化训练，支持动作学习、情绪调节与安全社交参与。',
+  },
+  {
+    day: 'Friday',
+    dayZh: '周五',
+    amTheme: 'Weekly skill review',
+    amThemeZh: '周训练回顾',
+    pmTheme: '4:00 PM family showcase + celebration',
+    pmThemeZh: '下午4:00家庭展示 + 庆祝',
+    amBlocks: '1) Weekly recap circuits 2) Form refinement + timing 3) Showcase run-throughs',
+    amBlocksZh: '1) 周回顾循环训练 2) 套路细化与节奏 3) 展示联排',
+    lunchBlock: 'Standard lunch block (camp lunch optional).',
+    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
+    pmBlocks: '1) Final polish sets 2) Team encouragement prep 3) 4:00 PM family showcase',
+    pmBlocksZh: '1) 最终细节打磨 2) 团队鼓励准备 3) 下午4:00家庭展示',
+    snackBlock: 'Pre-show snack + hydration reset',
+    snackBlockZh: '展示前加餐 + 补水调整',
+    dayWhy: 'Friday turns effort into visible progress, helping campers build confidence and character.',
+    dayWhyZh: '周五把一周努力转化为可见成果，帮助孩子建立更强自信与品格。',
+    specialEventTitle: 'Performance Friday',
+    specialEventTitleZh: '周五展示日',
+    specialEventNote: 'Family showcase starts at 4:00 PM with celebration, photos, and camper recognition.',
+    specialEventNoteZh: '家庭展示下午4:00开始，含庆祝、合影与营员表彰。',
+    specialEventTone: 'friday',
+    under6Focus:
+      'Ages 3-6 showcase age-appropriate movement, confidence, and social growth, without apparatus training.',
+    under6FocusZh:
+      '3-6岁展示符合年龄阶段的动作表现、自信与社交成长，不涉及器械训练。',
+  },
+]
+
+const overnightSchedule = [
+  {
+    day: 'Sunday',
+    amTheme: 'Arrival + orientation',
+    pmTheme: 'Outing',
+    note: 'Drop-off at 1:00 PM, settle in, then first supervised outing and team bonding.',
+  },
+  {
+    day: 'Monday',
+    amTheme: 'Academy training + day camp integration',
+    pmTheme: 'Outing',
+    note: 'Skill-focused academy training with day-camp rhythm, then evening outing.',
+  },
+  {
+    day: 'Tuesday',
+    amTheme: 'Academy training + day camp integration',
+    pmTheme: 'Academy training + recovery',
+    note: 'Full training day at the academy with structured development and recovery routine.',
+  },
+  {
+    day: 'Wednesday',
+    amTheme: 'Academy training + day camp integration',
+    pmTheme: 'Academy training + social session',
+    note: 'Technique progression, partner work, and evening community-building activities on campus.',
+  },
+  {
+    day: 'Thursday',
+    amTheme: 'Academy training + day camp integration',
+    pmTheme: 'Outing',
+    note: 'Training at the academy during the day, then supervised group outing.',
+  },
+  {
+    day: 'Friday',
+    amTheme: 'Outing',
+    pmTheme: 'Academy training + showcase prep',
+    note: 'Morning outing, then return to academy for focused training and showcase preparation.',
+  },
+  {
+    day: 'Saturday',
+    amTheme: 'Academy training recap',
+    pmTheme: 'Outing + pickup',
+    note: 'Final training recap, last outing, and pickup at 4:00 PM at the camp house.',
+  },
 ]
 
 const levelUpFeatures = [
@@ -130,8 +474,8 @@ const testimonialTranslationMap = {
   Showcase: '展示',
   'Ethan joined General Camp with no prior martial arts experience. After two weeks of structured coaching, he improved flexibility, focus, and confidence, then completed the Friday showcase in front of families with a big smile.':
     'Ethan在没有武术基础的情况下参加了普通营。经过两周系统训练，他的柔韧性、专注力和自信明显提升，并在周五家庭展示中自信完成表演。',
-  'Parent reported stronger confidence, better discipline at home, and excitement to continue training.':
-    '家长反馈：孩子更有自信，居家纪律更好，也更期待继续训练。',
+  'Parent shared the coaches were excellent with kids, communication was clear, and Ethan left each day confident and excited.':
+    '家长表示教练非常擅长带孩子、沟通清晰，Ethan每天都带着自信和兴奋回家。',
   'Ava, age 8': 'Ava，8岁',
   'Lunch was easy, and every day felt meaningful': '午餐安排省心，每一天都很有收获',
   'Daily Routine': '每日节奏',
@@ -139,25 +483,29 @@ const testimonialTranslationMap = {
   'Coach Support': '教练支持',
   'Ava attended General Camp for three weeks. Her family appreciated the flexible lunch planning and clear weekly structure, and Ava came home each day talking about team games, new skills, and how much fun she had with her coaches.':
     'Ava参加了三周普通营。家长很认可灵活的午餐安排和清晰的每周结构；Ava每天回家都会分享团队游戏、新学技能，以及和教练在一起有多开心。',
-  'Parent shared that planning lunches felt manageable, daily communication was clear, and Ava asked to come back next summer.':
-    '家长表示午餐安排轻松可管理、每日沟通很清晰，而且Ava已经主动要求明年夏天继续参加。',
+  'Ava attended General Camp for three weeks. Her family loved using the app to handle lunch ahead of time, and Ava came home each day talking about team games, new skills, and how much fun she had with her coaches.':
+    'Ava参加了三周普通营。家长很喜欢提前安排午餐的便利性；Ava每天回家都会分享团队游戏、新学技能，以及和教练在一起有多开心。',
+  'Ava attended General Camp for three weeks. Her family loved the lunch convenience ahead of time, and Ava came home each day talking about team games, new skills, and how much fun she had with her coaches.':
+    'Ava参加了三周普通营。家长很喜欢提前安排午餐的便利性；Ava每天回家都会分享团队游戏、新学技能，以及和教练在一起有多开心。',
+  'Parent said lunch convenience was so nice, the coaches were amazing with kids, and Ava asked to come back next summer.':
+    '家长表示午餐安排非常省心，教练特别会带孩子，而且Ava已经主动要求明年夏天继续参加。',
   'Noah, age 10': 'Noah，10岁',
   'Coaches who care and a reward system kids love': '用心教练团队，加上孩子超喜欢的奖励体系',
   Motivation: '积极性',
   Discipline: '纪律',
   Teamwork: '团队协作',
-  'Noah joined General Camp to stay active and build confidence. The coaches were encouraging and patient, and he was motivated by the camp award system that recognized effort, teamwork, and progress all week.':
-    'Noah参加普通营是为了增强体能和自信。教练耐心且鼓励性强，而营地奖励体系会认可努力、协作和进步，让他整周都很有动力。',
-  'Parent reported better confidence, strong connection with coaches, and real excitement about training because camp felt both supportive and fun.':
-    '家长反馈：孩子自信心更强，与教练关系很好，也因为营地既有支持感又有趣而对训练充满热情。',
+  'Noah joined General Camp to stay active and build confidence. He quickly connected with a really good group of kids, and the coaches were encouraging, patient, and excellent with children.':
+    'Noah参加普通营是为了增强体能和自信。他很快就融入了一群很棒的孩子，教练也非常耐心、鼓励到位，并且特别擅长带孩子。',
+  'Parent reported stronger confidence, great coach support, and felt very good seeing Noah in such a positive camp community.':
+    '家长反馈：孩子自信提升明显，教练支持很强，也很放心看到Noah在这样积极的营地氛围里成长。',
   'Mia, age 7': 'Mia，7岁',
   'From first-week nerves to independent confidence': '从第一周紧张到独立自信',
   'First-Time Camper': '首次参营',
   Independence: '独立性',
-  'Mia started camp feeling shy about joining group activities. By the second week, she was volunteering for partner drills, practicing at home, and proudly showing new techniques during Friday showcase.':
-    'Mia刚开始参加营地时，对团队活动有些害羞。到第二周，她开始主动参与搭档训练、在家练习，并在周五展示中自豪地展示新动作。',
-  'Parent reported a major confidence jump, better listening at home, and stronger willingness to try new challenges.':
-    '家长反馈：孩子自信明显提升，在家更愿意倾听，也更愿意尝试新挑战。',
+  'Mia started camp feeling shy about joining group activities. By the second week, she had bonded with really kind kids, joined partner drills, and proudly showed new techniques during Friday showcase.':
+    'Mia刚开始参加营地时，对团队活动有些害羞。到第二周，她已经和一群很友善的孩子建立了连接，主动参与搭档训练，并在周五展示中自豪地展示新动作。',
+  'Parent shared that the coaches were very good with kids, Mia felt included, and confidence at home improved quickly.':
+    '家长表示教练非常会带孩子，Mia在营里很有归属感，回家后的自信也很快提升。',
   'Lucas, age 11': 'Lucas，11岁',
   'Athletic focus and visible weekly progress': '运动能力聚焦与每周可见进步',
   'Athletic Development': '运动能力提升',
@@ -165,8 +513,24 @@ const testimonialTranslationMap = {
   Consistency: '持续性',
   'Lucas joined to improve coordination and conditioning for multiple sports. The structured schedule helped him build balance, speed, and control, and he stayed engaged through clear weekly goals.':
     'Lucas参加营地是为了提升多项运动所需的协调性和体能。结构化训练帮助他提升平衡、速度和控制力，并通过清晰的每周目标持续投入。',
-  'Parent said he became more focused, looked forward to training each day, and showed measurable improvement by week three.':
-    '家长表示他变得更专注、每天都期待训练，并在第三周就看到了可衡量的提升。',
+  'Parent said coaches pushed progress in the right way, were very good with kids, and made the family feel confident about camp each week.':
+    '家长表示教练的进阶节奏把握得很好、非常会带孩子，也让家长每周都对营地安排很放心。',
+  'Sophie, age 8': 'Sophie，8岁',
+  'Strong routines and happy social growth': '训练有节奏，社交成长也很明显',
+  Routine: '规律性',
+  'Social Growth': '社交成长',
+  'Coach Quality': '教练质量',
+  'Sophie joined camp to stay active and improve focus. She quickly made friends with great kids, and her family loved how structured each day felt.':
+    'Sophie参加营地是为了保持活力并提升专注力。她很快和一群很棒的孩子成为朋友，家长也很喜欢每天清晰有序的训练安排。',
+  'Parent said the coaches were excellent with kids, communication was clear, and Sophie came home proud and energized.':
+    '家长表示教练非常会带孩子、沟通清晰，Sophie每天回家都很自豪也充满活力。',
+  'Li Wei (李薇), age 9': 'Li Wei（李薇），9岁',
+  'Disciplined training with caring support': '有纪律的训练与有温度的支持',
+  Care: '关怀支持',
+  'Li Wei started with beginner-level technique goals and grew quickly through daily drills, partner work, and positive team culture.':
+    'Li Wei以基础技术目标起步，通过每日训练、搭档配合和积极团队氛围快速成长。',
+  'Parent shared the coaches were very good with kids, gave thoughtful feedback, and made the family feel confident week after week.':
+    '家长表示教练非常会带孩子、反馈细致，也让家长每周都更放心。',
 }
 
 function pluralize(label, count) {
@@ -346,7 +710,9 @@ function getStudentSummary(student) {
     }
   }
 
-  const lunchCount = Object.values(student.lunch || {}).filter(Boolean).length
+  const lunchCount = Object.entries(student.lunch || {}).filter(
+    ([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)
+  ).length
 
   return { general, bootcamp, lunchCount }
 }
@@ -373,6 +739,51 @@ function getLunchWeeksForStudent(student, weeksById) {
     }
   }
   return rows.sort((a, b) => a.week.start.localeCompare(b.week.start))
+}
+
+function getLunchDecisionStats(student, weeksById) {
+  const lunchWeeks = getLunchWeeksForStudent(student, weeksById)
+  const registeredDays = lunchWeeks.reduce((sum, row) => sum + row.selectedDays.length, 0)
+  const includedLunchDays = lunchWeeks.reduce(
+    (sum, row) => sum + row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length,
+    0
+  )
+  const paidLunchDays = lunchWeeks.reduce(
+    (sum, row) =>
+      sum +
+      row.selectedDays.filter(
+        (day) => !isIncludedLunchDay(day.dayKey) && Boolean(student?.lunch?.[day.key])
+      ).length,
+    0
+  )
+  const lunchProvidedDays = includedLunchDays + paidLunchDays
+  const packLunchNeededDays = Math.max(0, registeredDays - lunchProvidedDays)
+  return {
+    lunchWeeks,
+    registeredDays,
+    includedLunchDays,
+    paidLunchDays,
+    lunchProvidedDays,
+    packLunchNeededDays,
+  }
+}
+
+function getDayCampPointsFromSummary(summary) {
+  const general = summary?.general || {}
+  const bootcamp = summary?.bootcamp || {}
+  const totalFullWeeks = Number(general.fullWeeks || 0) + Number(bootcamp.fullWeeks || 0)
+  const totalFullDays = Number(general.fullDays || 0) + Number(bootcamp.fullDays || 0)
+  const totalHalfDays =
+    Number(general.amDays || 0) +
+    Number(general.pmDays || 0) +
+    Number(bootcamp.amDays || 0) +
+    Number(bootcamp.pmDays || 0)
+
+  return (
+    totalFullWeeks * DAY_CAMP_WEEKLY_POINTS +
+    totalFullDays * DAY_CAMP_FULL_DAY_POINTS +
+    totalHalfDays * DAY_CAMP_HALF_DAY_POINTS
+  )
 }
 
 function escapeHtml(value) {
@@ -454,8 +865,23 @@ function currency(amount) {
   return `$${Number(amount || 0).toFixed(2)}`
 }
 
+function parseScheduleFeatures(rawText) {
+  const normalized = String(rawText || '').trim()
+  if (!normalized) {
+    return []
+  }
+  const numbered = normalized
+    .split(/\s*\d+\)\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (numbered.length > 1) {
+    return numbered
+  }
+  return [normalized]
+}
+
 function roundUpToFive(value) {
-  const next = Math.ceil(Number(value || 0) / 5) * 5
+  const next = Math.round(Number(value || 0) / 5) * 5
   return Number.isFinite(next) ? Math.max(0, next) : 0
 }
 
@@ -472,7 +898,7 @@ function getYouTubeVideoId(url) {
       return parsed.pathname.replace('/', '').trim()
     }
 
-    if (host === 'youtube.com' || host === 'm.youtube.com') {
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
       if (parsed.pathname === '/watch') {
         return parsed.searchParams.get('v') || ''
       }
@@ -495,8 +921,24 @@ function getYouTubeEmbedUrl(url) {
   if (!id) {
     return ''
   }
-
-  return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&loop=1&playlist=${id}&controls=1&rel=0`
+  const params = new URLSearchParams({
+    autoplay: '1',
+    mute: '1',
+    playsinline: '1',
+    loop: '1',
+    playlist: id,
+    controls: '1',
+    rel: '0',
+    modestbranding: '1',
+    iv_load_policy: '3',
+    enablejsapi: '1',
+    cc_load_policy: '0',
+    fs: '1',
+  })
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    params.set('origin', window.location.origin)
+  }
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`
 }
 
 function getDefaultSurveyData() {
@@ -547,6 +989,33 @@ function readSurveyDraft() {
   }
 }
 
+function readSurveyStepDraft() {
+  if (typeof window === 'undefined') {
+    return 1
+  }
+  try {
+    const raw = window.localStorage.getItem(SURVEY_STEP_DRAFT_KEY)
+    const step = Number(raw || 1)
+    if (!Number.isFinite(step)) {
+      return 1
+    }
+    return Math.max(1, Math.min(SURVEY_TOTAL_STEPS, step))
+  } catch {
+    return 1
+  }
+}
+
+function readAssistantCollapsedDraft() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  try {
+    return window.localStorage.getItem(ASSISTANT_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 export default function HomePage() {
   const router = useRouter()
   const pathname = usePathname()
@@ -558,8 +1027,19 @@ export default function HomePage() {
   const [stepDirection, setStepDirection] = useState('next')
   const [countdownNow, setCountdownNow] = useState(() => new Date())
   const [isMobileViewport, setIsMobileViewport] = useState(false)
+  const [assistantCollapsed, setAssistantCollapsed] = useState(() => readAssistantCollapsedDraft())
   const [isDiscountCollapsed, setIsDiscountCollapsed] = useState(false)
   const [overnightRequestOption, setOvernightRequestOption] = useState('fullWeek')
+  const [overnightEnrollmentStep, setOvernightEnrollmentStep] = useState(1)
+  const [overnightSelectedWeekIds, setOvernightSelectedWeekIds] = useState([])
+  const [overnightActivitySelections, setOvernightActivitySelections] = useState([])
+  const [overnightActivityCustom, setOvernightActivityCustom] = useState('')
+  const [overnightParentName, setOvernightParentName] = useState('')
+  const [overnightContactEmail, setOvernightContactEmail] = useState('')
+  const [overnightContactPhone, setOvernightContactPhone] = useState('')
+  const [overnightPaymentMethod, setOvernightPaymentMethod] = useState('')
+  const [overnightSubmitting, setOvernightSubmitting] = useState(false)
+  const [overnightMessage, setOvernightMessage] = useState('')
   const [activeStudentId, setActiveStudentId] = useState('')
   const [expandedStudentId, setExpandedStudentId] = useState('')
   const [expandedWeekKey, setExpandedWeekKey] = useState('')
@@ -573,24 +1053,32 @@ export default function HomePage() {
     if (isRegistrationRoute) {
       return 'register'
     }
-    if (typeof window !== 'undefined' && window.location.hash === '#camp-info') {
-      return 'register'
-    }
     return ''
   })
   const [marketingNeed, setMarketingNeed] = useState('confidence')
+  const [ageFitGroup, setAgeFitGroup] = useState('3-6')
   const [marketingFlowIndex, setMarketingFlowIndex] = useState(0)
+  const [marketingHighlightIndex, setMarketingHighlightIndex] = useState(0)
   const [testimonialIndex, setTestimonialIndex] = useState(0)
   const [campGalleryIndex, setCampGalleryIndex] = useState(0)
   const [campGalleryDirection, setCampGalleryDirection] = useState('next')
+  const [activeCampTypeKey, setActiveCampTypeKey] = useState('general')
+  const [campTypeMediaIndex, setCampTypeMediaIndex] = useState(0)
   const [summaryExpanded, setSummaryExpanded] = useState(false)
   const [summaryOverlayOpen, setSummaryOverlayOpen] = useState(false)
   const [summaryOverlayHtml, setSummaryOverlayHtml] = useState('')
+  const [locationAlbumOpen, setLocationAlbumOpen] = useState(false)
+  const [locationAlbumIndex, setLocationAlbumIndex] = useState(0)
   const [submittedRegistrationSnapshot, setSubmittedRegistrationSnapshot] = useState(null)
+  const [registrationEmailResult, setRegistrationEmailResult] = useState(null)
+  const [summaryEmailSending, setSummaryEmailSending] = useState(false)
+  const [summaryEmailLocked, setSummaryEmailLocked] = useState(false)
   const [registrationDiscountClaimed, setRegistrationDiscountClaimed] = useState(false)
-  const [surveyStep, setSurveyStep] = useState(1)
+  const [surveyStep, setSurveyStep] = useState(() => readSurveyStepDraft())
   const [surveyDirection, setSurveyDirection] = useState('next')
   const [surveyMessage, setSurveyMessage] = useState('')
+  const [surveyAwaitingAdvanceStep, setSurveyAwaitingAdvanceStep] = useState(null)
+  const [surveyStepFeedback, setSurveyStepFeedback] = useState('')
   const [savingSurveyProfile, setSavingSurveyProfile] = useState(false)
   const [surveyData, setSurveyData] = useState({
     ...readSurveyDraft(),
@@ -600,8 +1088,11 @@ export default function HomePage() {
   const [adminConfig, setAdminConfig] = useState(defaultAdminConfig)
   const [draftReady, setDraftReady] = useState(false)
   const [registration, setRegistration] = useState({
+    location: '',
+    parentName: '',
     contactEmail: '',
     contactPhone: '',
+    paymentMethod: '',
     students: [createStudent('student-1')],
   })
   const registrationRef = useRef(null)
@@ -609,19 +1100,71 @@ export default function HomePage() {
   const summaryIframeRef = useRef(null)
   const slideTouchStartRef = useRef(0)
   const campGalleryTouchStartRef = useRef(0)
+  const surveyLeadAutosaveTimerRef = useRef(null)
+  const registrationLeadAutosaveTimerRef = useRef(null)
+
+  useEffect(() => {
+    setCampTypeMediaIndex(0)
+  }, [activeCampTypeKey])
 
   const missingConfig = useMemo(() => !supabaseEnabled, [])
   const generalWeeks = useMemo(
-    () => getSelectedWeeks('general', adminConfig.programs.general),
-    [adminConfig.programs.general]
+    () => getSelectedWeeks('general', getGeneralProgramForLocation(adminConfig.programs.general, registration.location)),
+    [adminConfig.programs.general, registration.location]
+  )
+  const locationFacilityPhotos = useMemo(
+    () => getFacilityImageUrls(adminConfig.media, registration.location),
+    [adminConfig.media, registration.location]
+  )
+
+  useEffect(() => {
+    setLocationAlbumIndex(0)
+    if (locationFacilityPhotos.length === 0) {
+      setLocationAlbumOpen(false)
+    }
+  }, [locationFacilityPhotos])
+  const generalWeekOptions = useMemo(
+    () =>
+      buildProgramWeekOptions(
+        'general',
+        adminConfig.programs.general.startDate,
+        adminConfig.programs.general.endDate
+      ),
+    [adminConfig.programs.general.endDate, adminConfig.programs.general.startDate]
   )
   const bootcampWeeks = useMemo(
     () => getSelectedWeeks('bootcamp', adminConfig.programs.bootcamp),
     [adminConfig.programs.bootcamp]
   )
+  const bootcampWeekOptions = useMemo(
+    () =>
+      buildProgramWeekOptions(
+        'bootcamp',
+        adminConfig.programs.bootcamp.startDate,
+        adminConfig.programs.bootcamp.endDate
+      ),
+    [adminConfig.programs.bootcamp.endDate, adminConfig.programs.bootcamp.startDate]
+  )
   const overnightWeeks = useMemo(() => getSelectedWeeks('overnight', adminConfig.programs.overnight), [
     adminConfig.programs.overnight,
   ])
+  const overnightWeekOptions = useMemo(
+    () =>
+      buildProgramWeekOptions(
+        'overnight',
+        adminConfig.programs.overnight.startDate,
+        adminConfig.programs.overnight.endDate
+      ),
+    [adminConfig.programs.overnight.endDate, adminConfig.programs.overnight.startDate]
+  )
+  const overnightWindowLabel = useMemo(() => {
+    const start = adminConfig.programs.overnight.startDate
+    const end = adminConfig.programs.overnight.endDate
+    if (!start || !end) {
+      return ''
+    }
+    return `${formatDateLabel(start)} - ${formatDateLabel(end)}`
+  }, [adminConfig.programs.overnight.endDate, adminConfig.programs.overnight.startDate])
   const featuredTestimonials = useMemo(() => {
     const incoming = Array.isArray(adminConfig.testimonials) ? adminConfig.testimonials : []
     const merged = [...incoming]
@@ -700,29 +1243,80 @@ export default function HomePage() {
   }, [registrationWeeks])
 
   const phoneScreenshots = useMemo(() => {
-    if (adminConfig.media.levelUpScreenshotUrls.length > 0) {
-      return adminConfig.media.levelUpScreenshotUrls
+    const screenshotUrls = Array.isArray(adminConfig.media.levelUpScreenshotUrls)
+      ? adminConfig.media.levelUpScreenshotUrls
+          .map((value) => (typeof value === 'string' ? value.trim() : ''))
+          .filter(Boolean)
+      : []
+    if (screenshotUrls.length > 0) {
+      return screenshotUrls
     }
 
-    if (adminConfig.media.levelUpImageUrl) {
-      return [adminConfig.media.levelUpImageUrl]
+    if (adminConfig.media.levelUpImageUrl && adminConfig.media.levelUpImageUrl.trim()) {
+      return [adminConfig.media.levelUpImageUrl.trim()]
     }
 
     return []
   }, [adminConfig.media.levelUpImageUrl, adminConfig.media.levelUpScreenshotUrls])
   const isZh = language === 'zh'
   const text = (en, zh) => (isZh ? zh : en)
+  const dayCampPointsBreakdown = text(
+    '2,500 New England Wushu Level Up points for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.',
+    '每个整周报名可获 2,500 新英格兰武术 Level Up 积分，每个整日报名可获 500 积分，每个半日报名可获 100 积分。'
+  )
+  const dayCampPointsUseCopy = text(
+    'Points can be saved for prizes, equipment, and future discounts during fall or spring season.',
+    '积分可用于兑换奖品、装备，以及秋季或春季课程的后续优惠。'
+  )
+  const overnightPointsUseCopy = text(
+    'Points can be saved for prizes, equipment, and future discounts during fall or spring season.',
+    '积分可用于兑换奖品、装备，以及秋季或春季课程的后续优惠。'
+  )
+  const marketingFlowTitles = useMemo(
+    () => [
+      text('Camp goals and outcomes', '营地目标与收获'),
+      text('Training style and structure', '训练方式与结构'),
+      text('Program options', '课程选项'),
+      text('Ready to register', '准备报名'),
+    ],
+    [text]
+  )
+  const marketingHighlights = useMemo(
+    () => [
+      text('Daily structure keeps kids focused, active, and growing.', '每日结构化安排，让孩子专注、活跃、持续成长。'),
+      text('Experienced coaches teach with clear standards and safety.', '经验教练按清晰标准与安全规范教学。'),
+      text('Small groups mean better corrections and real progress.', '小班分组让动作纠正更精准，进步更明显。'),
+      text('Parents see progress through daily photos and updates.', '家长通过每日照片和更新清晰看到成长。'),
+      text('Lunch options reduce weekday stress for busy families.', '午餐可选，明显减轻家庭平日日程压力。'),
+      text('Weekly showcases build confidence and communication skills.', '每周展示提升孩子表达力与舞台自信。'),
+      text('Game-based training keeps learning challenging and fun.', '游戏化训练让学习既有挑战也有乐趣。'),
+      text('Age-level pathways match each child’s pace and goals.', '按年龄分层路径匹配每个孩子节奏与目标。'),
+    ],
+    [text]
+  )
   const campGalleryItems = useMemo(() => {
     const surveyImages = Array.isArray(adminConfig.media.surveyStepImageUrls)
       ? adminConfig.media.surveyStepImageUrls
       : []
     return [
-      { src: (adminConfig.media.heroImageUrl || '').trim(), slot: isZh ? '营地主视觉' : 'Hero Camp Moment' },
-      { src: (surveyImages[0] || '').trim(), slot: isZh ? '训练亮点' : 'Training Highlights' },
-      { src: (surveyImages[1] || '').trim(), slot: isZh ? '团队与友谊' : 'Teamwork & Friends' },
-      { src: (surveyImages[2] || '').trim(), slot: isZh ? '每周展示' : 'Weekly Showcase' },
+      { src: (adminConfig.media.heroImageUrl || '').trim(), slot: isZh ? '营地主视觉' : 'Hero Camp Moment', positionIndex: 0 },
+      { src: (surveyImages[0] || '').trim(), slot: isZh ? '训练亮点' : 'Training Highlights', positionIndex: 1 },
+      { src: (surveyImages[1] || '').trim(), slot: isZh ? '团队与友谊' : 'Teamwork & Friends', positionIndex: 2 },
+      { src: (surveyImages[2] || '').trim(), slot: isZh ? '每周展示' : 'Weekly Showcase', positionIndex: 3 },
     ]
   }, [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls, isZh])
+  function getLandingCarouselImageStyle(positionIndex) {
+    const item = adminConfig.media.landingCarouselImagePositions?.[positionIndex] || {
+      x: 0,
+      y: 0,
+      zoom: 100,
+    }
+    return {
+      objectPosition: `${50 + Number(item.x || 0)}% ${50 + Number(item.y || 0)}%`,
+      transform: `scale(${Number(item.zoom || 100) / 100})`,
+      transformOrigin: 'center center',
+    }
+  }
   const campGalleryCount = campGalleryItems.length
   const normalizedCampGalleryIndex = campGalleryCount > 0
     ? ((campGalleryIndex % campGalleryCount) + campGalleryCount) % campGalleryCount
@@ -737,8 +1331,23 @@ export default function HomePage() {
   const activeCampGalleryCaption = campGalleryCaptions[normalizedCampGalleryIndex % campGalleryCaptions.length]
   const levelUpSlideCount = Math.max(phoneScreenshots.length, levelUpFeatures.length, 1)
   const activeLevelUpFeature = levelUpFeatures[levelUpSlideIndex % levelUpFeatures.length]
+  const activeLevelUpScreenshotIndex =
+    phoneScreenshots.length > 0 ? levelUpSlideIndex % phoneScreenshots.length : 0
   const activeLevelUpScreenshot =
-    phoneScreenshots.length > 0 ? phoneScreenshots[levelUpSlideIndex % phoneScreenshots.length] : ''
+    phoneScreenshots.length > 0 ? phoneScreenshots[activeLevelUpScreenshotIndex] : ''
+  const levelUpRenderScale = Math.max(108, Number(adminConfig.media.levelUpScreenshotSize || 100))
+  function getLevelUpScreenshotStyle(index) {
+    const item = adminConfig.media.levelUpScreenshotPositions?.[index] || {
+      x: 0,
+      y: 0,
+      zoom: 100,
+    }
+    return {
+      objectPosition: `${50 + Number(item.x || 0)}% ${50 + Number(item.y || 0)}%`,
+      transform: `scale(${Number(item.zoom || 100) / 100})`,
+      transformOrigin: 'center center',
+    }
+  }
 
   const summaries = useMemo(
     () => registration.students.map((student) => ({ student, summary: getStudentSummary(student) })),
@@ -757,9 +1366,13 @@ export default function HomePage() {
         + summary.bootcamp.amDays
         + summary.bootcamp.pmDays
     }, 0)
-    const totalLunchDays = summaries.reduce((acc, item) => acc + item.summary.lunchCount, 0)
-    return { totalCampDays, totalLunchDays }
-  }, [summaries])
+    const totalPaidLunchDays = summaries.reduce((acc, item) => acc + item.summary.lunchCount, 0)
+    const totalIncludedLunchDays = summaries.reduce(
+      (acc, item) => acc + getLunchDecisionStats(item.student, weeksById).includedLunchDays,
+      0
+    )
+    return { totalCampDays, totalPaidLunchDays, totalIncludedLunchDays }
+  }, [summaries, weeksById])
 
   const discountActive = useMemo(() => {
     const end = parseDateLocal(adminConfig.tuition.discountEndDate)
@@ -788,7 +1401,7 @@ export default function HomePage() {
     const regular = adminConfig.tuition.regular
     const discounted = adminConfig.tuition.discount
     const rows = [
-      { key: 'fullWeek', label: 'Overnight Full Week', regular: Number(regular.overnightWeek || 0), discounted: Number(discounted.overnightWeek || 0) },
+      { key: 'fullWeek', label: 'Overnight Full Week', regular: Number(regular.overnightWeek || 1180), discounted: Number(discounted.overnightWeek || 980) },
       { key: 'fullDay', label: 'Overnight Full Day', regular: Number(regular.overnightDay || 0), discounted: Number(discounted.overnightDay || 0) },
     ]
 
@@ -902,6 +1515,15 @@ export default function HomePage() {
   }, [levelUpSlideCount])
 
   useEffect(() => {
+    if (typeof window === 'undefined' || isRegistrationRoute) {
+      return
+    }
+    if (window.location.hash === '#camp-info') {
+      setEntryMode('register')
+    }
+  }, [isRegistrationRoute])
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setCountdownNow(new Date())
     }, 1000)
@@ -916,10 +1538,27 @@ export default function HomePage() {
   }, [surveyData])
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    window.localStorage.setItem(SURVEY_STEP_DRAFT_KEY, String(surveyStep))
+  }, [surveyStep])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      window.localStorage.setItem(ASSISTANT_COLLAPSED_KEY, assistantCollapsed ? '1' : '0')
+    } catch {
+      return undefined
+    }
+  }, [assistantCollapsed])
+
+  useEffect(() => {
     function syncViewport() {
       const mobile = window.matchMedia('(max-width: 700px)').matches
       setIsMobileViewport(mobile)
-      setIsDiscountCollapsed(mobile)
     }
 
     syncViewport()
@@ -930,12 +1569,17 @@ export default function HomePage() {
   useEffect(() => {
     const draft = readRegistrationDraft()
     if (draft?.registration) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRegistration({
+        location:
+          typeof draft.registration.location === 'string' ? draft.registration.location : '',
+        parentName:
+          typeof draft.registration.parentName === 'string' ? draft.registration.parentName : '',
         contactEmail:
           typeof draft.registration.contactEmail === 'string' ? draft.registration.contactEmail : '',
         contactPhone:
           typeof draft.registration.contactPhone === 'string' ? draft.registration.contactPhone : '',
+        paymentMethod:
+          typeof draft.registration.paymentMethod === 'string' ? draft.registration.paymentMethod : '',
         students:
           Array.isArray(draft.registration.students) && draft.registration.students.length
             ? draft.registration.students.map(normalizeStudentDraft)
@@ -973,6 +1617,17 @@ export default function HomePage() {
     )
   }, [activeStudentId, draftReady, expandedStudentId, registration, step])
 
+  useEffect(() => {
+    if (expandedStudentId || activeStudentId) {
+      return
+    }
+    const firstStudentId = registration.students[0]?.id || ''
+    if (firstStudentId) {
+      setExpandedStudentId(firstStudentId)
+      setActiveStudentId(firstStudentId)
+    }
+  }, [activeStudentId, expandedStudentId, registration.students])
+
   function jumpToRegistration() {
     if (!isRegistrationRoute) {
       router.push('/register')
@@ -1004,10 +1659,14 @@ export default function HomePage() {
   }
 
   function updateSurveyField(field, value) {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyData((current) => ({ ...current, [field]: value }))
   }
 
   function toggleSurveyActivity(activity) {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyData((current) => ({
       ...current,
       activityInterests: current.activityInterests.includes(activity)
@@ -1017,6 +1676,8 @@ export default function HomePage() {
   }
 
   function setSurveySportsParticipation(value) {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyData((current) => ({
       ...current,
       hasSports: value,
@@ -1026,6 +1687,8 @@ export default function HomePage() {
   }
 
   function toggleNoSportsPriority(priority) {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyData((current) => {
       const selected = Array.isArray(current.noSportsPriority) ? current.noSportsPriority : []
       if (selected.includes(priority)) {
@@ -1044,42 +1707,155 @@ export default function HomePage() {
     })
   }
 
-  async function saveSurveyProfileLead(lastCompletedStep) {
-    if (!supabaseEnabled || !supabase) {
+  async function saveSurveyProfileLead(lastCompletedStep, sourceData = surveyData) {
+    const normalizedEmail = String(sourceData.contactEmail || '').trim().toLowerCase()
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
       return null
     }
 
-    const camperAges = surveyData.camperAges
+    const camperAges = sourceData.camperAges
       .map((age) => Number(age || 0))
       .filter((age) => Number.isFinite(age) && age > 0)
     const surveyContext = {
-      camperCount: Math.max(1, Number(surveyData.camperCount || 1)),
+      camperCount: Math.max(1, Number(sourceData.camperCount || 1)),
       camperAges,
-      hasSports: surveyData.hasSports || null,
-      sportsList: surveyData.sportsList?.trim() || '',
+      hasSports: sourceData.hasSports || null,
+      sportsList: sourceData.sportsList?.trim() || '',
       noSportsPriority:
-        Array.isArray(surveyData.noSportsPriority) && surveyData.noSportsPriority.length > 0
-          ? surveyData.noSportsPriority
+        Array.isArray(sourceData.noSportsPriority) && sourceData.noSportsPriority.length > 0
+          ? sourceData.noSportsPriority
           : null,
-      hasMartial: surveyData.hasMartial || null,
-      martialYears: Number(surveyData.martialYears || 0),
-      martialMonths: Number(surveyData.martialMonths || 0),
-      goals: surveyData.goals,
-      activityInterests: surveyData.activityInterests,
-      lunchInterest: surveyData.lunchInterest || null,
-      registrationIntent: surveyData.registrationIntent || null,
+      hasMartial: sourceData.hasMartial || null,
+      martialYears: Number(sourceData.martialYears || 0),
+      martialMonths: Number(sourceData.martialMonths || 0),
+      goals: sourceData.goals,
+      activityInterests: sourceData.activityInterests,
+      lunchInterest: sourceData.lunchInterest || null,
+      registrationIntent: sourceData.registrationIntent || null,
     }
     const payload = {
-      email: surveyData.contactEmail.trim(),
-      camper_count: Math.max(1, Number(surveyData.camperCount || 1)),
+      email: normalizedEmail,
+      camper_count: Math.max(1, Number(sourceData.camperCount || 1)),
       camper_ages: camperAges,
       profile_context: surveyContext,
       last_completed_step: Number(lastCompletedStep) || 1,
     }
 
-    const { error } = await supabase.from('program_interest_profiles').insert(payload)
-    return error
+    try {
+      const response = await fetch('/api/leads/capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          source: 'summer-camp-program-finder',
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        return new Error(result?.error || 'Lead capture failed.')
+      }
+      return null
+    } catch (error) {
+      return error instanceof Error ? error : new Error('Lead capture failed.')
+    }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+    if (surveyLeadAutosaveTimerRef.current) {
+      window.clearTimeout(surveyLeadAutosaveTimerRef.current)
+    }
+
+    const normalizedEmail = String(surveyData.contactEmail || '').trim().toLowerCase()
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      return undefined
+    }
+
+    surveyLeadAutosaveTimerRef.current = window.setTimeout(async () => {
+      await saveSurveyProfileLead(surveyStep, {
+        ...surveyData,
+        contactEmail: normalizedEmail,
+      })
+    }, 450)
+
+    return () => {
+      if (surveyLeadAutosaveTimerRef.current) {
+        window.clearTimeout(surveyLeadAutosaveTimerRef.current)
+      }
+    }
+  }, [saveSurveyProfileLead, surveyData, surveyStep])
+
+  async function saveRegistrationLead(sourceRegistration = registration) {
+    const normalizedEmail = String(sourceRegistration.contactEmail || '').trim().toLowerCase()
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      return null
+    }
+
+    const camperAges = (Array.isArray(sourceRegistration.students) ? sourceRegistration.students : [])
+      .map((student) => calcAge(student?.dob))
+      .filter((age) => Number.isFinite(age) && age > 0)
+
+    try {
+      const response = await fetch('/api/leads/capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          camper_count: Math.max(1, Number(sourceRegistration.students?.length || 1)),
+          camper_ages: camperAges,
+          last_completed_step: Math.max(1, Number(step || 1)),
+          source: 'summer-camp-registration',
+          profile_context: {
+            flow: 'registration',
+            registrationStep: Math.max(1, Number(step || 1)),
+            parentName: String(sourceRegistration.parentName || '').trim(),
+            contactPhone: String(sourceRegistration.contactPhone || '').trim(),
+            location: String(sourceRegistration.location || '').trim(),
+            paymentMethod: String(sourceRegistration.paymentMethod || '').trim(),
+            camperNames: (Array.isArray(sourceRegistration.students) ? sourceRegistration.students : [])
+              .map((student, index) => String(student?.fullName || '').trim() || `Camper ${index + 1}`)
+              .filter(Boolean),
+          },
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        return new Error(result?.error || 'Registration lead capture failed.')
+      }
+      return null
+    } catch (error) {
+      return error instanceof Error ? error : new Error('Registration lead capture failed.')
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+    if (registrationLeadAutosaveTimerRef.current) {
+      window.clearTimeout(registrationLeadAutosaveTimerRef.current)
+    }
+
+    const normalizedEmail = String(registration.contactEmail || '').trim().toLowerCase()
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      return undefined
+    }
+
+    registrationLeadAutosaveTimerRef.current = window.setTimeout(() => {
+      saveRegistrationLead({
+        ...registration,
+        contactEmail: normalizedEmail,
+      })
+    }, 500)
+
+    return () => {
+      if (registrationLeadAutosaveTimerRef.current) {
+        window.clearTimeout(registrationLeadAutosaveTimerRef.current)
+      }
+    }
+  }, [registration, step])
 
   function setSurveyCamperCount(value) {
     const cleaned = value.replace(/\D/g, '')
@@ -1107,6 +1883,8 @@ export default function HomePage() {
   }
 
   function toggleSurveyGoal(goal) {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyData((current) => ({
       ...current,
       goals: current.goals.includes(goal)
@@ -1162,13 +1940,13 @@ export default function HomePage() {
     if (step === 2) {
       if (surveyData.hasSports === 'yes') {
         return text(
-          'Great. Next we will capture which sports they play so we can tailor training carry-over.',
-          '很好。下一步我们会了解具体运动项目，以便做更精准的能力迁移训练。'
+          'Excellent. Next we will capture current sports so our coaches can tailor a high-impact skill transfer plan for your camper.',
+          '非常好。下一步我们会了解当前运动背景，便于教练制定更高效的能力迁移训练方案。'
         )
       }
       return text(
-        'Perfect. Next we will pick what to build first so we can personalize your starter path.',
-        '很好。下一步我们会确定优先提升方向，定制孩子的起步路径。'
+        'Great starting point. Next we will identify your top priorities so we can build a personalized and confidence-focused starter path.',
+        '这是很好的起点。下一步我们会确认优先提升目标，制定更个性化且注重自信建立的起步路径。'
       )
     }
     if (step === 3) {
@@ -1187,12 +1965,12 @@ export default function HomePage() {
     if (step === 4) {
       return surveyData.hasMartial === 'yes'
         ? text(
-            'Nice. Next we will quickly capture years/months so we can place your camper at the right training level.',
-            '很好。下一步将快速了解训练年限，便于准确分班。'
+            'Outstanding. Prior martial arts experience gives your camper a strong advantage. Next we will capture years/months to place them in the right level and accelerate progress from day one.',
+            '非常棒。已有武术经历会为营员带来明显优势。下一步我们将记录训练年限，以便精准分层并从第一天就高效进步。'
           )
         : text(
-            'Great. No prior martial arts is totally fine. Next we will continue to goals and scheduling preferences.',
-            '非常好。零基础完全没问题，下一步我们继续了解目标和日程偏好。'
+            'Perfectly fine. Many of our strongest campers start with no martial arts background. Next we will align goals and schedule preferences for the best fit.',
+            '完全没问题。我们很多表现优秀的营员都从零基础开始。下一步我们会匹配目标与日程偏好，给出最合适方案。'
           )
     }
     if (step === 5) {
@@ -1202,18 +1980,18 @@ export default function HomePage() {
         const totalYears = years + months / 12
         if (totalYears >= 3) {
           return text(
-            'Your martial arts experience is a great fit for advanced training paths.',
-            '您的武术基础很适合进阶训练路径。'
+            'Excellent foundation. Your martial arts experience aligns well with advanced training pathways and leadership-focused coaching.',
+            '基础非常优秀。您的武术经历很适合进阶训练路径与领导力导向培养。'
           )
         }
         return text(
-          'Great foundation - we can build fast from your current experience level.',
-          '基础很好，我们可以在现有水平上快速进阶。'
+          'Strong foundation. We can build quickly from your current level with clear weekly progression targets.',
+          '基础很好。我们可在现有水平上快速进阶，并设定清晰的每周成长目标。'
         )
       }
       return text(
-        'That is great. New students do very well with our structured progression.',
-        '很棒。我们的结构化进阶体系对新学员非常友好。'
+        'Great choice. New students do very well in our structured progression model with close coach guidance.',
+        '非常好的选择。新学员在我们结构化进阶体系和教练细致指导下通常提升很快。'
       )
     }
     if (step === 6) {
@@ -1437,6 +2215,12 @@ export default function HomePage() {
       setSurveyMessage(error)
       return
     }
+    if (surveyAwaitingAdvanceStep !== surveyStep) {
+      setSurveyStepFeedback(getSurveyFeedback(surveyStep))
+      setSurveyAwaitingAdvanceStep(surveyStep)
+      setSurveyMessage(text('Tap Continue.', '点击继续。'))
+      return
+    }
     if (surveyStep === 1) {
       setSavingSurveyProfile(true)
       const saveError = await saveSurveyProfileLead(1)
@@ -1445,6 +2229,30 @@ export default function HomePage() {
         setSurveyMessage(`Could not save email profile: ${saveError.message}`)
         return
       }
+      try {
+        await fetch('/api/email/lead-journey', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'enqueue',
+            payload: {
+              contactEmail: surveyData.contactEmail.trim(),
+              guardianName: surveyData.contactEmail.trim(),
+              submittedAt: new Date().toISOString(),
+              recommendation: '',
+              summaryLines: [
+                `Camper count: ${Math.max(1, Number(surveyData.camperCount || 1))}`,
+                `Camper ages: ${(surveyData.camperAges || []).filter(Boolean).join(', ') || 'n/a'}`,
+                'Lead source: Survey Step 1 submission',
+              ],
+              registrationLink:
+                'https://summer.newushu.com/register',
+            },
+          }),
+        })
+      } catch {
+        // Non-blocking: survey should continue even if lead enqueue is temporarily unavailable.
+      }
     } else {
       const saveError = await saveSurveyProfileLead(surveyStep)
       if (saveError) {
@@ -1452,6 +2260,8 @@ export default function HomePage() {
         return
       }
     }
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyMessage('')
     setSurveyDirection('next')
     setSurveyStep((current) => {
@@ -1461,14 +2271,19 @@ export default function HomePage() {
   }
 
   function previousSurveyStep() {
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyMessage('')
     setSurveyDirection('prev')
     setSurveyStep((current) => Math.max(current - 1, 1))
   }
 
   function chooseLearnPath() {
+    setAssistantCollapsed(false)
     setEntryMode('learn')
     setSurveyStep(1)
+    setSurveyAwaitingAdvanceStep(null)
+    setSurveyStepFeedback('')
     setSurveyMessage('')
     setSurveyDirection('next')
     if (!isMobileViewport) {
@@ -1482,6 +2297,35 @@ export default function HomePage() {
     if (saveError) {
       setSurveyMessage(`Could not save follow-up intent: ${saveError.message}`)
       return
+    }
+    try {
+      const recommendationLines = buildSurveyRecommendation()
+      const summaryLines = [
+        `Camper count: ${Math.max(1, Number(surveyData.camperCount || 1))}`,
+        `Camper ages: ${(surveyData.camperAges || []).filter(Boolean).join(', ') || 'n/a'}`,
+        `Sports participation: ${surveyData.hasSports || 'n/a'}`,
+        `Martial arts experience: ${surveyData.hasMartial || 'n/a'}`,
+        `Goals: ${(surveyData.goals || []).join(', ') || 'n/a'}`,
+        `Lunch convenience: ${surveyData.lunchInterest || 'n/a'}`,
+      ]
+      await fetch('/api/email/lead-journey', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'enqueue',
+          payload: {
+            contactEmail: surveyData.contactEmail.trim(),
+            guardianName: surveyData.contactEmail.trim(),
+            submittedAt: new Date().toISOString(),
+            recommendation: recommendationLines.join(' '),
+            summaryLines,
+            registrationLink:
+              'https://summer.newushu.com/register',
+          },
+        }),
+      })
+    } catch {
+      // Non-blocking: survey completion should still succeed even if journey enqueue is temporarily unavailable.
     }
     setSurveyMessage('Great. We will follow up with useful info while you think it over.')
   }
@@ -1509,10 +2353,22 @@ export default function HomePage() {
   }
 
   function getMarketingNeedResponse() {
-    if (marketingNeed === 'athletic') {
+    if (marketingNeed === 'martial-arts') {
       return text(
-        'Great choice. We focus on coordination, speed, flexibility, and structured conditioning so campers improve performance across sports.',
-        '很棒。我们重点提升协调、速度、柔韧和体能，帮助孩子在多项运动中都更有表现。'
+        'Great focus. Coaches build martial arts fundamentals step-by-step: stance, technique control, timing, and confident execution.',
+        '非常好。教练将分步骤建立武术基础：站姿、动作控制、节奏把握与自信完成。'
+      )
+    }
+    if (marketingNeed === 'gross-motor') {
+      return text(
+        'Excellent choice. Gross motor skills improve through agility, coordination, balance, and full-body movement progressions.',
+        '非常好。通过敏捷、协调、平衡和全身动作递进训练，可明显提升大运动能力。'
+      )
+    }
+    if (marketingNeed === 'self-defense') {
+      return text(
+        'Strong option. Students learn practical self-defense awareness, reaction timing, and calm decision-making in a controlled setting.',
+        '很好的方向。孩子将在可控训练环境中学习实用自我保护意识、反应节奏和冷静判断。'
       )
     }
     if (marketingNeed === 'tumbling') {
@@ -1533,12 +2389,47 @@ export default function HomePage() {
     )
   }
 
+  function getAgeFitResponse() {
+    if (ageFitGroup === '3-6') {
+      return text(
+        'Need a strong early foundation for your child? Ages 3-6 focus on fun gross-motor basics that build balance, coordination, attention, and early confidence while keeping kids active and happy.',
+        '想为孩子打好早期成长基础吗？3-6岁阶段通过有趣的大运动基础训练，建立平衡、协调、专注和早期自信，同时让孩子保持活跃与快乐。'
+      )
+    }
+    if (ageFitGroup === '7-10') {
+      return text(
+        'Want to turn energy into skill and character? Ages 7-10 is the ideal window to build real fundamentals, lasting interest, confidence, and positive discipline in a welcoming team environment.',
+        '想把孩子的精力转化为技能与品格吗？7-10岁是建立核心基础和长期兴趣的黄金阶段，在友好团队环境中提升自信与良好纪律。'
+      )
+    }
+    if (ageFitGroup === '11-13') {
+      return text(
+        'Looking for structure during pre-teen years? Ages 11-13 build consistency, leadership, and performance confidence while developing strong habits for health, focus, and long-term character.',
+        '希望在青春前期建立更强结构感吗？11-13岁可重点培养持续性、领导力与展示自信，并形成有利于健康、专注和长期品格的好习惯。'
+      )
+    }
+    return text(
+      'Ready to build strength, discipline, and future readiness? Ages 14+ focus on serious training habits, athletic achievement, and measurable progress that supports high-school resume growth while strengthening lifelong health.',
+      '准备好提升力量、自律与未来竞争力了吗？14岁以上阶段聚焦系统训练习惯、运动成绩与可量化进步，助力高中履历成长，同时强化长期健康。'
+    )
+  }
+
   function previousMarketingFlowStep() {
     setMarketingFlowIndex((current) => Math.max(0, current - 1))
   }
 
   function nextMarketingFlowStep() {
     setMarketingFlowIndex((current) => Math.min(3, current + 1))
+  }
+
+  function previousMarketingHighlight() {
+    setMarketingHighlightIndex((current) =>
+      (current - 1 + marketingHighlights.length) % marketingHighlights.length
+    )
+  }
+
+  function nextMarketingHighlight() {
+    setMarketingHighlightIndex((current) => (current + 1) % marketingHighlights.length)
   }
 
   function localizeTestimonialValue(value, fallbackValue) {
@@ -1565,11 +2456,60 @@ export default function HomePage() {
     setTestimonialIndex((current) => (current + 1) % featuredTestimonials.length)
   }
 
+  function markRegistrationPending() {
+    if (submittedRegistrationSnapshot) {
+      setSubmittedRegistrationSnapshot(null)
+    }
+    if (registrationEmailResult) {
+      setRegistrationEmailResult(null)
+    }
+  }
+
   function updateContact(field, value) {
-    setRegistration((current) => ({ ...current, [field]: value }))
+    markRegistrationPending()
+    setRegistration((current) => {
+      if (field !== 'location') {
+        return { ...current, [field]: value }
+      }
+
+      const allowedGeneralWeekIds = new Set(
+        getSelectedWeeks('general', getGeneralProgramForLocation(adminConfig.programs.general, value)).map(
+          (week) => `daycamp:${week.start}`
+        )
+      )
+
+      return {
+        ...current,
+        [field]: value,
+        students: current.students.map((student) => {
+          const nextSchedule = { ...student.schedule }
+          const nextLunch = { ...student.lunch }
+
+          for (const [weekId, entry] of Object.entries(student.schedule || {})) {
+            if (entry?.campType !== 'general') {
+              continue
+            }
+            if (allowedGeneralWeekIds.has(weekId)) {
+              continue
+            }
+            delete nextSchedule[weekId]
+            for (const dayKey of Object.keys(entry?.days || {})) {
+              delete nextLunch[`${weekId}:${dayKey}`]
+            }
+          }
+
+          return {
+            ...student,
+            schedule: nextSchedule,
+            lunch: nextLunch,
+          }
+        }),
+      }
+    })
   }
 
   function updateStudentField(studentId, field, value) {
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1589,6 +2529,7 @@ export default function HomePage() {
       return
     }
 
+    markRegistrationPending()
     const next = createStudent()
     setRegistration((current) => ({
       ...current,
@@ -1599,6 +2540,7 @@ export default function HomePage() {
   }
 
   function removeStudent(studentId) {
+    markRegistrationPending()
     setRegistration((current) => {
       const remaining = current.students.filter((student) => student.id !== studentId)
       return {
@@ -1616,9 +2558,13 @@ export default function HomePage() {
   }
 
   function clearRegistrationForm() {
+    markRegistrationPending()
     setRegistration({
+      location: '',
+      parentName: '',
       contactEmail: '',
       contactPhone: '',
+      paymentMethod: '',
       students: [createStudent('student-1')],
     })
     setActiveStudentId('')
@@ -1627,13 +2573,30 @@ export default function HomePage() {
     setExpandedLunchWeekKey('')
     setHelpWeekKey('')
     setStep(1)
+    setRegistrationDiscountClaimed(false)
+    setRegistrationEmailResult(null)
+    setSummaryEmailSending(false)
+    setSummaryEmailLocked(false)
     setMessage('Form cleared.')
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(REGISTRATION_DRAFT_KEY)
     }
   }
 
+  function activateCamper(studentId) {
+    setActiveStudentId(studentId)
+    setExpandedStudentId(studentId)
+
+    if (step === 1 && typeof document !== 'undefined') {
+      window.setTimeout(() => {
+        const target = document.querySelector(`#reg-student-fullname-${studentId}`)
+        scrollElementIntoFocusZone(target)
+      }, 140)
+    }
+  }
+
   function setStudentWeek(studentId, week, updater) {
+    markRegistrationPending()
     const weekDayKeys = week.days.map((item) => item.key)
     setRegistration((current) => ({
       ...current,
@@ -1681,6 +2644,7 @@ export default function HomePage() {
   }
 
   function setDayCampType(studentId, week, campType) {
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) => {
@@ -1752,7 +2716,12 @@ export default function HomePage() {
   }
 
   function toggleLunch(studentId, weekId, day) {
+    if (isIncludedLunchDay(day)) {
+      setMessage('Thursday BBQ lunch is already included. You can still pack lunch if preferred.')
+      return
+    }
     const key = `${weekId}:${day}`
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) => {
@@ -1776,6 +2745,7 @@ export default function HomePage() {
   }
 
   function setLunchConfirmedNone(studentId, confirmed) {
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1789,11 +2759,11 @@ export default function HomePage() {
     }))
   }
 
-  function getSelectedDayKeysForStudent(student) {
+  function getSelectableLunchDayKeysForStudent(student) {
     const keys = new Set()
     for (const [weekId, entry] of Object.entries(student.schedule || {})) {
       for (const [dayKey, mode] of Object.entries(entry.days || {})) {
-        if (mode && mode !== 'NONE') {
+        if (mode && mode !== 'NONE' && !isIncludedLunchDay(dayKey)) {
           keys.add(`${weekId}:${dayKey}`)
         }
       }
@@ -1805,6 +2775,7 @@ export default function HomePage() {
     if (!activeStudent) {
       return
     }
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1842,6 +2813,7 @@ export default function HomePage() {
       ])
     )
 
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1864,6 +2836,7 @@ export default function HomePage() {
     if (!activeStudent) {
       return
     }
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1889,12 +2862,15 @@ export default function HomePage() {
       return
     }
 
-    const allowedKeys = getSelectedDayKeysForStudent(activeStudent)
+    const allowedKeys = getSelectableLunchDayKeysForStudent(activeStudent)
     const copiedLunch = Object.fromEntries(
-      Object.entries(sourceStudent.lunch || {}).filter(([key, value]) => value && allowedKeys.has(key))
+      Object.entries(sourceStudent.lunch || {}).filter(
+        ([key, value]) => value && allowedKeys.has(key) && isPaidLunchSelectionKey(key)
+      )
     )
     const hasAnyCopiedLunch = Object.values(copiedLunch).some(Boolean)
 
+    markRegistrationPending()
     setRegistration((current) => ({
       ...current,
       students: current.students.map((student) =>
@@ -1918,10 +2894,13 @@ export default function HomePage() {
   }
 
   function isStepOneComplete() {
+    const locationValid = registration.location.trim().length > 0
+    const parentNameValid = registration.parentName.trim().length > 1
     const emailValid = /\S+@\S+\.\S+/.test(registration.contactEmail)
     const phoneValid = registration.contactPhone.trim().length >= 7
+    const paymentMethodValid = registration.paymentMethod.trim().length > 0
     const studentsValid = registration.students.every((student) => isStudentComplete(student))
-    return emailValid && phoneValid && studentsValid
+    return locationValid && parentNameValid && emailValid && phoneValid && paymentMethodValid && studentsValid
   }
 
   function isStepTwoComplete() {
@@ -1929,7 +2908,13 @@ export default function HomePage() {
   }
 
   function hasValidLunchDecision(student) {
-    const hasAnyLunch = Object.values(student.lunch || {}).some(Boolean)
+    const hasAnyLunch = Object.entries(student.lunch || {}).some(
+      ([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)
+    )
+    const hasAnySelectableLunchDay = getSelectableLunchDayKeysForStudent(student).size > 0
+    if (!hasAnySelectableLunchDay) {
+      return true
+    }
     return hasAnyLunch || Boolean(student.lunchConfirmedNone)
   }
 
@@ -1990,7 +2975,13 @@ export default function HomePage() {
 
     if (currentStep === 3) {
       const studentsMissingLunchDecision = registration.students.filter((student) => {
-        const hasAnyLunch = Object.values(student.lunch || {}).some(Boolean)
+        const hasAnyLunch = Object.entries(student.lunch || {}).some(
+          ([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)
+        )
+        const hasAnySelectableLunchDay = getSelectableLunchDayKeysForStudent(student).size > 0
+        if (!hasAnySelectableLunchDay) {
+          return false
+        }
         return !hasAnyLunch && !student.lunchConfirmedNone
       })
 
@@ -2003,7 +2994,7 @@ export default function HomePage() {
           .join(', ')
         return {
           ok: false,
-          message: `Choose lunch days or confirm no lunch for: ${names}.`,
+          message: `Choose paid lunch days or confirm no paid lunch for: ${names}.`,
         }
       }
     }
@@ -2030,6 +3021,11 @@ export default function HomePage() {
     }
 
     if (currentStep === 1) {
+      if (!registration.parentName.trim() || registration.parentName.trim().length < 2) {
+        const parentNameInput = document.querySelector('#reg-parent-name')
+        scrollElementIntoFocusZone(parentNameInput)
+        return
+      }
       if (!/\S+@\S+\.\S+/.test(registration.contactEmail || '')) {
         const emailInput = document.querySelector('#reg-contact-email')
         scrollElementIntoFocusZone(emailInput)
@@ -2038,6 +3034,11 @@ export default function HomePage() {
       if (registration.contactPhone.trim().length < 7) {
         const phoneInput = document.querySelector('#reg-contact-phone')
         scrollElementIntoFocusZone(phoneInput)
+        return
+      }
+      if (!registration.paymentMethod.trim()) {
+        const paymentMethodInput = document.querySelector('#reg-payment-method')
+        scrollElementIntoFocusZone(paymentMethodInput)
         return
       }
 
@@ -2085,10 +3086,7 @@ export default function HomePage() {
     }
 
     if (currentStep === 3) {
-      const firstMissingStudent = registration.students.find((student) => {
-        const hasAnyLunch = Object.values(student.lunch || {}).some(Boolean)
-        return !hasAnyLunch && !student.lunchConfirmedNone
-      })
+      const firstMissingStudent = registration.students.find((student) => !hasValidLunchDecision(student))
       if (!firstMissingStudent) {
         return
       }
@@ -2119,12 +3117,24 @@ export default function HomePage() {
     setStep((current) => Math.max(current - 1, 1))
   }
 
+  const scrollRegistrationStepToTop = useCallback(() => {
+    if (typeof window === 'undefined' || !isMobileViewport) {
+      return
+    }
+    const stepCard = document.querySelector('.registrationStepCard')
+    if (!stepCard) {
+      return
+    }
+    const targetTop = Math.max(0, window.scrollY + stepCard.getBoundingClientRect().top - 10)
+    window.scrollTo({ top: targetTop, behavior: 'smooth' })
+  }, [isMobileViewport])
+
   function buildStudentPriceRows(summary, studentIndex, options = {}) {
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
     const regular = adminConfig.tuition.regular
     const discount = adminConfig.tuition.discount
     const premiumFactor = 1 + Number(adminConfig.tuition.bootcampPremiumPct || 0) / 100
-    const siblingDiscountPct = studentIndex === 1 ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
+    const siblingDiscountPct = studentIndex >= 1 ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
 
     const bootcampRegular = {
       fullWeek: roundUpToFive(regular.fullWeek * premiumFactor),
@@ -2232,30 +3242,38 @@ export default function HomePage() {
       lineTotal: lunchPrice * summary.lunchCount,
     })
 
-    const subtotalRegular = rows.reduce((acc, row) => acc + row.regularLineTotal, 0)
-    const limitedDiscountAmount = rows.reduce((acc, row) => acc + row.discountLineTotal, 0)
-    const subtotalAfterLimitedDiscount = rows.reduce((acc, row) => acc + row.lineTotal, 0)
+    const tuitionRows = rows.filter((row) => row.id !== 'lunch')
+    const lunchRow = rows.find((row) => row.id === 'lunch')
+    const lunchTotal = Number(lunchRow?.lineTotal || 0)
+    const lunchRegularTotal = Number(lunchRow?.regularLineTotal || 0)
+
+    const subtotalRegular = tuitionRows.reduce((acc, row) => acc + row.regularLineTotal, 0)
+    const limitedDiscountAmount = tuitionRows.reduce((acc, row) => acc + row.discountLineTotal, 0)
+    const subtotalAfterLimitedDiscount = tuitionRows.reduce((acc, row) => acc + row.lineTotal, 0)
 
     const siblingAfterLimitedDiscount =
       siblingDiscountPct > 0 ? subtotalAfterLimitedDiscount * (siblingDiscountPct / 100) : 0
-    const totalWithSiblingAfterLimited = Math.max(0, subtotalAfterLimitedDiscount - siblingAfterLimitedDiscount)
+    const totalWithSiblingAfterLimited = Math.max(0, subtotalAfterLimitedDiscount - siblingAfterLimitedDiscount) + lunchTotal
 
     const siblingBeforeLimitedDiscount =
       siblingDiscountPct > 0 ? subtotalRegular * (siblingDiscountPct / 100) : 0
     const baseAfterSiblingBeforeLimited = Math.max(0, subtotalRegular - siblingBeforeLimitedDiscount)
-    const totalWithSiblingBeforeLimited = Math.max(0, baseAfterSiblingBeforeLimited - limitedDiscountAmount)
+    const totalWithSiblingBeforeLimited = Math.max(0, baseAfterSiblingBeforeLimited - limitedDiscountAmount) + lunchTotal
 
     const useSiblingBeforeLimited = totalWithSiblingBeforeLimited > totalWithSiblingAfterLimited
     const siblingDiscountAmount = useSiblingBeforeLimited
       ? siblingBeforeLimitedDiscount
       : siblingAfterLimitedDiscount
-    const subtotal = subtotalAfterLimitedDiscount
+    const subtotal = subtotalAfterLimitedDiscount + lunchTotal
     const total = useSiblingBeforeLimited ? totalWithSiblingBeforeLimited : totalWithSiblingAfterLimited
 
     return {
       rows,
-      subtotalRegular,
+      subtotalRegular: subtotalRegular + lunchRegularTotal,
+      tuitionSubtotalRegular: subtotalRegular,
       limitedDiscountAmount,
+      tuitionSubtotal: subtotalAfterLimitedDiscount,
+      lunchTotal,
       subtotal,
       siblingDiscountPct,
       siblingDiscountAmount,
@@ -2271,7 +3289,7 @@ export default function HomePage() {
     }, 0)
   }
 
-  function buildRegistrationSummaryHtml(targetRegistration) {
+  function _buildRegistrationSummaryHtml(targetRegistration) {
     if (!targetRegistration || !Array.isArray(targetRegistration.students)) {
       return ''
     }
@@ -2285,13 +3303,14 @@ export default function HomePage() {
         const camperName = student.fullName.trim() || `Camper ${index + 1}`
         const summary = getStudentSummary(student)
         const invoice = buildStudentPriceRows(summary, index, { applyLimitedDiscount: discountActive })
-        const lunchWeeks = getLunchWeeksForStudent(student, weeksById)
-        const registeredDays = lunchWeeks.reduce((sum, row) => sum + row.selectedDays.length, 0)
-        const lunchDays = lunchWeeks.reduce(
-          (sum, row) => sum + row.selectedDays.filter((day) => Boolean(student.lunch[day.key])).length,
-          0
-        )
-        const packDays = Math.max(0, registeredDays - lunchDays)
+        const {
+          lunchWeeks,
+          registeredDays,
+          includedLunchDays,
+          paidLunchDays,
+          lunchProvidedDays,
+          packLunchNeededDays,
+        } = getLunchDecisionStats(student, weeksById)
 
         const rowsHtml = invoice.rows
           .map(
@@ -2312,10 +3331,14 @@ export default function HomePage() {
             const dayLines = row.selectedDays
               .map((day) => {
                 const hasLunch = Boolean(student.lunch[day.key])
+                const isIncludedLunch = isIncludedLunchDay(day.dayKey)
+                const notableText = getDayNotableText(day.dayKey)
                 allCampEntries.push({
                   date: day.date,
                   camperName,
-                  hasLunch,
+                  hasLunch: isIncludedLunch ? true : hasLunch,
+                  includedLunch: isIncludedLunch,
+                  notableText,
                   mode: day.mode,
                 })
                 return `
@@ -2323,7 +3346,8 @@ export default function HomePage() {
                   <td>${escapeHtml(day.dayKey)}</td>
                   <td>${escapeHtml(day.date)}</td>
                   <td>${escapeHtml(day.mode === 'FULL' ? 'Full Day' : `${day.mode} Half Day`)}</td>
-                  <td>${hasLunch ? 'Lunch selected (no packing needed)' : 'Pack lunch needed'}</td>
+                  <td>${isIncludedLunch ? 'BBQ lunch included (pack optional)' : hasLunch ? 'Lunch selected (no packing needed)' : 'Pack lunch needed'}</td>
+                  <td>${escapeHtml(notableText || '-')}</td>
                 </tr>
               `
               })
@@ -2333,7 +3357,7 @@ export default function HomePage() {
             <section class="weekBlock">
               <h4>Week ${weekIndex + 1}: ${escapeHtml(formatWeekLabel(row.week))}</h4>
               <table>
-                <thead><tr><th>Day</th><th>Date</th><th>Camp Schedule</th><th>Lunch Plan</th></tr></thead>
+                <thead><tr><th>Day</th><th>Date</th><th>Camp Schedule</th><th>Lunch Plan</th><th>Notable</th></tr></thead>
                 <tbody>${dayLines}</tbody>
               </table>
             </section>
@@ -2345,10 +3369,12 @@ export default function HomePage() {
           <section class="studentSection">
             <h2>${escapeHtml(camperName)}</h2>
             <p>
-              <span class="pill">Lunch selected: ${lunchDays}/${registeredDays} days</span>
-              <span class="pill">Pack lunch needed: ${packDays} days</span>
+              <span class="pill">Lunch provided: ${lunchProvidedDays}/${registeredDays} days</span>
+              <span class="pill">Paid lunch selected: ${paidLunchDays} days</span>
+              <span class="pill">Thu included lunch: ${includedLunchDays} day(s)</span>
+              <span class="pill">Pack lunch needed: ${packLunchNeededDays} days</span>
             </p>
-            <p class="note">On lunch-selected days, our team will contact you closer to each camp week to confirm lunch options.</p>
+            <p class="note">On paid-lunch days, our team will contact you closer to each camp week to confirm menu options. Thursday BBQ lunch is included in tuition (packing your own lunch is optional).</p>
 
             <h3>Tuition Table</h3>
             <table>
@@ -2391,7 +3417,13 @@ export default function HomePage() {
             const itemsHtml = cellEntries
               .map((item) => {
                 const modeLabel = item.mode === 'FULL' ? 'Full Day' : `${item.mode} Half Day`
-                return `<li><strong>${escapeHtml(item.camperName)}</strong>: ${item.hasLunch ? 'Lunch purchase' : 'Pack lunch'} (${escapeHtml(modeLabel)})</li>`
+                const lunchPlanLabel = item.includedLunch
+                  ? 'BBQ lunch included (pack optional)'
+                  : item.hasLunch
+                    ? 'Lunch purchase'
+                    : 'Pack lunch needed'
+                const notableSuffix = item.notableText ? ` · ${item.notableText}` : ''
+                return `<li><strong>${escapeHtml(item.camperName)}</strong>: ${lunchPlanLabel} (${escapeHtml(modeLabel)})${escapeHtml(notableSuffix)}</li>`
               })
               .join('')
             const inRange = key >= dateKeys[0] && key <= dateKeys[dateKeys.length - 1]
@@ -2447,12 +3479,12 @@ export default function HomePage() {
         </head>
         <body>
           <h1>Welcome to Summer Camp 2026 Summary</h1>
-          <p class="meta"><strong>Email:</strong> ${escapeHtml(targetRegistration.contactEmail || 'not provided')} | <strong>Generated:</strong> ${escapeHtml(todayLabel)}</p>
+          <p class="meta"><strong>Parent/Guardian:</strong> ${escapeHtml(targetRegistration.parentName || 'not provided')} | <strong>Email:</strong> ${escapeHtml(targetRegistration.contactEmail || 'not provided')} | <strong>Phone:</strong> ${escapeHtml(targetRegistration.contactPhone || 'not provided')} | <strong>Generated:</strong> ${escapeHtml(todayLabel)}</p>
           <p class="note">This summary includes basic info, tuition table, and lunch calendar details.</p>
           ${studentSections}
           <div class="pageBreak"></div>
           <h2>Family Camp & Lunch Calendar</h2>
-          <p class="note">Each camp day shows whether each camper will purchase lunch or needs to pack lunch.</p>
+          <p class="note">Each camp day shows lunch plan and notable reminders (Wednesday: bring change of clothes, Thursday: BBQ included lunch, Friday: performance day).</p>
           ${familyCalendarHtml}
         </body>
       </html>
@@ -2463,7 +3495,20 @@ export default function HomePage() {
     if (typeof window === 'undefined') {
       return
     }
-    setSummaryOverlayHtml(buildRegistrationSummaryHtml(targetRegistration))
+    const summaryDocument = buildRegistrationSummaryDocument({
+      registration: targetRegistration,
+      tuition: adminConfig.tuition,
+      weeksById,
+      generatedAtLabel: new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      businessName: adminConfig.tuition.businessName || 'New England Wushu',
+      businessAddress: adminConfig.tuition.businessAddress || '',
+    })
+    setSummaryOverlayHtml(`data:application/pdf;base64,${summaryDocument.pdfBase64}`)
     setSummaryOverlayOpen(true)
   }
 
@@ -2477,30 +3522,137 @@ export default function HomePage() {
   }
 
   function emailSummaryToSelf(targetRegistration = registration) {
-    if (!targetRegistration?.students?.length) {
+    if (!targetRegistration?.students?.length || summaryEmailSending || summaryEmailLocked) {
+      return
+    }
+    const toEmail = String(targetRegistration.contactEmail || '').trim()
+    if (!/\S+@\S+\.\S+/.test(toEmail)) {
+      setMessage('A valid contact email is required before sending the summary email.')
       return
     }
 
-    const lines = targetRegistration.students.map((student, index) => {
-      const camperName = student.fullName.trim() || `Camper ${index + 1}`
-      const lunchWeeks = getLunchWeeksForStudent(student, weeksById)
-      const registeredDays = lunchWeeks.reduce((sum, row) => sum + row.selectedDays.length, 0)
-      const lunchDays = lunchWeeks.reduce(
-        (sum, row) => sum + row.selectedDays.filter((day) => Boolean(student.lunch[day.key])).length,
-        0
-      )
-      const packDays = Math.max(0, registeredDays - lunchDays)
-      return `${camperName}: lunch ${lunchDays}/${registeredDays}, pack lunch ${packDays}`
+    const summaryDocument = buildRegistrationSummaryDocument({
+      registration: targetRegistration,
+      tuition: adminConfig.tuition,
+      weeksById,
+      generatedAtLabel: new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      businessName: adminConfig.tuition.businessName || 'New England Wushu',
+      businessAddress: adminConfig.tuition.businessAddress || '',
     })
 
-    const subject = encodeURIComponent('Summer Camp Registration Summary')
-    const body = encodeURIComponent(
-      `${lines.join('\n')}\n\n` +
-      `On lunch-selected days, camp staff will contact you closer to date about lunch options.\n\n` +
-      `To save a full PDF summary, open the registration summary overlay and click Print / Save PDF.`
+    const camperLabel =
+      targetRegistration.students.length === 1
+        ? targetRegistration.students[0]?.fullName?.trim() || 'Camper'
+        : `${targetRegistration.students.length} Campers`
+
+    setSummaryEmailSending(true)
+    setMessage('')
+    fetch('/api/email/accounting-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        toEmail,
+        parentName: targetRegistration.parentName || 'Parent/Guardian',
+        camperName: camperLabel,
+        paymentMethod: getPaymentMethodLabel(targetRegistration.paymentMethod),
+        summaryHtml: summaryDocument.html,
+        summaryText: summaryDocument.plainText,
+        pdfBase64: summaryDocument.pdfBase64,
+      }),
+    })
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(result?.error || 'Summary email failed.')
+        }
+        setSummaryEmailLocked(true)
+        setMessage(
+          result?.previewOnly
+            ? 'Summary email generated as preview only.'
+            : `Summary email sent to ${toEmail}.`
+        )
+      })
+      .catch((error) => {
+        setMessage(error?.message || 'Summary email failed.')
+      })
+      .finally(() => {
+        setSummaryEmailSending(false)
+      })
+  }
+
+  function buildReservationSummaryLines(targetRegistration = registration) {
+    if (!targetRegistration?.students?.length) {
+      return []
+    }
+
+    const lines = [
+      `Location: ${getLocationLabel(targetRegistration.location)}`,
+      `Parent/Guardian: ${targetRegistration.parentName?.trim() || 'not provided'}`,
+      `Contact: ${targetRegistration.contactEmail || 'not provided'} | ${targetRegistration.contactPhone || 'not provided'}`,
+      `Payment method: ${getPaymentMethodLabel(targetRegistration.paymentMethod)}`,
+    ]
+    for (const [index, student] of targetRegistration.students.entries()) {
+      const camperName = student.fullName.trim() || `Camper ${index + 1}`
+      const summary = getStudentSummary(student)
+      const invoice = buildStudentPriceRows(summary, index, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      })
+      const { registeredDays, paidLunchDays, includedLunchDays, packLunchNeededDays } =
+        getLunchDecisionStats(student, weeksById)
+      const selectedDayBlocks =
+        summary.general.fullWeeks * 5 +
+        summary.general.fullDays +
+        summary.general.amDays +
+        summary.general.pmDays +
+        summary.bootcamp.fullWeeks * 5 +
+        summary.bootcamp.fullDays +
+        summary.bootcamp.amDays +
+        summary.bootcamp.pmDays
+      lines.push(
+        `${camperName}: ${selectedDayBlocks} selected camp day blocks, lunch provided ${paidLunchDays + includedLunchDays}/${registeredDays} days (paid ${paidLunchDays}, Thu included ${includedLunchDays}), pack lunch needed ${packLunchNeededDays}, total ${currency(invoice.total)}`
+      )
+    }
+
+    const grandTotal = targetRegistration.students.reduce((sum, student, studentIndex) => {
+      const summary = getStudentSummary(student)
+      const invoice = buildStudentPriceRows(summary, studentIndex, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      })
+      return sum + Number(invoice.total || 0)
+    }, 0)
+    lines.push(`Grand total: ${currency(grandTotal)}`)
+    lines.push('Weekly reminders: Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase.')
+    return lines
+  }
+
+  function buildPaymentPageLinkForRegistration(targetRegistration = registration) {
+    const summaryLines = buildReservationSummaryLines(targetRegistration)
+    const amountDue = (targetRegistration?.students || []).reduce((sum, student, studentIndex) => {
+      const summary = getStudentSummary(student)
+      const invoice = buildStudentPriceRows(summary, studentIndex, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      })
+      return sum + Number(invoice.total || 0)
+    }, 0)
+
+    return buildPaymentPageHref(
+      {
+        registrationType: 'day-camp',
+        guardianName: targetRegistration.parentName || 'Parent/Guardian',
+        contactEmail: targetRegistration.contactEmail || '',
+        location: getLocationLabel(targetRegistration.location),
+        paymentMethod: getPaymentMethodLabel(targetRegistration.paymentMethod),
+        summaryLines,
+        amountDue,
+        camperNames: (targetRegistration.students || []).map((student, index) => student.fullName.trim() || `Camper ${index + 1}`),
+      },
+      { baseUrl: getSiteBaseUrl() }
     )
-    const to = encodeURIComponent(targetRegistration.contactEmail || '')
-    window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_self')
   }
 
   async function submitRegistration(event) {
@@ -2513,6 +3665,7 @@ export default function HomePage() {
 
     setSubmitting(true)
     setMessage('')
+    setRegistrationEmailResult(null)
 
     const firstStudent = registration.students[0]
     const nameParts = splitName(firstStudent?.fullName || '')
@@ -2522,12 +3675,14 @@ export default function HomePage() {
       camper_last_name: nameParts.lastName,
       age: Math.max(3, Math.min(17, calcAge(firstStudent?.dob))),
       experience_level: 'mixed',
-      guardian_name: 'Parent/Guardian',
+      guardian_name: registration.parentName.trim() || 'Parent/Guardian',
       guardian_email: registration.contactEmail.trim(),
       guardian_phone: registration.contactPhone.trim(),
       emergency_contact: registration.contactPhone.trim(),
       medical_notes: JSON.stringify({
         registration,
+        locationLabel: getLocationLabel(registration.location),
+        paymentMethodLabel: getPaymentMethodLabel(registration.paymentMethod),
         submittedAt: new Date().toISOString(),
       }),
       created_at: new Date().toISOString(),
@@ -2543,16 +3698,99 @@ export default function HomePage() {
 
     const submittedSnapshot = JSON.parse(JSON.stringify(registration))
     setSubmittedRegistrationSnapshot(submittedSnapshot)
-    setSubmitting(false)
-    setMessage('Registration submitted successfully. You can still open your summary below.')
-    setRegistration({
-      contactEmail: '',
-      contactPhone: '',
-      students: [createStudent()],
+    const summaryLines = buildReservationSummaryLines(submittedSnapshot)
+    const amountDue = submittedSnapshot.students.reduce((sum, student, studentIndex) => {
+      const summary = getStudentSummary(student)
+      const invoice = buildStudentPriceRows(summary, studentIndex, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      })
+      return sum + Number(invoice.total || 0)
+    }, 0)
+    const camperNames = submittedSnapshot.students.map((student, index) => student.fullName.trim() || `Camper ${index + 1}`)
+    const primaryCamperName = camperNames[0] || ''
+    const selectedWeekIds = Array.from(
+      new Set(
+        submittedSnapshot.students.flatMap((student) =>
+          Array.isArray(student.selectedWeeks) ? student.selectedWeeks : []
+        )
+      )
+    )
+    const campWeeks = selectedWeekIds
+      .map((weekId) => weeksById[weekId])
+      .filter(Boolean)
+      .map((week) => ({ start: week.start, end: week.end }))
+    const paymentPageLink = buildPaymentPageLinkForRegistration(submittedSnapshot)
+
+    let reservationJourneyStatus = 'failed'
+    let reservationJourneyDetail = ''
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'enqueue',
+          payload: {
+            contactEmail: submittedSnapshot.contactEmail,
+            contactPhone: submittedSnapshot.contactPhone,
+            location: submittedSnapshot.location,
+            guardianName: submittedSnapshot.parentName || '',
+            submittedAt: new Date().toISOString(),
+            primaryCamperName,
+            camperNames,
+            summaryLines,
+            amountDue,
+            campWeeks,
+            paymentPageLink,
+          },
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (response.ok) {
+        if (result?.immediateEmail?.sent) {
+          reservationJourneyStatus = result?.immediateEmail?.usedAttachmentFallback ? 'sent-no-pdf' : 'sent'
+          reservationJourneyDetail = result?.immediateEmail?.usedAttachmentFallback
+            ? 'Step 1 payment email sent without the PDF attachment.'
+            : 'Step 1 payment email sent successfully.'
+        } else if (result?.immediateEmail?.previewOnly) {
+          reservationJourneyStatus = 'preview'
+          reservationJourneyDetail =
+            result?.immediateEmail?.error ||
+            'SES is not fully configured, so the email was generated as a preview only.'
+        } else {
+          reservationJourneyStatus = 'queued'
+          reservationJourneyDetail =
+            result?.immediateEmail?.error ||
+            'The reminder flow was queued, but the first email was not confirmed as sent.'
+        }
+        if (result?.journeyStored === false && result?.warning) {
+          reservationJourneyDetail = `${reservationJourneyDetail} Follow-up journey tracking could not be saved: ${result.warning}`
+        }
+      } else {
+        reservationJourneyDetail = result?.error || 'The reminder email request failed.'
+      }
+    } catch {
+      // Non-blocking: registration success should not fail if reminder email setup is temporarily unavailable.
+      reservationJourneyDetail = 'The reminder email request could not be completed.'
+    }
+
+    setRegistrationEmailResult({
+      status: reservationJourneyStatus,
+      detail: reservationJourneyDetail,
     })
-    setActiveStudentId('')
-    setExpandedStudentId('')
-    setStep(1)
+
+    setSubmitting(false)
+    setMessage(
+      reservationJourneyStatus === 'sent'
+        ? 'Registration submitted successfully. Step 1 payment email was sent and the reminder flow is active.'
+        : reservationJourneyStatus === 'sent-no-pdf'
+          ? 'Registration submitted successfully. Step 1 payment email was sent without the PDF attachment, and the reminder flow is active.'
+          : reservationJourneyStatus === 'preview'
+            ? 'Registration submitted successfully. The reminder flow is queued, but SES is not fully configured so the step 1 email was preview-only.'
+            : reservationJourneyStatus === 'queued'
+              ? 'Registration submitted successfully. Payment reminder and auto-cancel email flow has been queued.'
+              : 'Registration submitted successfully. Unable to queue automated payment reminder emails right now.'
+    )
+    setStep(4)
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(REGISTRATION_DRAFT_KEY)
     }
@@ -2567,8 +3805,23 @@ export default function HomePage() {
   const expandedStudent = registration.students.find((student) => student.id === expandedStudentId)
   const activeStudentDisplayName = activeStudent?.fullName?.trim() || 'this camper'
   const activeCamperLabel = activeStudent?.fullName?.trim() || `Camper ${activeStudentIndex + 1}`
+  const selectedLocationLabel = getLocationLabel(registration.location)
+  const locationAlbumTitle = registration.location.trim()
+    ? `${selectedLocationLabel} Facility Photos`
+    : 'Facility Photos'
+  const activeLocationAlbumPhoto = locationFacilityPhotos[locationAlbumIndex] || ''
+  const registrationIsSubmitted = Boolean(submittedRegistrationSnapshot)
+  const locationMissing = !registration.location.trim()
+  const parentNameMissing = !registration.parentName.trim()
   const contactEmailMissing = !registration.contactEmail.trim()
   const contactPhoneMissing = !registration.contactPhone.trim()
+  const paymentMethodMissing = !registration.paymentMethod.trim()
+  const expandedStudentFullNameMissing = expandedStudent ? !expandedStudent.fullName.trim() : false
+  const expandedStudentDobMissing = expandedStudent ? !parseDateLocal(expandedStudent.dob) : false
+  const expandedStudentAllergiesMissing = expandedStudent ? !expandedStudent.allergies.trim() : false
+  const expandedStudentMedicationMissing = expandedStudent ? !expandedStudent.medication.trim() : false
+  const expandedStudentInjuriesMissing = expandedStudent ? !expandedStudent.previousInjury.trim() : false
+  const expandedStudentHealthNotesMissing = expandedStudent ? !expandedStudent.healthNotes.trim() : false
   const step2HasMissing = registration.students.some((student) => {
     for (const entry of Object.values(student.schedule || {})) {
       const hasAnySelected = Object.values(entry.days || {}).some((mode) => mode && mode !== 'NONE')
@@ -2579,8 +3832,7 @@ export default function HomePage() {
     return true
   })
   const step3HasMissing = registration.students.some((student) => {
-    const hasAnyLunch = Object.values(student.lunch || {}).some(Boolean)
-    return !hasAnyLunch && !student.lunchConfirmedNone
+    return !hasValidLunchDecision(student)
   })
   const copySourceOptions = registration.students
     .map((student, index) => ({
@@ -2608,32 +3860,319 @@ export default function HomePage() {
   const discountAmountLabel = useMemo(() => {
     return fullWeekDiscountAmount > 0 ? `${currency(fullWeekDiscountAmount)} OFF` : '$0 OFF'
   }, [fullWeekDiscountAmount])
-  const activeSurveyImage =
+  const discountEndDateSpokenLabel = useMemo(() => {
+    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    if (!end) {
+      return {
+        en: 'the discount end date',
+        zh: '优惠截止日',
+      }
+    }
+    return {
+      en: end.toLocaleDateString('en-US', { month: 'long', day: 'numeric' }),
+      zh: end.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' }),
+    }
+  }, [adminConfig.tuition.discountEndDate])
+  const surveyStepImageIndex =
     surveyStep === 1
-      ? adminConfig.media.surveyStepImageUrls?.[0] || ''
+      ? 0
       : surveyStep === 2
-        ? adminConfig.media.surveyStepImageUrls?.[1] || ''
-      : surveyStep === 3
-          ? adminConfig.media.surveyStepImageUrls?.[2] || ''
-        : surveyStep === 4
-            ? adminConfig.media.surveyStepImageUrls?.[3] || ''
-          : surveyStep === 5
-              ? adminConfig.media.surveyStepImageUrls?.[3] || ''
-            : surveyStep === 6
-                ? adminConfig.media.surveyStepImageUrls?.[4] || ''
-                : adminConfig.media.surveyStepImageUrls?.[5] || ''
+        ? 1
+        : surveyStep === 3
+          ? 2
+          : surveyStep === 4
+            ? 3
+            : surveyStep === 5
+              ? 4
+              : 5
+  const activeSurveyImage =
+    adminConfig.media.surveyStepImageUrls?.[surveyStepImageIndex] ||
+    adminConfig.media.heroImageUrl ||
+    adminConfig.media.surveyStep1FlyerUrl ||
+    ''
+  const startHeroImage =
+    adminConfig.media.heroImageUrl ||
+    adminConfig.media.surveyStepImageUrls?.[0] ||
+    adminConfig.media.surveyStep1FlyerUrl ||
+    ''
   const activeSurveyVideo = adminConfig.media.surveyVideoUrl || ''
   const activeSurveyYouTubeEmbed = getYouTubeEmbedUrl(activeSurveyVideo)
+  const landingSectionVisuals = useMemo(
+    () => ({
+      whyCamp: adminConfig.media.surveyStepImageUrls?.[1] || adminConfig.media.heroImageUrl || '',
+      marketingFlow: adminConfig.media.surveyStepImageUrls?.[2] || adminConfig.media.heroImageUrl || '',
+      testimonials: adminConfig.media.surveyStepImageUrls?.[3] || adminConfig.media.heroImageUrl || '',
+      campDates: adminConfig.media.surveyStepImageUrls?.[4] || adminConfig.media.heroImageUrl || '',
+      weekly: adminConfig.media.surveyStepImageUrls?.[5] || adminConfig.media.heroImageUrl || '',
+    }),
+    [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls]
+  )
+  const campTypeShowcase = useMemo(() => ([
+    {
+      key: 'general',
+      title: adminConfig.campTypeShowcase?.general?.title || text('General Camp', '普通营'),
+      summary: adminConfig.campTypeShowcase?.general?.summary || text(
+        `Ages 3+ · Up to ${generalWeekOptions.length} weekly options · Pick Full Week, Full Day, AM or PM.`,
+        `3岁以上 · 最多 ${generalWeekOptions.length} 周可选 · 可选整周、整天、上午或下午。`
+      ),
+      suitedFor: adminConfig.campTypeShowcase?.general?.suitedFor || text(
+        'Best for beginners and returning campers. Campers are grouped by age and level for safe, steady progression.',
+        '适合新学员与返营学员。按年龄和水平分组，安全且稳步成长。'
+      ),
+      highlights: adminConfig.campTypeShowcase?.general?.highlights?.length
+        ? adminConfig.campTypeShowcase.general.highlights
+        : [
+            text('Try core Wushu elements in a fun, beginner-friendly way.', '以有趣易上手方式体验武术核心内容。'),
+            text('Build confidence, balance, focus, and discipline week by week.', '逐周提升自信、平衡、专注与纪律。'),
+            text("Stay active every day with games, movement drills, and coach guidance.", '每天通过游戏、动作训练和教练指导保持活跃。'),
+          ],
+      media: [
+        ...(adminConfig.campTypeShowcase?.general?.media || []).map((item, index) => ({
+          src: item?.url || [landingSectionVisuals.campDates, landingSectionVisuals.whyCamp, adminConfig.media.surveyStepImageUrls?.[0] || ''][index] || '',
+          caption: item?.caption || '',
+          tone: item?.tone || 'general',
+        })),
+      ].filter((item) => item.src),
+    },
+    {
+      key: 'bootcamp',
+      title: adminConfig.campTypeShowcase?.bootcamp?.title || text('Boot Camp (Taolu Competition Team)', '集训营（套路竞赛队）'),
+      summary: adminConfig.campTypeShowcase?.bootcamp?.summary || text(
+        `National & international Taolu pathway · Up to ${bootcampWeekOptions.length} weekly options.`,
+        `国家级与国际级套路进阶路径 · 最多 ${bootcampWeekOptions.length} 周可选。`
+      ),
+      suitedFor: adminConfig.campTypeShowcase?.bootcamp?.suitedFor || text(
+        'Great for athletes targeting national/international Taolu track development and serious competition preparation.',
+        '适合希望冲刺国家级/国际级套路路径并进行高强度竞赛准备的学员。'
+      ),
+      highlights: adminConfig.campTypeShowcase?.bootcamp?.highlights?.length
+        ? adminConfig.campTypeShowcase.bootcamp.highlights
+        : [
+            text('Many of our national and international team members train in this Boot Camp.', '我们许多国家级与国际级队员都参与该集训营训练。'),
+            text('Train Taolu routines with competition-level coaching and corrections.', '由高水平教练进行套路训练与动作修正。'),
+            text('Sharpen power, precision, flexibility, and performance quality.', '强化力量、精度、柔韧与表现力。'),
+            text('Prepare through structured goals for national/international track readiness.', '通过结构化目标训练，为国家级/国际级竞赛路径做准备。'),
+          ],
+      media: [
+        ...(adminConfig.campTypeShowcase?.bootcamp?.media || []).map((item, index) => ({
+          src: item?.url || [landingSectionVisuals.marketingFlow, landingSectionVisuals.weekly, adminConfig.media.surveyStepImageUrls?.[2] || ''][index] || '',
+          caption: item?.caption || '',
+          tone: item?.tone || 'bootcamp',
+        })),
+      ].filter((item) => item.src),
+    },
+    {
+      key: 'overnight',
+      title: adminConfig.campTypeShowcase?.overnight?.title || text('Overnight Camp', '过夜营'),
+      summary: adminConfig.campTypeShowcase?.overnight?.summary || text(
+        `Immersive Sunday-Saturday weeks · Up to ${overnightWeekOptions.length} overnight options.`,
+        `沉浸式周日到周六营期 · 最多 ${overnightWeekOptions.length} 周可选。`
+      ),
+      suitedFor: adminConfig.campTypeShowcase?.overnight?.suitedFor || text(
+        'Great for families who want a deeper camp-life experience with intensive training, independence, and team bonding.',
+        '适合希望获得更深度营地生活体验的家庭，兼顾高强度训练、独立性与团队连接。'
+      ),
+      highlights: adminConfig.campTypeShowcase?.overnight?.highlights?.length
+        ? adminConfig.campTypeShowcase.overnight.highlights
+        : [
+            text('Build independence and resilience in a supervised camp-life setting.', '在规范管理下培养独立性与抗压能力。'),
+            text('Train, bond, and grow through full-week immersive structure.', '在整周沉浸式节奏中完成训练、协作与成长。'),
+            text('Lodging includes 2 full baths with gender-divided sleeping areas and ample indoor space.', '住宿包含2个完整卫浴，按性别分区住宿，室内活动空间充足。'),
+            text('On-site amenities include air hockey, ping pong, VR, golf simulator, and a double-hoop basketball arcade game.', '住宿配套含气垫球、乒乓球、VR、高尔夫模拟器和双篮筐篮球机。'),
+            text('Huge yard with fenced enclosure supports safe outdoor activity and supervised free time.', '超大庭院并配有围栏封闭区域，支持安全户外活动与看护自由活动。'),
+            text('Limited spots each week (12 campers max) for high-quality coach attention.', '每周名额有限（最多12人），确保高质量教练关注。'),
+          ],
+      media: [
+        ...(adminConfig.campTypeShowcase?.overnight?.media || []).map((item, index) => ({
+          src: item?.url || [landingSectionVisuals.weekly, landingSectionVisuals.testimonials, adminConfig.media.surveyStepImageUrls?.[4] || ''][index] || '',
+          caption: item?.caption || '',
+          tone: item?.tone || 'overnight',
+        })),
+      ].filter((item) => item.src),
+    },
+  ]), [
+    adminConfig.campTypeShowcase,
+    adminConfig.media.surveyStepImageUrls,
+    bootcampWeekOptions.length,
+    generalWeekOptions.length,
+    landingSectionVisuals.campDates,
+    landingSectionVisuals.marketingFlow,
+    landingSectionVisuals.testimonials,
+    landingSectionVisuals.weekly,
+    landingSectionVisuals.whyCamp,
+    overnightWeekOptions.length,
+    text,
+  ])
+  const activeCampType = campTypeShowcase.find((item) => item.key === activeCampTypeKey) || campTypeShowcase[0]
+  const activeCampTypeMedia = activeCampType?.media?.length
+    ? activeCampType.media[((campTypeMediaIndex % activeCampType.media.length) + activeCampType.media.length) % activeCampType.media.length]
+    : null
+  const activeCampTypeMediaLength = activeCampType?.media?.length || 0
   const claimableDiscountTotal = getClaimableDiscountTotal()
   const surveyEmailInvalid =
     surveyStep === 1 && surveyMessage.toLowerCase().includes('valid email')
   const surveyDiscountReminder =
     adminConfig.tuition.discountEndDate && discountActive
       ? text(
-        `Early discount is available through ${adminConfig.tuition.discountEndDate}.`,
-        `早鸟优惠有效期至 ${adminConfig.tuition.discountEndDate}。`
+        `Early discount is available through ${discountEndDateSpokenLabel.en}.`,
+        `早鸟优惠有效期至 ${discountEndDateSpokenLabel.zh}。`
       )
       : ''
+  const lunchInterestFeedback =
+    surveyData.lunchInterest === 'yes'
+      ? text(
+          'Excellent choice. Daily lunch booking makes full camp schedules easier for busy families, and the Level Up app keeps planning simple.',
+          '非常好的选择。按天订午餐可显著减轻家庭日程压力，Level Up 应用也会让安排更轻松。'
+        )
+      : surveyData.lunchInterest === 'no'
+        ? text(
+            'Great. You can still bring packed lunch, and your camper will receive the same structured coaching and full camp experience.',
+            '很好。您仍可自带午餐，营员同样会获得完整的系统训练与营地体验。'
+          )
+        : ''
+  const overnightFullWeekCurrentPrice =
+    overnightPricingRows.find((row) => row.key === 'fullWeek')?.effective || 0
+  const overnightFullDayCurrentPrice =
+    overnightPricingRows.find((row) => row.key === 'fullDay')?.effective || 0
+  const overnightSelectedWeeks = useMemo(
+    () => overnightWeeks.filter((week) => overnightSelectedWeekIds.includes(week.id)),
+    [overnightSelectedWeekIds, overnightWeeks]
+  )
+  const overnightRequestedWeeks = overnightSelectedWeeks.length
+
+  useEffect(() => {
+    setOvernightSelectedWeekIds((current) =>
+      current.filter((id) => overnightWeeks.some((week) => week.id === id))
+    )
+  }, [overnightWeeks])
+
+  function toggleOvernightActivity(option) {
+    setOvernightActivitySelections((current) =>
+      current.includes(option)
+        ? current.filter((item) => item !== option)
+        : [...current, option]
+    )
+  }
+
+  function toggleOvernightWeekSelection(weekId) {
+    setOvernightSelectedWeekIds((current) =>
+      current.includes(weekId) ? current.filter((id) => id !== weekId) : [...current, weekId]
+    )
+  }
+
+  function nextOvernightEnrollmentStep() {
+    if (overnightSelectedWeekIds.length === 0) {
+      setOvernightMessage('Please select at least one overnight week.')
+      return
+    }
+    if (overnightParentName.trim().length < 2) {
+      setOvernightMessage('Please add a parent/guardian name for overnight registration.')
+      return
+    }
+    if (!/\S+@\S+\.\S+/.test(overnightContactEmail || '')) {
+      setOvernightMessage('Please add a valid contact email for overnight registration.')
+      return
+    }
+    if (overnightContactPhone.trim().length < 7) {
+      setOvernightMessage('Please add a valid contact phone for overnight registration.')
+      return
+    }
+    if (!overnightPaymentMethod.trim()) {
+      setOvernightMessage('Please choose how you will pay for overnight registration.')
+      return
+    }
+    setOvernightMessage('')
+    setOvernightEnrollmentStep(2)
+  }
+
+  async function submitOvernightEnrollmentRequest() {
+    if (overnightSubmitting) {
+      return
+    }
+    if (overnightSelectedWeekIds.length === 0) {
+      setOvernightMessage('Please select at least one overnight week.')
+      setOvernightEnrollmentStep(1)
+      return
+    }
+    if (overnightParentName.trim().length < 2 || !/\S+@\S+\.\S+/.test(overnightContactEmail || '') || overnightContactPhone.trim().length < 7 || !overnightPaymentMethod.trim()) {
+      setOvernightMessage('Please complete all required fields in Step 1 before submitting.')
+      setOvernightEnrollmentStep(1)
+      return
+    }
+    setOvernightSubmitting(true)
+    const optionLabel =
+      overnightRequestOption === 'fullDay' ? 'Overnight Full Day' : 'Overnight Full Week'
+    const selectedWeekLabel = overnightSelectedWeeks.length
+      ? overnightSelectedWeeks.map((week) => formatWeekLabel(week)).join(', ')
+      : 'none'
+    const summaryLines = [
+      `Parent/Guardian: ${overnightParentName.trim() || 'not provided'}`,
+      `Contact: ${overnightContactEmail.trim() || 'not provided'} | ${overnightContactPhone.trim() || 'not provided'}`,
+      `Payment method: ${getPaymentMethodLabel(overnightPaymentMethod)}`,
+      `Program: ${optionLabel}`,
+      `Selected weeks (${overnightRequestedWeeks}): ${selectedWeekLabel}`,
+      `Current weekly rate: ${currency(overnightRate)}`,
+      'Includes lodging and food only. Outing costs are billed separately.',
+      `Activity picks: ${overnightActivitySelections.length}`,
+      overnightActivityCustom.trim() ? `Other requests: ${overnightActivityCustom.trim()}` : 'Other requests: none',
+    ]
+    const overnightRate =
+      overnightRequestOption === 'fullDay'
+        ? Number(overnightFullDayCurrentPrice || 0)
+        : Number(overnightFullWeekCurrentPrice || 0)
+    const amountDue = overnightRequestedWeeks * overnightRate
+    const campWeeks = overnightSelectedWeeks.map((week) => ({ start: week.start, end: week.end }))
+
+    let queuedStatus = 'failed'
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'enqueue',
+          payload: {
+            contactEmail: overnightContactEmail.trim(),
+            contactPhone: overnightContactPhone.trim(),
+            guardianName: overnightParentName.trim(),
+            submittedAt: new Date().toISOString(),
+            primaryCamperName: 'Overnight Camper',
+            camperNames: ['Overnight Camper'],
+            summaryLines,
+            amountDue,
+            campWeeks,
+            registrationType: 'overnight-only',
+          },
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (response.ok) {
+        if (result?.immediateEmail?.sent) {
+          queuedStatus = result?.immediateEmail?.usedAttachmentFallback ? 'sent-no-pdf' : 'sent'
+        } else if (result?.immediateEmail?.previewOnly) {
+          queuedStatus = 'preview'
+        } else {
+          queuedStatus = 'queued'
+        }
+      }
+    } catch {
+      queuedStatus = 'failed'
+    }
+
+    setOvernightSubmitting(false)
+    setOvernightMessage(
+      queuedStatus === 'sent'
+        ? `Overnight enrollment request submitted for ${optionLabel} (${overnightRequestedWeeks} week${overnightRequestedWeeks === 1 ? '' : 's'}). Weeks: ${selectedWeekLabel}. Step 1 payment email was sent and the 72-hour reminder flow is active.`
+        : queuedStatus === 'sent-no-pdf'
+          ? `Overnight enrollment request submitted for ${optionLabel} (${overnightRequestedWeeks} week${overnightRequestedWeeks === 1 ? '' : 's'}). Weeks: ${selectedWeekLabel}. Step 1 payment email was sent without the PDF attachment, and the 72-hour reminder flow is active.`
+          : queuedStatus === 'preview'
+            ? `Overnight enrollment request submitted for ${optionLabel} (${overnightRequestedWeeks} week${overnightRequestedWeeks === 1 ? '' : 's'}). Weeks: ${selectedWeekLabel}. The reminder flow is queued, but SES is not fully configured so the step 1 email was preview-only.`
+            : queuedStatus === 'queued'
+              ? `Overnight enrollment request submitted for ${optionLabel} (${overnightRequestedWeeks} week${overnightRequestedWeeks === 1 ? '' : 's'}). Weeks: ${selectedWeekLabel}. Payment reminder and 72-hour cancellation email flow is queued.`
+              : `Overnight enrollment request submitted for ${optionLabel} (${overnightRequestedWeeks} week${overnightRequestedWeeks === 1 ? '' : 's'}). Weeks: ${selectedWeekLabel}. We could not queue the automated email flow right now, but your request details are captured on this page.`
+    )
+  }
+  const visibleSurveyFeedback =
+    surveyStepFeedback || (surveyStep > 1 ? getSurveyFeedback(surveyStep - 1) : '')
   const welcomeBlock = (
     <div className="startWelcome">
       {adminConfig.media.welcomeLogoUrl ? (
@@ -2660,14 +4199,46 @@ export default function HomePage() {
             '强健体魄，建立自信，收获难忘夏日回忆。'
           )}
         </p>
+        {discountActive && fullWeekDiscountAmount > 0 ? (
+          <div className="startPremiumDiscount">
+            <strong>{text(`${currency(fullWeekDiscountAmount)} OFF per full week`, `整周立减 ${currency(fullWeekDiscountAmount)}`)}</strong>
+            <span>
+              {text(
+                `Premium early offer available through ${discountEndDateSpokenLabel.en}.`,
+                `尊享早鸟优惠有效期至 ${discountEndDateSpokenLabel.zh}。`
+              )}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   )
   const currentMode = isRegistrationRoute ? 'register' : entryMode
   const isMobileLearnOverlayOpen = currentMode === 'learn' && isMobileViewport
-  const keepFloatingUiVisible = isRegistrationRoute
+  const desktopAssistantMounted = currentMode === 'learn' && !isMobileViewport
+  const desktopAssistantVisible = desktopAssistantMounted && !assistantCollapsed
+  const keepFloatingUiVisible = false
   const showMainCampPage =
     isRegistrationRoute || currentMode === 'register' || (currentMode === 'learn' && !isMobileViewport)
+  const showLandingOnlySections = !isRegistrationRoute && showMainCampPage
+  const showRegistrationSections = isRegistrationRoute
+  const pageHeroLogo = adminConfig.media.welcomeLogoUrl ? (
+    <img className="pageHeroLogoImage" src={adminConfig.media.welcomeLogoUrl} alt="New England Wushu logo" />
+  ) : (
+    <div className="pageHeroLogoPlaceholder" aria-label="Logo placeholder">
+      Logo
+    </div>
+  )
+
+  useEffect(() => {
+    if (!isMobileViewport || (!isRegistrationRoute && entryMode !== 'register')) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      scrollRegistrationStepToTop()
+    }, 90)
+    return () => window.clearTimeout(timer)
+  }, [entryMode, isMobileViewport, isRegistrationRoute, scrollRegistrationStepToTop, step])
 
   return (
     <main
@@ -2675,6 +4246,68 @@ export default function HomePage() {
         currentMode === 'learn' && isMobileViewport ? 'learnOnly' : ''
       }`}
     >
+      {showLandingOnlySections && !isMobileViewport ? (
+      <aside className="desktopSideRail desktopCampRail" aria-label="Summer camp navigation">
+        <div className="desktopSideRailCard">
+          <div className="desktopSideRailBrand">
+            {pageHeroLogo}
+          </div>
+          <p className="desktopSideRailEyebrow">Summer Camp</p>
+          <div className="desktopSideRailLinks">
+            {desktopCampNavItems.map((item) => (
+              <a key={item.href} href={item.href} className="desktopSideRailLink">
+                {item.label}
+              </a>
+            ))}
+            <button type="button" className="desktopSideRailCta" onClick={jumpToRegistration}>
+              {text('Claim Offer & Register', '领取优惠并报名')}
+            </button>
+          </div>
+        </div>
+      </aside>
+      ) : null}
+
+      {showRegistrationSections && !isMobileViewport ? (
+      <aside className="desktopSideRail desktopRegistrationRail" aria-label="Registration steps">
+        <div className="desktopSideRailCard">
+          <div className="desktopSideRailBrand">
+            {pageHeroLogo}
+          </div>
+          <p className="desktopSideRailEyebrow">Registration</p>
+          <div className="desktopRegistrationRailSteps">
+            {registrationSteps.map((item) => {
+              const isComplete = isRegistrationStepComplete(item.id)
+              const isMissing = !isComplete
+              const isActive = step === item.id
+              return (
+                <button
+                  key={`desktop-reg-step-${item.id}`}
+                  type="button"
+                  className={`desktopRegistrationRailBtn ${isActive ? 'active' : ''} ${
+                    item.id < step && isComplete ? 'done' : ''
+                  } ${item.id < step && isMissing ? 'incomplete' : ''}`}
+                  onClick={() => {
+                    setStepDirection(item.id > step ? 'next' : 'prev')
+                    setStep(item.id)
+                  }}
+                  aria-current={isActive ? 'step' : undefined}
+                >
+                  <span className="desktopRegistrationRailNumber">{item.id}</span>
+                  <span className="desktopRegistrationRailMeta">
+                    <span className="desktopRegistrationRailTitle">{item.title}</span>
+                    <span className="desktopRegistrationRailStatus">
+                      {isActive ? 'Current step' : item.id < step && isComplete ? 'Complete' : item.id < step ? 'Needs attention' : 'Upcoming'}
+                    </span>
+                  </span>
+                  {isMissing ? <span className="desktopRegistrationRailDot" aria-hidden="true" /> : null}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </aside>
+      ) : null}
+
       {currentMode === '' || isMobileLearnOverlayOpen ? (
       <section
         className={`card section startSection ${adminConfig.media.surveyMobileBgUrl ? 'startMobileBg' : ''}`}
@@ -2685,6 +4318,11 @@ export default function HomePage() {
             : undefined
         }
       >
+        {!isMobileViewport && startHeroImage ? (
+          <figure className="startHeroVisual">
+            <img src={startHeroImage} alt="Wushu summer camp hero" />
+          </figure>
+        ) : null}
         {welcomeBlock}
         <div className="startChoiceRow">
           <button
@@ -2692,8 +4330,8 @@ export default function HomePage() {
             className="startChoiceCard"
             onClick={jumpToRegistration}
           >
-            <strong>{text('I am ready to register', '我准备报名')}</strong>
-            <span>{text('Go directly to the registration flow and lock in your camp weeks.', '直接进入报名流程，锁定夏令营周次。')}</span>
+            <strong>{text('Claim Early Offer & Register', '领取早鸟优惠并报名')}</strong>
+            <span>{text('Secure your spot now and lock in your camp weeks with priority pricing.', '立即锁定名额与营期，并享受优先优惠价格。')}</span>
           </button>
           <button
             type="button"
@@ -2711,13 +4349,16 @@ export default function HomePage() {
         </p>
         <div className="startGoSummerInline">
           <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
-            {text('Go to Summer Camp Page', '进入夏令营页面')}
+            {text('Go to Summer Camp Landing Page', '进入夏令营主页')}
           </button>
+          <a className="button secondary goSummerChip" href="/overnight">
+            {text('Go to Overnight Camp Page', '进入过夜营页面')}
+          </a>
         </div>
       </section>
       ) : null}
 
-      {currentMode === 'learn' ? (
+      {currentMode === 'learn' && (isMobileViewport || desktopAssistantMounted) ? (
         isMobileViewport ? (
         <div
           className="learnOverlay"
@@ -2737,14 +4378,9 @@ export default function HomePage() {
               : undefined
           }
         >
-          <div className="mobileOverlayTopActions">
-            <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
-              {text('Go to Summer Camp Page', '进入夏令营页面')}
-            </button>
-          </div>
           <article className={`surveyCard ${surveyDirection === 'next' ? 'next' : 'prev'}`}>
             <div className="surveyStepPanel">
-              {surveyStep > 1 ? <p className="surveyFeedback">{getSurveyFeedback(surveyStep - 1)}</p> : null}
+              {visibleSurveyFeedback ? <p className="surveyFeedback">{visibleSurveyFeedback}</p> : null}
               {surveyDiscountReminder && surveyStep >= 4 ? (
                 <p className="surveyDiscountReminder">{surveyDiscountReminder}</p>
               ) : null}
@@ -2773,6 +4409,12 @@ export default function HomePage() {
                       placeholder={text('name@email.com', 'name@email.com')}
                     />
                   </label>
+                  <p className="marketingConsentNote">
+                    {text(
+                      'By continuing, you may receive camp updates and marketing emails related to this form.',
+                      '继续填写即表示您可能会收到与此表单相关的营地更新和市场邮件。'
+                    )}
+                  </p>
                   {surveyEmailInvalid ? <p className="surveyFieldError">{text('Please enter a valid email address.', '请输入有效邮箱地址。')}</p> : null}
                   <label>
                     {text('Number of campers', '营员人数')}
@@ -2863,9 +4505,9 @@ export default function HomePage() {
                       <div className="surveySupportMedia">
                         <div className="surveySupportCard">
                           {adminConfig.media.surveyStepImageUrls?.[2] ? (
-                            <img src={adminConfig.media.surveyStepImageUrls[2]} alt="Step 2 support visual" />
+                            <img src={adminConfig.media.surveyStepImageUrls[3] || adminConfig.media.surveyStepImageUrls[2]} alt="Step 3 support visual" />
                           ) : (
-                            <div className="surveyVisualPlaceholder">Add Step 2B image in admin media</div>
+                            <div className="surveyVisualPlaceholder">Add Step 3B image in admin media</div>
                           )}
                         </div>
                       </div>
@@ -2968,6 +4610,7 @@ export default function HomePage() {
                       {text('No', '否')}
                     </button>
                   </div>
+                  {lunchInterestFeedback ? <p className="surveyInlineResponse">{lunchInterestFeedback}</p> : null}
                   <p className="subhead">
                     {text(
                       'This year, families can use the new Level Up app to book lunch by day and view daily progress photos/videos after camp starts.',
@@ -3040,7 +4683,11 @@ export default function HomePage() {
               </button>
               {surveyStep < SURVEY_TOTAL_STEPS ? (
                 <button type="button" className="button" onClick={nextSurveyStep} disabled={savingSurveyProfile}>
-                  {savingSurveyProfile ? text('Saving...', '保存中...') : text('Next', '下一步')}
+                  {savingSurveyProfile
+                    ? text('Saving...', '保存中...')
+                    : surveyAwaitingAdvanceStep === surveyStep
+                      ? text('Continue', '继续')
+                      : text('Next', '下一步')}
                 </button>
               ) : null}
             </div>
@@ -3048,12 +4695,21 @@ export default function HomePage() {
             {activeSurveyVideo ? (
               <div className="surveyVideoDock">
                 {activeSurveyYouTubeEmbed ? (
-                  <iframe
-                    src={activeSurveyYouTubeEmbed}
-                    title="Program guide video"
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                    allowFullScreen
-                  />
+                  <>
+                    <iframe
+                      src={activeSurveyYouTubeEmbed}
+                      title="Program guide video"
+                      loading="eager"
+                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen; accelerometer; gyroscope"
+                      allowFullScreen
+                    />
+                    <p className="surveyVideoHint">
+                      {text(
+                        'On iPhone, autoplay can be blocked in Low Power Mode. If it does not auto-play, tap play once.',
+                        'iPhone 在省电模式下可能会阻止自动播放；若未自动播放，请点击播放一次。'
+                      )}
+                    </p>
+                  </>
                 ) : (
                   <video
                     controls
@@ -3068,12 +4724,24 @@ export default function HomePage() {
               </div>
             ) : null}
           </article>
+          <div className="mobileSurveyQuickBar" aria-label={text('Survey quick actions', '问卷快捷操作')}>
+            <button type="button" className="button goSummerChip mobileSurveyQuickBtn" onClick={jumpToCampTop}>
+              {text('Summer Camp Page', '夏令营主页')}
+            </button>
+            <button
+              type="button"
+              className="button mobileSurveyQuickBtn mobileSurveyRegisterBtn"
+              onClick={jumpToRegistration}
+            >
+              {text('Claim Offer & Register', '领取优惠并报名')}
+            </button>
+          </div>
         </section>
         </div>
       ) : (
         <section
           ref={surveyRef}
-          className={`card section surveySection desktopAssistantWindow ${surveyStep === 1 && adminConfig.media.surveyMobileBgUrl ? 'surveyStep1MobileBg' : ''}`}
+          className={`card section surveySection desktopAssistantWindow ${assistantCollapsed ? 'collapsed' : ''} ${surveyStep === 1 && adminConfig.media.surveyMobileBgUrl ? 'surveyStep1MobileBg' : ''}`}
           id="program-guide"
           style={
             surveyStep === 1 && adminConfig.media.surveyMobileBgUrl
@@ -3085,10 +4753,19 @@ export default function HomePage() {
             <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
               {text('Go to Summer Camp Page', '进入夏令营页面')}
             </button>
+            <button
+              type="button"
+              className="button secondary desktopHideAssistantBtn"
+              onClick={() => {
+                setAssistantCollapsed(true)
+              }}
+            >
+              {text('Hide Assistant', '隐藏助手')}
+            </button>
           </div>
           <article className={`surveyCard ${surveyDirection === 'next' ? 'next' : 'prev'}`}>
             <div className="surveyStepPanel">
-              {surveyStep > 1 ? <p className="surveyFeedback">{getSurveyFeedback(surveyStep - 1)}</p> : null}
+              {visibleSurveyFeedback ? <p className="surveyFeedback">{visibleSurveyFeedback}</p> : null}
               {surveyDiscountReminder && surveyStep >= 4 ? (
                 <p className="surveyDiscountReminder">{surveyDiscountReminder}</p>
               ) : null}
@@ -3207,9 +4884,9 @@ export default function HomePage() {
                       <div className="surveySupportMedia">
                         <div className="surveySupportCard">
                           {adminConfig.media.surveyStepImageUrls?.[2] ? (
-                            <img src={adminConfig.media.surveyStepImageUrls[2]} alt="Step 2 support visual" />
+                            <img src={adminConfig.media.surveyStepImageUrls[3] || adminConfig.media.surveyStepImageUrls[2]} alt="Step 3 support visual" />
                           ) : (
-                            <div className="surveyVisualPlaceholder">Add Step 2B image in admin media</div>
+                            <div className="surveyVisualPlaceholder">Add Step 3B image in admin media</div>
                           )}
                         </div>
                       </div>
@@ -3312,6 +4989,7 @@ export default function HomePage() {
                       {text('No', '否')}
                     </button>
                   </div>
+                  {lunchInterestFeedback ? <p className="surveyInlineResponse">{lunchInterestFeedback}</p> : null}
                   <p className="subhead">
                     {text(
                       'This year, families can use the new Level Up app to book lunch by day and view daily progress photos/videos after camp starts.',
@@ -3384,7 +5062,11 @@ export default function HomePage() {
               </button>
               {surveyStep < SURVEY_TOTAL_STEPS ? (
                 <button type="button" className="button" onClick={nextSurveyStep} disabled={savingSurveyProfile}>
-                  {savingSurveyProfile ? text('Saving...', '保存中...') : text('Next', '下一步')}
+                  {savingSurveyProfile
+                    ? text('Saving...', '保存中...')
+                    : surveyAwaitingAdvanceStep === surveyStep
+                      ? text('Continue', '继续')
+                      : text('Next', '下一步')}
                 </button>
               ) : null}
             </div>
@@ -3392,12 +5074,21 @@ export default function HomePage() {
             {activeSurveyVideo ? (
               <div className="surveyVideoDock">
                 {activeSurveyYouTubeEmbed ? (
-                  <iframe
-                    src={activeSurveyYouTubeEmbed}
-                    title="Program guide video"
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                    allowFullScreen
-                  />
+                  <>
+                    <iframe
+                      src={activeSurveyYouTubeEmbed}
+                      title="Program guide video"
+                      loading="eager"
+                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen; accelerometer; gyroscope"
+                      allowFullScreen
+                    />
+                    <p className="surveyVideoHint">
+                      {text(
+                        'On iPhone, autoplay can be blocked in Low Power Mode. If it does not auto-play, tap play once.',
+                        'iPhone 在省电模式下可能会阻止自动播放；若未自动播放，请点击播放一次。'
+                      )}
+                    </p>
+                  </>
                 ) : (
                   <video
                     controls
@@ -3419,57 +5110,84 @@ export default function HomePage() {
       {showMainCampPage ? (
         <>
       <section className="hero card" id="camp-info">
-        <p className="eyebrow">New England Wushu Summer Camp 2026</p>
-        <h1>{text('Train hard, build confidence, and have a summer kids remember.', '刻苦训练，建立自信，成就难忘夏天。')}</h1>
-        <p className="subhead">{text('Ages 3-17. Small groups, skill-based coaching, and weekly family showcases.', '3-17岁。小班教学、分级训练、每周家庭展示。')}</p>
-        <div className="heroTrustRow" aria-label="Program highlights">
-          <span>{text('Burlington award-winning academy', '伯灵顿获奖学院')}</span>
-          <span>{text('500+ competition medals earned', '累计500+竞赛奖牌')}</span>
-          <span>{text('Certified, experienced coaching team', '认证且经验丰富的教练团队')}</span>
+        <div className="heroIntroRow">
+          <div className="heroIntroText">
+            <p className="eyebrow">New England Wushu Summer Camp 2026</p>
+            <h1>{text('Train hard, build confidence, and have a summer kids remember.', '刻苦训练，建立自信，成就难忘夏天。')}</h1>
+            <p className="subhead">
+              {text(
+                'Ages 3-17. Small groups. Quality coaching. Weekly family showcases.',
+                '3-17岁。小班教学。优质教练。每周家庭展示。'
+              )}
+            </p>
+          </div>
+          <div className="heroIntroLogo" aria-label="New England Wushu logo">
+            {pageHeroLogo}
+          </div>
         </div>
-        <div className="heroMarketingCard">
-          <strong>{text('Why families choose us', '为什么家庭选择我们')}</strong>
-          <p>
-            {text(
-              'Structured training, real progress tracking, and a supportive team culture that keeps campers motivated all summer. New this year: the Level Up app lets families book lunch by day and follow progress with photos and videos.',
-              '结构化训练、可视化成长追踪和支持型团队文化，让孩子整个夏天都保持动力。今年新增：Level Up 应用支持按天订午餐，并通过照片和视频跟踪成长。'
-            )}
-          </p>
-        </div>
-        <div className="heroScienceRow">
-          <article className="heroScienceCard">
-            <h3>{text('Skill-Progressive Coaching', '循序渐进训练')}</h3>
+        <div className="heroAchievementGrid" aria-label="Camp achievements">
+          <article className="heroAchievementCard">
+            <p className="heroAchievementLabel">{text('Award Recognition', '荣誉认证')}</p>
+            <h3>{text('Award-Winning 2022, 2023, 2024, 2025, 2026', '连续获奖 2022、2023、2024、2025、2026')}</h3>
             <p>
               {text(
-                'Camp plans follow progressive motor-learning stages so kids build technique with confidence, not random drills.',
-                '课程按运动学习阶段递进设计，让孩子通过系统训练稳定提升。'
+                'Recognized in Burlington for coaching quality, program consistency, and family trust year after year.',
+                '在伯灵顿因教学质量、课程稳定性与家长口碑连续多年获得认可。'
               )}
             </p>
           </article>
-          <article className="heroScienceCard">
-            <h3>{text('Weekly Feedback Loop', '每周反馈闭环')}</h3>
+          <article className="heroAchievementCard">
+            <p className="heroAchievementLabel">{text('Athlete Pathway', '学员成长路径')}</p>
+            <h3>{text('Junior, National & International Medalist Track', '青少组-国家级-国际级奖牌成长路线')}</h3>
             <p>
               {text(
-                'Coaches use weekly checkpoints and showcase prep to reinforce retention, focus, and measurable growth.',
-                '教练通过每周检查点与展示准备，强化技能记忆、专注力与可见进步。'
+                'Campers train with methods shaped by junior, national, and international medal-level experience.',
+                '训练体系源于青少组、国家级与国际级奖牌经验，帮助孩子建立更高标准技能路径。'
               )}
             </p>
           </article>
-          <article className="heroScienceCard">
-            <h3>{text('Confidence Through Team Learning', '团队学习提升自信')}</h3>
+          <article className="heroAchievementCard">
+            <p className="heroAchievementLabel">{text('Healthy Development', '健康成长')}</p>
+            <h3>{text('Stay Active, Build Health, Learn Cool Skills', '保持活跃、增强体质、学到酷技能')}</h3>
             <p>
               {text(
-                'Partner drills and guided team challenges improve social confidence while accelerating athletic development.',
-                '搭档训练与团队挑战在提升社交自信的同时，加快运动能力发展。'
+                'High-energy training keeps kids active, healthy, and learning cool skills with confidence.',
+                '高能训练让孩子保持活力与健康，并在自信中学到酷技能。'
               )}
             </p>
+          </article>
+        </div>
+        <div className="heroCompactPoints">
+          <article className="heroCompactPointCard">
+            <p className="heroAchievementLabel">{text('Ages 3+ Foundation', '3岁以上基础启蒙')}</p>
+            <h3>{text('Great for foundational growth, gross motor and basic Wushu skills', '非常适合基础成长、大运动能力与武术基本功')}</h3>
+          </article>
+          <article className="heroCompactPointCard">
+            <p className="heroAchievementLabel">{text('Safe Environment', '安全环境')}</p>
+            <h3>{text('Fun, Safe, Structured Training', '有趣、安全、结构化训练')}</h3>
+          </article>
+          <article className="heroCompactPointCard">
+            <p className="heroAchievementLabel">{text('Family Convenience', '家庭便捷')}</p>
+            <h3>{text('Lunch + Daily Logs, Photos & Videos', '午餐 + 每日日志、照片与视频')}</h3>
           </article>
         </div>
 
+        <div className="pointsGlowBox">
+          <span className="pointsGlowBadge">Points by enrollment</span>
+          <strong>{dayCampPointsBreakdown}</strong>
+          <p>{dayCampPointsUseCopy}</p>
+        </div>
+
         <div className="heroActions">
-          <button type="button" className="button" onClick={jumpToRegistration}>
-            {text('Start Registration', '开始报名')}
+          <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
+            {text('Claim Early Offer & Register Now', '领取早鸟优惠并立即报名')}
           </button>
+          <p className="heroActionNote">
+            {text(
+              'Secure your spot now and lock in your camp weeks with priority pricing.',
+              '立即锁定名额与营期，并享受优先优惠价格。'
+            )}
+          </p>
         </div>
 
         {activeCampGalleryItem ? (
@@ -3489,7 +5207,7 @@ export default function HomePage() {
               </button>
               <div className="heroGallerySide left" aria-hidden="true">
                 {previousCampGalleryItem?.src ? (
-                  <img src={previousCampGalleryItem.src} alt="" />
+                  <img src={previousCampGalleryItem.src} alt="" style={getLandingCarouselImageStyle(previousCampGalleryItem.positionIndex)} />
                 ) : (
                   <div className="heroGalleryPlaceholderSide">{previousCampGalleryItem?.slot || text('Camp Photo', '营地照片')}</div>
                 )}
@@ -3499,7 +5217,12 @@ export default function HomePage() {
                 className={`heroGalleryMain ${campGalleryDirection === 'next' ? 'next' : 'prev'}`}
               >
                 {activeCampGalleryItem.src ? (
-                  <img className="heroMedia" src={activeCampGalleryItem.src} alt={text('Summer camp gallery', '夏令营图集')} />
+                  <img
+                    className="heroMedia"
+                    src={activeCampGalleryItem.src}
+                    alt={text('Summer camp gallery', '夏令营图集')}
+                    style={getLandingCarouselImageStyle(activeCampGalleryItem.positionIndex)}
+                  />
                 ) : (
                   <div className="heroMediaPlaceholder">
                     <strong>{activeCampGalleryItem.slot}</strong>
@@ -3509,7 +5232,7 @@ export default function HomePage() {
               </figure>
               <div className="heroGallerySide right" aria-hidden="true">
                 {nextCampGalleryItem?.src ? (
-                  <img src={nextCampGalleryItem.src} alt="" />
+                  <img src={nextCampGalleryItem.src} alt="" style={getLandingCarouselImageStyle(nextCampGalleryItem.positionIndex)} />
                 ) : (
                   <div className="heroGalleryPlaceholderSide">{nextCampGalleryItem?.slot || text('Camp Photo', '营地照片')}</div>
                 )}
@@ -3543,51 +5266,146 @@ export default function HomePage() {
       </section>
 
       <section className="card section campFeatureShowcase" id="why-camp">
+        {landingSectionVisuals.whyCamp ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.whyCamp} alt="Camp highlights banner" />
+          </figure>
+        ) : null}
         <div className="featureShowcaseHead">
           <p className="eyebrow">{text('Camp Highlights', '营地亮点')}</p>
           <h2>{text('Designed for growth, confidence, and fun', '为成长、自信与快乐而设计')}</h2>
+        </div>
+        <div className="pointsGlowBox compact">
+          <span className="pointsGlowBadge">New England Wushu Level Up points</span>
+          <strong>{dayCampPointsBreakdown}</strong>
+          <p>{dayCampPointsUseCopy}</p>
         </div>
         <div className="premiumFeatureGrid">
           {perks.map((perk) => (
             <article key={perk.title} className="premiumFeatureCard">
               <span className="premiumFeatureIcon" aria-hidden="true">◆</span>
-              <h3>{perk.title}</h3>
-              <p>{perk.text}</p>
+              <h3>{text(perk.title, perk.zhTitle)}</h3>
+              <p>{text(perk.text, perk.zhText)}</p>
             </article>
           ))}
         </div>
       </section>
 
       <section id="camp-marketing-flow" className="card section appCarouselSection">
+        {landingSectionVisuals.marketingFlow ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.marketingFlow} alt="Camp fit flow banner" />
+          </figure>
+        ) : null}
         <h2>{text('What makes this camp the right fit?', '为什么这个营地是合适的选择？')}</h2>
         <p className="subhead">
           {text(
-            'Follow this quick step-by-step guide to see fit, structure, options, and recommended next action.',
-            '按步骤快速查看：匹配度、训练结构、课程选项与下一步建议。'
+            'Compare fit highlights, training style, and program options in one clean view.',
+            '在一个清晰视图中快速对比匹配亮点、训练风格和课程选项。'
           )}
         </p>
-        <p className="subhead">
-          {text(
-            'Families also get access to our new Level Up app for lunch booking and daily training progress updates with photos/videos.',
-            '家庭还可使用全新 Level Up 应用，进行午餐预订并查看每日训练照片/视频进度更新。'
-          )}
-        </p>
-        <div className="marketingStepTabs" aria-label={text('Marketing flow steps', '营销流程步骤')}>
-          {[0, 1, 2, 3].map((index) => (
+        <div className="marketingFlowFrame">
+          <div className="marketingFlowProgress">
+            <strong>
+              {marketingFlowTitles[marketingFlowIndex] || marketingFlowTitles[0]}
+            </strong>
+            <div className="marketingFlowDots" aria-hidden="true">
+              {marketingFlowTitles.map((_, index) => (
+                <span
+                  key={`marketing-flow-dot-${index}`}
+                  className={`dot ${marketingFlowIndex === index ? 'active' : ''}`}
+                />
+              ))}
+            </div>
+          </div>
+        <article className="overviewSlide marketingNeedDirect">
+          <h3>{text('Best Fit by Age Group', '按年龄查看最佳匹配')}</h3>
+          <div className="surveyChoiceRow marketingNeedChipRow">
             <button
-              key={`marketing-step-${index}`}
               type="button"
-              className={`marketingStepTab ${marketingFlowIndex === index ? 'active' : ''}`}
-              onClick={() => setMarketingFlowIndex(index)}
+              className={`choiceChip ${ageFitGroup === '3-6' ? 'active' : ''}`}
+              onClick={() => setAgeFitGroup('3-6')}
             >
-              {text(`Step ${index + 1}`, `第 ${index + 1} 步`)}
+              {text('Ages 3-6', '3-6岁')}
             </button>
-          ))}
-        </div>
+            <button
+              type="button"
+              className={`choiceChip ${ageFitGroup === '7-10' ? 'active' : ''}`}
+              onClick={() => setAgeFitGroup('7-10')}
+            >
+              {text('Ages 7-10', '7-10岁')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${ageFitGroup === '11-13' ? 'active' : ''}`}
+              onClick={() => setAgeFitGroup('11-13')}
+            >
+              {text('Ages 11-13', '11-13岁')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${ageFitGroup === '14+' ? 'active' : ''}`}
+              onClick={() => setAgeFitGroup('14+')}
+            >
+              {text('Ages 14+', '14岁以上')}
+            </button>
+          </div>
+          <p key={`age-fit-${ageFitGroup}`} className="surveyInlineResponse">
+            {getAgeFitResponse()}
+          </p>
+          <h3 className="goalHeading">{text('What is your goal?', '您的目标是什么？')}</h3>
+          <div className="surveyChoiceRow marketingNeedChipRow">
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'confidence' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('confidence')}
+            >
+              {text('Confidence', '自信')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'martial-arts' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('martial-arts')}
+            >
+              {text('Martial Arts Skills', '武术技能')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'gross-motor' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('gross-motor')}
+            >
+              {text('Gross Motor Skills', '大运动能力')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'self-defense' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('self-defense')}
+            >
+              {text('Self-Defense', '自我防护')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'tumbling' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('tumbling')}
+            >
+              {text('Tumbling Skills', '翻腾技巧')}
+            </button>
+            <button
+              type="button"
+              className={`choiceChip ${marketingNeed === 'social' ? 'active' : ''}`}
+              onClick={() => setMarketingNeed('social')}
+            >
+              {text('Social Skills', '社交能力')}
+            </button>
+          </div>
+          <p key={`marketing-need-${marketingNeed}`} className="surveyInlineResponse">
+            {getMarketingNeedResponse()}
+          </p>
+        </article>
         <div className="marketingFlowStack">
           {marketingFlowIndex === 0 ? (
             <article className="overviewSlide next">
-              <h3>{text('Step 1: Need a program that builds real confidence?', '第1步：需要真正提升自信的课程吗？')}</h3>
+              <h3>{text('Need a program that builds real confidence?', '需要真正提升自信的课程吗？')}</h3>
               <p>
                 {text(
                   'Ages 3-17 train in level-based groups with clear weekly progress goals and family showcases.',
@@ -3597,28 +5415,63 @@ export default function HomePage() {
               <div className="overviewStatRow">
                 <span className="overviewStatPill">{generalWeeks.length || 0} {text('General weeks', '普通营周次')}</span>
                 <span className="overviewStatPill">{bootcampWeeks.length || 0} {text('Boot Camp weeks', '集训营周次')}</span>
-                <span className="overviewStatPill">{overnightWeeks.length || 0} {text('Overnight blocks', '过夜营档期')}</span>
+                <span className="overviewStatPill">{overnightWeeks.length || 0} {text('Overnight weeks', '过夜营周次')}</span>
               </div>
             </article>
           ) : null}
 
           {marketingFlowIndex === 1 ? (
             <article className="overviewSlide next">
-              <h3>{text('Step 2: Want structure, not random activities?', '第2步：希望有体系，而不是零散活动？')}</h3>
-              <div className="overviewPointList">
-                {perks.map((item) => (
-                  <p key={item.title} className="overviewPointItem">
-                    <span className="overviewPointDot" aria-hidden="true" />
-                    {item.text}
-                  </p>
-                ))}
+              <h3>{text('Want structure, not random activities?', '希望有体系，而不是零散活动？')}</h3>
+              <div className="marketingHighlightCard" key={`marketing-highlight-${marketingHighlightIndex}-${language}`}>
+                <p>{marketingHighlights[marketingHighlightIndex]}</p>
+                <div className="marketingHighlightControls">
+                  <button
+                    type="button"
+                    className="marketingArrowBtn"
+                    onClick={previousMarketingHighlight}
+                    aria-label={text('Previous highlight', '上一个亮点')}
+                  >
+                    ←
+                  </button>
+                  <div className="marketingHighlightDots" aria-label={text('Highlight position', '亮点位置')}>
+                    {marketingHighlights.map((_, index) => (
+                      <button
+                        key={`marketing-highlight-dot-${index}`}
+                        type="button"
+                        className={`dot ${marketingHighlightIndex === index ? 'active' : ''}`}
+                        onClick={() => setMarketingHighlightIndex(index)}
+                        aria-label={text(`Go to highlight ${index + 1}`, `跳转到亮点 ${index + 1}`)}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="marketingArrowBtn"
+                    onClick={nextMarketingHighlight}
+                    aria-label={text('Next highlight', '下一个亮点')}
+                  >
+                    →
+                  </button>
+                </div>
               </div>
             </article>
           ) : null}
 
           {marketingFlowIndex === 2 ? (
             <article className="overviewSlide next">
-              <h3>{text('Step 3: Need options for different goals?', '第3步：需要匹配不同目标的路径吗？')}</h3>
+              <h3>{text('Need options for different goals?', '需要匹配不同目标的路径吗？')}</h3>
+              <p className="overviewLeadCompact">
+                {text(
+                  'Choose the track that best supports martial arts skills, gross motor development, and your camper’s confidence.',
+                  '选择最适合孩子的路径，兼顾武术技能、大运动能力和自信成长。'
+                )}
+              </p>
+              <div className="overviewStatRow">
+                <span className="overviewStatPill">{text('Martial arts skills', '武术技能')}</span>
+                <span className="overviewStatPill">{text('Gross motor skills', '大运动能力')}</span>
+                <span className="overviewStatPill">{text('Confidence + discipline', '自信 + 纪律')}</span>
+              </div>
               <div className="overviewPointList">
                 {campTypes.map((camp) => (
                   <p key={camp.name} className="overviewPointItem">
@@ -3632,43 +5485,16 @@ export default function HomePage() {
 
           {marketingFlowIndex === 3 ? (
             <article className="overviewSlide marketingInteractiveCard next">
-              <h3>{text('Step 4: What matters most for your camper this summer?', '第4步：这个夏天您最看重孩子哪方面成长？')}</h3>
-              <div className="surveyChoiceRow">
-                <button
-                  type="button"
-                  className={`choiceChip ${marketingNeed === 'confidence' ? 'active' : ''}`}
-                  onClick={() => setMarketingNeed('confidence')}
-                >
-                  {text('Confidence', '自信')}
-                </button>
-                <button
-                  type="button"
-                  className={`choiceChip ${marketingNeed === 'athletic' ? 'active' : ''}`}
-                  onClick={() => setMarketingNeed('athletic')}
-                >
-                  {text('Athletic growth', '运动能力')}
-                </button>
-                <button
-                  type="button"
-                  className={`choiceChip ${marketingNeed === 'social' ? 'active' : ''}`}
-                  onClick={() => setMarketingNeed('social')}
-                >
-                  {text('Social skills', '社交能力')}
-                </button>
-                <button
-                  type="button"
-                  className={`choiceChip ${marketingNeed === 'tumbling' ? 'active' : ''}`}
-                  onClick={() => setMarketingNeed('tumbling')}
-                >
-                  {text('Tumbling skills', '翻腾技巧')}
-                </button>
-              </div>
-              <p key={`marketing-need-${marketingNeed}`} className="surveyInlineResponse">
-                {getMarketingNeedResponse()}
+              <h3>{text('Ready to take the next step?', '准备好下一步了吗？')}</h3>
+              <p className="overviewLeadCompact">
+                {text(
+                  'Review the fit guidance above, then reserve your camp weeks with confidence.',
+                  '先查看上方匹配建议，再自信地预留营期。'
+                )}
               </p>
-              <div className="adminActions">
+              <div className="marketingPrimaryCtaRow">
                 <button type="button" className="button" onClick={jumpToRegistration}>
-                  {text('Start Registration', '开始报名')}
+                  {text('Claim Early Offer & Register', '领取早鸟优惠并报名')}
                 </button>
               </div>
             </article>
@@ -3677,24 +5503,37 @@ export default function HomePage() {
         <div className="marketingStepActions">
           <button
             type="button"
-            className="button secondary"
+            className="marketingArrowBtn"
             onClick={previousMarketingFlowStep}
             disabled={marketingFlowIndex === 0}
+            aria-label={text('Previous section', '上一部分')}
           >
-            {text('Previous Step', '上一步')}
+            ←
           </button>
           <button
             type="button"
-            className="button"
+            className="marketingArrowBtn"
             onClick={nextMarketingFlowStep}
             disabled={marketingFlowIndex === 3}
+            aria-label={text('Next section', '下一部分')}
           >
-            {text('Next Step', '下一步')}
+            →
           </button>
+        </div>
+        <div className="heroActions">
+          <button type="button" className="button" onClick={jumpToRegistration}>
+            {text('Claim Offer & Start Registration', '领取优惠并开始报名')}
+          </button>
+        </div>
         </div>
       </section>
 
       <section className="card section testimonialsHero" id="student-stories">
+        {landingSectionVisuals.testimonials ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.testimonials} alt="Student stories banner" />
+          </figure>
+        ) : null}
         <p className="eyebrow">{text('Student Stories', '学员故事')}</p>
         <h2>{text('What kind of growth do families actually see?', '家庭通常能看到哪些真实成长？')}</h2>
         <p className="subhead">
@@ -3764,68 +5603,247 @@ export default function HomePage() {
       </section>
 
       <section id="camp-dates" className="card section">
-        <h2>{text('When can my child join camp?', '孩子什么时候可以参加营地？')}</h2>
+        <h2>{text('Choose Your Camp Type', '选择适合您的营地类型')}</h2>
         <p className="subhead">
           {text(
-            'Summer sessions run weekly. For General Camp and Boot Camp, families can choose Full Week, Full Day, AM Half Day, or PM Half Day based on schedule.',
-            '夏令营按周开放。普通营和集训营可按家庭安排选择整周、整天、上午半天或下午半天。'
+            'Pick a camp type to see who it is best for, what your child gets, and current highlights.',
+            '选择营地类型，查看适合人群、核心收获与当前亮点。'
           )}
         </p>
-        <div className="weekSummaryGrid">
-          <article className="weekSummaryCard">
-            <h3>General Camp ({generalWeeks.length} weeks)</h3>
-            <p className="subhead">
-              {generalWeeks.length
-                ? text(
-                  'Open now. Time options: Full Week, Full Day, AM Half Day, PM Half Day.',
-                  '现已开放。可选时间：整周、整天、上午半天、下午半天。'
-                )
-                : text('No weeks selected yet in admin.', '后台尚未配置周次。')}
-            </p>
-          </article>
-          <article className="weekSummaryCard">
-            <h3>Boot Camp ({bootcampWeeks.length} weeks)</h3>
-            <p className="subhead">
-              {bootcampWeeks.length
-                ? text(
-                  'Open now. Time options: Full Week, Full Day, AM Half Day, PM Half Day.',
-                  '现已开放。可选时间：整周、整天、上午半天、下午半天。'
-                )
-                : text('No weeks selected yet in admin.', '后台尚未配置周次。')}
-            </p>
-          </article>
-          <article className="weekSummaryCard">
-            <h3>Overnight Camp ({overnightWeeks.length} blocks)</h3>
-            <p className="subhead">
-              {overnightWeeks.length
-                ? text(
-                  'Overnight blocks are open with limited spots and separate scheduling.',
-                  '过夜营分档期开放，名额有限，采用独立排期。'
-                )
-                : text('No weekends selected yet in admin.', '后台尚未配置过夜档期。')}
-            </p>
-          </article>
+        {discountActive ? (
+          <p className="campTypeDiscountNote">
+            {text(
+              `Early offer ends on ${discountEndDateSpokenLabel.en}. Claim your discount when you register.`,
+              `早鸟优惠截止至 ${discountEndDateSpokenLabel.zh}，报名时即可领取。`
+            )}
+          </p>
+        ) : null}
+        <article className="campTypeShowcaseCard">
+          <div className="campTypeMediaPanel">
+            {activeCampTypeMedia?.src ? (
+              <>
+                <img src={activeCampTypeMedia.src} alt={text(`${activeCampType.title} media`, `${activeCampType.title} 图片`)} />
+                {activeCampTypeMedia.caption ? (
+                  <div className={`campTypeMediaCaption ${activeCampTypeMedia.tone || 'general'}`}>
+                    {activeCampTypeMedia.caption}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="heroMediaPlaceholder">
+                <strong>{text('Camp media slot', '营地媒体占位')}</strong>
+                <span>{text('Upload camp media in /admin.', '请在 /admin 中上传营地媒体。')}</span>
+              </div>
+            )}
+            {activeCampTypeMediaLength > 1 ? (
+              <div className="campTypeMediaControls">
+                <button
+                  type="button"
+                  className="campTypeMediaArrow"
+                  onClick={() => setCampTypeMediaIndex((prev) => prev - 1)}
+                  aria-label={text('Previous camp media', '上一张营地媒体')}
+                >
+                  ←
+                </button>
+                <div className="heroGalleryDots" aria-label={text('Camp media position', '营地媒体位置')}>
+                  {activeCampType.media.map((_, index) => (
+                    <button
+                      key={`camp-type-media-${activeCampType.key}-${index}`}
+                      type="button"
+                      className={`dot ${index === ((campTypeMediaIndex % activeCampTypeMediaLength) + activeCampTypeMediaLength) % activeCampTypeMediaLength ? 'active' : ''}`}
+                      onClick={() => setCampTypeMediaIndex(index)}
+                      aria-label={text(`Go to media ${index + 1}`, `跳转到第 ${index + 1} 张`)}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="campTypeMediaArrow"
+                  onClick={() => setCampTypeMediaIndex((prev) => prev + 1)}
+                  aria-label={text('Next camp media', '下一张营地媒体')}
+                >
+                  →
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="campTypeContentPanel">
+            <h3>{activeCampType.title}</h3>
+            <p className="subhead">{activeCampType.summary}</p>
+            <div className="pointsGlowBox compact">
+              <span className="pointsGlowBadge">
+                {activeCampType.key === 'overnight'
+                  ? `${OVERNIGHT_WEEKLY_POINTS.toLocaleString('en-US')} points per week`
+                  : 'Points by enrollment'}
+              </span>
+              <strong>
+                {activeCampType.key === 'overnight'
+                  ? 'Overnight campers earn 5,000 New England Wushu Level Up points for each full week enrollment.'
+                  : 'Summer campers earn 2,500 points for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.'}
+              </strong>
+              <p>{activeCampType.key === 'overnight' ? overnightPointsUseCopy : dayCampPointsUseCopy}</p>
+            </div>
+            <div className="campTypeFitBox">
+              <strong>{text('Who this is best for', '适合人群')}</strong>
+              <p>{activeCampType.suitedFor}</p>
+            </div>
+            {activeCampType.key === 'overnight' ? (
+              <div className="adminActions campTypeOvernightCtaRow">
+                <a className="button heroPrimaryCta" href="/overnight">
+                  {text('Open Overnight Camp Page', '打开过夜营页面')}
+                </a>
+              </div>
+            ) : null}
+            <ul className="campTypeHighlightList">
+              {activeCampType.highlights.map((item) => (
+                <li key={`${activeCampType.key}-${item}`}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="campTypeBottomTabs" role="tablist" aria-label={text('Camp types', '营地类型')}>
+            {campTypeShowcase.map((campType) => (
+              <button
+                key={`camp-type-tab-${campType.key}`}
+                type="button"
+                className={`campTypeBottomTab ${activeCampType.key === campType.key ? 'active' : ''}`}
+                onClick={() => setActiveCampTypeKey(campType.key)}
+                role="tab"
+                aria-selected={activeCampType.key === campType.key}
+              >
+                {campType.title}
+              </button>
+            ))}
+          </div>
+        </article>
+        <div className="heroActions">
+          <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
+            {text('Claim Early Offer & Register', '领取早鸟优惠并报名')}
+          </button>
         </div>
       </section>
 
       <section id="weekly-structure" className="card section">
-        <h2>{text('What does a typical week look like?', '典型一周是怎样安排的？')}</h2>
+        {landingSectionVisuals.weekly ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.weekly} alt="Weekly structure banner" />
+          </figure>
+        ) : null}
+        <h2>{text('What does a typical General Camp week look like?', '普通营的一周通常如何安排？')}</h2>
         <p className="subhead">
           {text(
-            'Here is a clear Monday-Friday flow so families know exactly what training rhythm to expect each day.',
-            '以下是清晰的周一到周五训练节奏，方便家庭提前了解每天安排。'
+            'This is the General Camp weekly structure. Each day has a clear AM/PM theme across basics, weapons, Sanda, self-defense, character building, and social growth.',
+            '以下为普通营每周结构。每天都有明确的上午/下午主题，覆盖基础训练、器械、散打、自我防护、品格培养与社交成长。'
+          )}
+        </p>
+        <p className="subhead">
+          {text(
+            'Ages 3-6 follow a dedicated motor-skill track and do not train with apparatus. Families receive daily app updates with photos/videos and coach notes.',
+            '3-6岁采用专门的大运动能力训练路径，不进行器械训练。家长可通过应用每日查看照片/视频与教练评语。'
           )}
         </p>
         <div className="scheduleList">
           {schedule.map((item) => (
             <article key={item.day} className="scheduleItem">
-              <strong><span className="scheduleDayTag">{item.day}</span></strong>
-              <p>{item.activity}</p>
+              <strong><span className="scheduleDayTag">{text(item.day, item.dayZh || item.day)}</span></strong>
+              <div className="scheduleThemeGrid">
+                <div className="scheduleThemeBlock">
+                  <p className="scheduleThemeLabel">{text('AM Theme', '上午主题')}</p>
+                  <p className="scheduleThemeTitle">{text(item.amTheme, item.amThemeZh || item.amTheme)}</p>
+                  <ul className="scheduleFeatureList">
+                    {parseScheduleFeatures(text(item.amBlocks, item.amBlocksZh || item.amBlocks)).map((feature, index) => (
+                      <li key={`${item.day}-am-${index}`} className="scheduleFeatureItem">
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="scheduleThemeBlock">
+                  <p className="scheduleThemeLabel">{text('Lunch', '午餐')}</p>
+                  <p className="scheduleThemeTitle">
+                    {item.day === 'Thursday'
+                      ? text('BBQ Thursday', '周四烧烤日')
+                      : text('Midday Reset', '午间调整')}
+                  </p>
+                  <p>
+                    {item.day === 'Thursday'
+                      ? text(
+                        'Thursday BBQ lunch is included, so families get a no-pack lunch day.',
+                        '周四烧烤午餐已包含，家长这天不用准备午餐。'
+                      )
+                      : text(
+                        `Camp lunch is just ${currency(adminConfig.tuition.lunchPrice)} per day, can be selected day-by-day in the Level Up app, and means no lunch packing for busy mornings.`,
+                        `营地午餐每天仅 ${currency(adminConfig.tuition.lunchPrice)}，可在 Level Up App 按天选择，让忙碌早晨不用再准备午餐。`
+                      )}
+                  </p>
+                </div>
+                <div className="scheduleThemeBlock">
+                  <p className="scheduleThemeLabel">{text('PM Theme', '下午主题')}</p>
+                  <p className="scheduleThemeTitle">{text(item.pmTheme, item.pmThemeZh || item.pmTheme)}</p>
+                  <ul className="scheduleFeatureList">
+                    {parseScheduleFeatures(text(item.pmBlocks, item.pmBlocksZh || item.pmBlocks)).map((feature, index) => (
+                      <li key={`${item.day}-pm-${index}`} className="scheduleFeatureItem">
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              {item.specialEventTitle ? (
+                <div className={`scheduleSpecialEvent scheduleSpecialEvent-${item.specialEventTone || 'default'}`}>
+                  <p className="scheduleSpecialEventLabel">{text('Special Event', '特别活动')}</p>
+                  <p className="scheduleSpecialEventTitle">
+                    {text(item.specialEventTitle, item.specialEventTitleZh || item.specialEventTitle)}
+                  </p>
+                  <p>{text(item.specialEventNote, item.specialEventNoteZh || item.specialEventNote)}</p>
+                </div>
+              ) : null}
+              <p className="under6Track">
+                <strong>{text('Snack:', '加餐：')}</strong> {text(item.snackBlock, item.snackBlockZh || item.snackBlock)}
+              </p>
+              <p className="under6Track">
+                <strong>{text('Why this day matters:', '这一天的重要性：')}</strong> {text(item.dayWhy, item.dayWhyZh || item.dayWhy)}
+              </p>
+              <p className="under6Track">
+                <strong>{text('Ages 3-6 track:', '3-6岁训练重点：')}</strong> {text(item.under6Focus, item.under6FocusZh || item.under6Focus)}
+              </p>
+            </article>
+          ))}
+        </div>
+        <div className="heroActions">
+          <button type="button" className="button" onClick={jumpToRegistration}>
+            {text('Reserve a Spot for This Week Plan', '按此周计划预留名额')}
+          </button>
+        </div>
+      </section>
+
+      <section className="card section">
+        <h2>{text('Camp Locations', '营地地点')}</h2>
+        <p className="subhead">
+          {text(
+            'Families can choose Burlington or Acton during registration. We serve nearby families across these surrounding towns.',
+            '家庭可在报名时选择 Burlington 或 Acton。我们服务周边多个相邻城镇的家庭。'
+          )}
+        </p>
+        <div className="locationGrid">
+          {LOCATION_OPTIONS.map((location) => (
+            <article key={location.value} className="locationCard">
+              <div className="locationCardHead">
+                <span className="locationBadge">{location.label}</span>
+                <strong>{text('Nearby towns served', '服务周边城镇')}</strong>
+              </div>
+              <div className="locationTownList">
+                {location.towns.map((town) => (
+                  <span key={`${location.value}-${town}`} className="locationTownChip">
+                    {town}
+                  </span>
+                ))}
+              </div>
             </article>
           ))}
         </div>
       </section>
 
+      {showLandingOnlySections ? (
       <section className="card section levelUpSection" id="level-up">
         <div
           className="phoneMock"
@@ -3841,19 +5859,15 @@ export default function HomePage() {
                   className={`phoneImage slideImage ${slideDirection === 'next' ? 'next' : 'prev'}`}
                   src={activeLevelUpScreenshot}
                   alt="Level Up app screenshot"
-                  style={{ width: `${adminConfig.media.levelUpScreenshotSize}%` }}
+                  style={{
+                    width: `${levelUpRenderScale}%`,
+                    ...getLevelUpScreenshotStyle(activeLevelUpScreenshotIndex),
+                  }}
                 />
               ) : (
                 <p>Level Up app screenshot goes here</p>
               )}
             </div>
-            {activeLevelUpScreenshot ? (
-              <img
-                className={`phonePopoutImage ${slideDirection === 'next' ? 'next' : 'prev'}`}
-                src={activeLevelUpScreenshot}
-                alt="Level Up screenshot popout effect"
-              />
-            ) : null}
           </div>
         </div>
 
@@ -3866,6 +5880,11 @@ export default function HomePage() {
               '营地主任与教练会在应用内每日更新成长进度（含照片/视频日志）、每周日程与午餐下单，方便家长随时了解孩子每天的训练与进步。'
             )}
           </p>
+          <div className="pointsGlowBox compact">
+            <span className="pointsGlowBadge">Points by enrollment</span>
+            <strong>{dayCampPointsBreakdown}</strong>
+            <p>{dayCampPointsUseCopy}</p>
+          </div>
 
           <div className="carouselControls">
             <button type="button" className="carouselBtn" onClick={previousLevelUpSlide}>
@@ -3894,23 +5913,38 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+      ) : null}
 
+      {showRegistrationSections ? (
       <section ref={registrationRef} className="card section" id="register">
         <header>
-          <h2>Registration flow</h2>
+          {adminConfig.media.welcomeLogoUrl ? (
+            <img className="brandMiniLogo" src={adminConfig.media.welcomeLogoUrl} alt="New England Wushu logo" />
+          ) : null}
+          <h2>{text('Registration flow', '报名流程')}</h2>
           <p className="subhead">
-            Family registration with per-camper weekly scheduling. New this year: Level Up app access for lunch booking
-            and daily progress photos/videos.
+            {text(
+              'Family registration with per-camper weekly scheduling. New this year: Level Up app access for lunch booking and daily progress photos/videos.',
+              '家庭报名可为每位营员分别安排每周日程。今年新增：可通过 Level Up 应用预订午餐并查看每日照片/视频成长记录。'
+            )}
           </p>
+          <div className="pointsGlowBox compact">
+            <span className="pointsGlowBadge">New England Wushu Level Up points</span>
+            <strong>{dayCampPointsBreakdown}</strong>
+            <p>{dayCampPointsUseCopy}</p>
+          </div>
           <div className="registrationHeaderActions">
-            <button type="button" className="button secondary" onClick={jumpToCampTop}>
+            <button type="button" className="button secondary" onClick={clearRegistrationForm}>
+              {text('Clear form', '清空表单')}
+            </button>
+            <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
               {text('Go to Summer Camp Page', '进入夏令营页面')}
             </button>
           </div>
         </header>
 
         <div className="registrationTabBar">
-          <div className="registrationTabs" role="tablist" aria-label="Registration steps">
+          <div className="registrationTabs" role="tablist" aria-label={text('Registration steps', '报名步骤')}>
             {registrationSteps.map((item) => (
               (() => {
               const isComplete = isRegistrationStepComplete(item.id)
@@ -3928,7 +5962,15 @@ export default function HomePage() {
                 }}
               >
                 <span className="registrationTabNumber">{item.id}</span>
-                <span className="registrationTabLabel">{item.title}</span>
+                <span className="registrationTabLabel">
+                  {item.id === 1
+                    ? text('Family & campers', '家庭与营员')
+                    : item.id === 2
+                      ? text('Camp weeks & times', '营期与时段')
+                      : item.id === 3
+                        ? text('Lunch days', '午餐日期')
+                        : text('Review & submit', '检查并提交')}
+                </span>
                 {isMissing ? <span className="registrationStepAlertDot" aria-hidden="true" /> : null}
               </button>
               )
@@ -3937,36 +5979,62 @@ export default function HomePage() {
           </div>
           <div className="registrationCamperRow">
             <p className="registrationViewingLabel">
-              Viewing: <strong>{activeCamperLabel}</strong>
+              {text('Viewing:', '当前查看：')} <strong>{activeCamperLabel}</strong>
             </p>
-            {registration.students.length > 1 ? (
-              <div className="registrationCamperTabs" aria-label="Active camper">
-                {registration.students.map((student, index) => {
-                  const label = student.fullName.trim() || `Camper ${index + 1}`
-                  const active = resolvedActiveStudentId === student.id
-                  const missing = isCamperMissingAnyStep(student)
-                  return (
-                    <button
-                      key={`camper-tab-${student.id}`}
-                      type="button"
-                      className={`registrationCamperTab ${active ? 'active' : ''}`}
-                      onClick={() => {
-                        setActiveStudentId(student.id)
-                        setExpandedStudentId(student.id)
-                      }}
-                      aria-pressed={active}
-                    >
-                      {label}
-                      {missing ? <span className="registrationCamperAlertDot" aria-hidden="true" /> : null}
-                    </button>
-                  )
-                })}
-              </div>
-            ) : null}
           </div>
         </div>
 
         <div className="regSummarySticky">
+          <div className="regSummaryTopRow">
+            <div className="registrationLocationBanner registrationLocationSummaryCard compact">
+              <span className="registrationLocationLabel">{text('Registration location', '报名地点')}</span>
+              <strong>{selectedLocationLabel}</strong>
+              <span className="registrationLocationHintText">{text('Tap to change location', '点击切换地点')}</span>
+              <div className="registrationLocationInlineToggle" role="group" aria-label={text('Choose registration location', '选择报名地点')}>
+                {LOCATION_OPTIONS.map((option) => {
+                  const active = registration.location === option.value
+                  return (
+                    <button
+                      key={`summary-location-${option.value}`}
+                      type="button"
+                      className={`registrationLocationToggleBtn ${active ? 'active' : ''}`}
+                      aria-pressed={active}
+                      onClick={() => updateContact('location', option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <button type="button" className="button siblingAddButton regSummaryAddCamper" onClick={addStudent}>
+              {text('+ Add sibling camper', '+ 添加兄弟姐妹营员')}
+            </button>
+          </div>
+          <div className="regSummaryCamperSwitch regSummaryCamperSwitchTop" aria-label="Camper switcher">
+            {registration.students.map((student, index) => {
+              const label = student.fullName.trim() || `Camper ${index + 1}`
+              const active = resolvedActiveStudentId === student.id
+              const missing = isCamperMissingAnyStep(student)
+              return (
+                <button
+                  key={`summary-camper-top-${student.id}`}
+                  type="button"
+                  className={`registrationCamperTab regSummaryCamperChip ${active ? 'active' : ''}`}
+                  onClick={() => activateCamper(student.id)}
+                  aria-pressed={active}
+                >
+                  {label}
+                  {missing ? <span className="registrationCamperAlertDot" aria-hidden="true" /> : null}
+                </button>
+              )
+            })}
+          </div>
+          <div className="registrationStatusRow">
+            <span className={`registrationStatusChip ${registrationIsSubmitted ? 'submitted' : 'pending'}`}>
+              {registrationIsSubmitted ? text('Registration Submitted', '报名已提交') : text('Registration Not Confirmed', '报名未确认')}
+            </span>
+          </div>
           <button
             type="button"
             className="regSummaryToggle"
@@ -3974,10 +6042,10 @@ export default function HomePage() {
             aria-expanded={summaryExpanded}
           >
             <span>
-              <strong>Registration summary</strong>
+              <strong>{text('Registration summary', '报名摘要')}</strong>
               <em>
-                {registration.students.length} {registration.students.length === 1 ? 'camper' : 'campers'} ·{' '}
-                {summaryDigest.totalCampDays} selected day blocks · {summaryDigest.totalLunchDays} lunch days
+                {registration.students.length} {text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} ·{' '}
+                {summaryDigest.totalCampDays} {text('selected day blocks', '个已选上课时段')} · {summaryDigest.totalPaidLunchDays} {text('paid lunch days', '个付费午餐日')} · {summaryDigest.totalIncludedLunchDays} {text('Thu included lunch days', '个周四含午餐日')}
               </em>
             </span>
             <span className={`regSummaryChevron ${summaryExpanded ? 'open' : ''}`}>⌄</span>
@@ -4008,13 +6076,13 @@ export default function HomePage() {
                     aria-pressed={resolvedActiveStudentId === student.id}
                   >
                     <div className="regSummaryHead">
-                      <strong>{student.fullName || 'Unnamed camper'}</strong>
-                      {resolvedActiveStudentId === student.id ? <span className="selectedPill">Selected</span> : null}
+                      <strong>{student.fullName || text('Unnamed camper', '未命名营员')}</strong>
+                      {resolvedActiveStudentId === student.id ? <span className="selectedPill">{text('Selected', '已选中')}</span> : null}
                     </div>
 
                     {generalTotal > 0 ? (
                       <div className="summaryProgram general">
-                        <p className="summaryProgramTitle">General Camp</p>
+                        <p className="summaryProgramTitle">{text('General Camp', '普通夏令营')}</p>
                         <div className="summaryStatRow">
                           {summary.general.fullWeeks > 0 ? (
                             <span className="summaryStatPill">
@@ -4036,7 +6104,7 @@ export default function HomePage() {
 
                     {bootTotal > 0 ? (
                       <div className="summaryProgram bootcamp">
-                        <p className="summaryProgramTitle">Competition Boot Camp</p>
+                        <p className="summaryProgramTitle">{text('Competition Boot Camp', '竞赛强化营')}</p>
                         <div className="summaryStatRow">
                           {summary.bootcamp.fullWeeks > 0 ? (
                             <span className="summaryStatPill">
@@ -4057,10 +6125,44 @@ export default function HomePage() {
                     ) : null}
 
                     {generalTotal + bootTotal === 0 ? (
-                      <p className="summaryEmpty">No camp days selected yet.</p>
+                      <p className="summaryEmpty">{text('No camp days selected yet.', '尚未选择营期日期。')}</p>
                     ) : null}
 
-                    <p className="summaryLunch">{pluralize('Lunch Day', summary.lunchCount)}</p>
+                    <p className="summaryLunch">
+                      {pluralize(text('Paid Lunch Day', '付费午餐日'), summary.lunchCount)} · {text('Thu included', '周四含午餐')}{' '}
+                      {getLunchDecisionStats(student, weeksById).includedLunchDays}
+                    </p>
+
+                    {resolvedActiveStudentId === student.id ? (
+                      <div className="regSummaryDetails">
+                        <div className="regSummaryDetailRow">
+                          <span className="regSummaryDetailLabel">{text('General Camp', '普通夏令营')}</span>
+                          <span className="regSummaryDetailValue">
+                            {summary.general.fullWeeks > 0 ? `${summary.general.fullWeeks} full week${summary.general.fullWeeks === 1 ? '' : 's'}` : '0'}
+                            {summary.general.fullDays > 0 ? `, ${summary.general.fullDays} full day${summary.general.fullDays === 1 ? '' : 's'}` : ''}
+                            {summary.general.amDays > 0 ? `, ${summary.general.amDays} AM` : ''}
+                            {summary.general.pmDays > 0 ? `, ${summary.general.pmDays} PM` : ''}
+                          </span>
+                        </div>
+                        <div className="regSummaryDetailRow">
+                          <span className="regSummaryDetailLabel">{text('Boot Camp', '强化营')}</span>
+                          <span className="regSummaryDetailValue">
+                            {summary.bootcamp.fullWeeks > 0 ? `${summary.bootcamp.fullWeeks} full week${summary.bootcamp.fullWeeks === 1 ? '' : 's'}` : '0'}
+                            {summary.bootcamp.fullDays > 0 ? `, ${summary.bootcamp.fullDays} full day${summary.bootcamp.fullDays === 1 ? '' : 's'}` : ''}
+                            {summary.bootcamp.amDays > 0 ? `, ${summary.bootcamp.amDays} AM` : ''}
+                            {summary.bootcamp.pmDays > 0 ? `, ${summary.bootcamp.pmDays} PM` : ''}
+                          </span>
+                        </div>
+                        <div className="regSummaryDetailRow">
+                          <span className="regSummaryDetailLabel">{text('Lunch', '午餐')}</span>
+                          <span className="regSummaryDetailValue">
+                            {getLunchDecisionStats(student, weeksById).lunchProvidedDays} provided, {getLunchDecisionStats(student, weeksById).packLunchNeededDays} pack-needed
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="regSummaryTapHint">{text('Tap to expand details', '点击展开详情')}</span>
+                    )}
                   </button>
                 )
                 })()
@@ -4080,10 +6182,17 @@ export default function HomePage() {
         ) : null}
 
         <form onSubmit={submitRegistration}>
-          <article key={`reg-step-${step}`} className={`registrationStepCard ${stepDirection}`}>
+          <article key={`reg-step-${step}`} className={`registrationStepCard ${stepDirection} ${step === 1 ? 'stepOneLayout' : ''}`}>
             <div className="registrationStepHero">
               <div className="registrationStepText">
-                <p className="eyebrow">Registration Step {step}</p>
+                {adminConfig.media.welcomeLogoUrl ? (
+                  <img className="brandMiniLogo inline" src={adminConfig.media.welcomeLogoUrl} alt="New England Wushu logo" />
+                ) : null}
+                <p className="eyebrow">{text(`Registration Step ${step}`, `报名步骤 ${step}`)}</p>
+                <span className={`registrationStatusChip ${registrationIsSubmitted ? 'submitted' : 'pending'}`}>
+                  {registrationIsSubmitted ? text('Registration Submitted', '报名已提交') : text('Registration Not Confirmed', '报名未确认')}
+                </span>
+                <span className="registrationLocationPill">{selectedLocationLabel}</span>
                 <h3>{stepShortTitle}</h3>
               </div>
               <div className="registrationStepVisual">
@@ -4100,27 +6209,139 @@ export default function HomePage() {
               </div>
             </div>
           {step === 1 ? (
-            <div className="grid">
+            <div className="grid registrationStepOneGrid">
               <label>
-                <span className="requiredFieldLabel">Contact email {contactEmailMissing ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Camp location', '营地地点')} {locationMissing ? <span className="requiredDot" /> : null}</span>
+                <select
+                  id="reg-location"
+                  className={locationMissing ? 'fieldIncomplete' : ''}
+                  value={registration.location}
+                  onChange={(event) => updateContact('location', event.target.value)}
+                  required
+                >
+                  <option value="">{text('Select location', '选择地点')}</option>
+                  {LOCATION_OPTIONS.map((option) => (
+                    <option key={`location-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {registration.location.trim() ? (
+                <div className="full locationAlbumCard">
+                  <div className="locationAlbumIntro">
+                    <div>
+                      <p className="eyebrow">{text('Step 1 preview', '步骤 1 预览')}</p>
+                      <h4>{locationAlbumTitle}</h4>
+                      <p className="subhead">
+                        {text('Preview the training space before you continue. Click to open the small album.', '继续前可先查看训练场地。点击打开相册预览。')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => {
+                        setLocationAlbumIndex(0)
+                        setLocationAlbumOpen(true)
+                      }}
+                      disabled={locationFacilityPhotos.length === 0}
+                    >
+                      {locationFacilityPhotos.length > 0 ? text('Open photo album', '打开照片相册') : text('No facility photos added yet', '尚未添加场地照片')}
+                    </button>
+                  </div>
+                  {locationFacilityPhotos.length > 0 ? (
+                    <div className="locationAlbumPreviewStrip">
+                      {locationFacilityPhotos.slice(0, 4).map((url, index) => (
+                        <button
+                          key={`location-preview-${registration.location}-${index}`}
+                          type="button"
+                          className="locationAlbumPreviewThumb"
+                          onClick={() => {
+                            setLocationAlbumIndex(index)
+                            setLocationAlbumOpen(true)
+                          }}
+                        >
+                          <img src={url} alt={`${selectedLocationLabel} facility preview ${index + 1}`} loading="lazy" decoding="async" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="subhead">{text('Admin can add Burlington and Acton facility photos in the media tab.', '管理员可在媒体标签中添加 Burlington 和 Acton 场地照片。')}</p>
+                  )}
+                </div>
+              ) : null}
+
+              <label>
+                <span className="requiredFieldLabel">{text('Parent/Guardian name', '家长/监护人姓名')} {parentNameMissing ? <span className="requiredDot" /> : null}</span>
                 <input
-                  id="reg-contact-email"
-                  type="email"
-                  value={registration.contactEmail}
-                  onChange={(event) => updateContact('contactEmail', event.target.value)}
+                  id="reg-parent-name"
+                  className={parentNameMissing ? 'fieldIncomplete' : ''}
+                  value={registration.parentName}
+                  onChange={(event) => updateContact('parentName', event.target.value)}
                   required
                 />
               </label>
 
               <label>
-                <span className="requiredFieldLabel">Contact phone {contactPhoneMissing ? <span className="requiredDot" /> : null}</span>
+                <span className="requiredFieldLabel">{text('Contact email', '联系邮箱')} {contactEmailMissing ? <span className="requiredDot" /> : null}</span>
+                <input
+                  id="reg-contact-email"
+                  type="email"
+                  className={contactEmailMissing ? 'fieldIncomplete' : ''}
+                  value={registration.contactEmail}
+                  onChange={(event) => updateContact('contactEmail', event.target.value)}
+                  required
+                />
+                <p className="marketingConsentNote">
+                  {text('By continuing, you may receive camp updates and marketing emails related to this form.', '继续即表示您可能会收到与此表单相关的营地更新和营销邮件。')}
+                </p>
+              </label>
+
+              <label>
+                <span className="requiredFieldLabel">{text('Contact phone', '联系电话')} {contactPhoneMissing ? <span className="requiredDot" /> : null}</span>
                 <input
                   id="reg-contact-phone"
+                  className={contactPhoneMissing ? 'fieldIncomplete' : ''}
                   value={registration.contactPhone}
                   onChange={(event) => updateContact('contactPhone', event.target.value)}
                   required
                 />
               </label>
+              <label>
+                <span className="requiredFieldLabel">
+                  {text('How will you pay?', '您将如何付款？')} {paymentMethodMissing ? <span className="requiredDot" /> : null}
+                </span>
+                <select
+                  id="reg-payment-method"
+                  className={paymentMethodMissing ? 'fieldIncomplete' : ''}
+                  value={registration.paymentMethod}
+                  onChange={(event) => updateContact('paymentMethod', event.target.value)}
+                  required
+                >
+                  <option value="">{text('Select payment method', '选择付款方式')}</option>
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={`pay-method-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="full studentActionsRow">
+                <div className="siblingAddCallout">
+                  <strong>{text('Add sibling / additional camper', '添加兄弟姐妹 / 其他营员')}</strong>
+                  <p>{text('Use this when the same family is enrolling another camper for the same selected location.', '当同一家庭要为同一地点再报名一位营员时，请使用此功能。')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="button siblingAddButton"
+                  onClick={addStudent}
+                  disabled={registration.students.length >= MAX_CAMPERS}
+                >
+                  {text(`+ Add sibling camper (${registration.students.length}/${MAX_CAMPERS})`, `+ 添加兄弟姐妹营员（${registration.students.length}/${MAX_CAMPERS}）`)}
+                </button>
+              </div>
 
               {registration.students.map((student, index) => (
                 <div key={student.id} className="full studentCollapsedRow">
@@ -4134,29 +6355,15 @@ export default function HomePage() {
                   >
                     <span>
                       <strong className="camperCardName">{student.fullName.trim() || `Camper ${index + 1}`}</strong>
-                      <span className="camperCardMeta">Camper {index + 1}</span>
+                      <span className="camperCardMeta">{text(`Camper ${index + 1}`, `营员 ${index + 1}`)}</span>
                       <span className="studentDetailCta">
-                        Click here to view details for {student.fullName.trim() || `Camper ${index + 1}`}
+                        {text(`Click here to view details for ${student.fullName.trim() || `Camper ${index + 1}`}`, `点击查看 ${student.fullName.trim() || `营员 ${index + 1}`} 的详情`)}
                       </span>
                     </span>
                     {!isStudentComplete(student) ? <span className="requiredDot" /> : null}
                   </button>
                 </div>
               ))}
-
-              <div className="full studentActionsRow">
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={addStudent}
-                  disabled={registration.students.length >= MAX_CAMPERS}
-                >
-                  + Add family member ({registration.students.length}/{MAX_CAMPERS})
-                </button>
-                <button type="button" className="button secondary" onClick={clearRegistrationForm}>
-                  Clear form
-                </button>
-              </div>
 
               {expandedStudent ? (
                 <div className="full studentBlock">
@@ -4178,116 +6385,144 @@ export default function HomePage() {
                   </div>
                   <div className="grid">
                     <label>
-                      <span className="requiredFieldLabel">Full name {!expandedStudent.fullName.trim() ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Full name', '姓名')} {expandedStudentFullNameMissing ? <span className="requiredDot" /> : null}</span>
                       <input
                         id={`reg-student-fullname-${expandedStudent.id}`}
+                        className={expandedStudentFullNameMissing ? 'fieldIncomplete' : ''}
                         value={expandedStudent.fullName}
                         onChange={(event) => updateStudentField(expandedStudent.id, 'fullName', event.target.value)}
                         required
                       />
                     </label>
                     <label>
-                      <span className="requiredFieldLabel">Date of birth {!parseDateLocal(expandedStudent.dob) ? <span className="requiredDot" /> : null}</span>
-                      <input
-                        id={`reg-student-dob-${expandedStudent.id}`}
-                        type="date"
-                        value={expandedStudent.dob}
-                        onChange={(event) => updateStudentField(expandedStudent.id, 'dob', event.target.value)}
-                        required
-                      />
+                      <span className="requiredFieldLabel">{text('Date of birth', '出生日期')} {expandedStudentDobMissing ? <span className="requiredDot" /> : null}</span>
+                      <div className="dobInputRow">
+                        <input
+                          id={`reg-student-dob-${expandedStudent.id}`}
+                          type="date"
+                          className={expandedStudentDobMissing ? 'fieldIncomplete' : ''}
+                          value={expandedStudent.dob}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={(event) => updateStudentField(expandedStudent.id, 'dob', event.target.value)}
+                          required
+                        />
+                        <select
+                          aria-label={text('Birth year', '出生年份')}
+                          className={expandedStudentDobMissing ? 'fieldIncomplete' : ''}
+                          value={getDobYear(expandedStudent.dob)}
+                          onChange={(event) => updateStudentField(expandedStudent.id, 'dob', setDobYear(expandedStudent.dob, event.target.value))}
+                        >
+                          <option value="">{text('Birth year', '出生年份')}</option>
+                          {DOB_YEAR_OPTIONS.map((year) => (
+                            <option key={`dob-year-${expandedStudent.id}-${year}`} value={year}>
+                              {year}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </label>
                     <label className="full">
-                      <span className="requiredFieldLabel">Allergies {!expandedStudent.allergies.trim() ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Allergies', '过敏信息')} {expandedStudentAllergiesMissing ? <span className="requiredDot" /> : null}</span>
                       <textarea
                         id={`reg-student-allergies-${expandedStudent.id}`}
+                        className={expandedStudentAllergiesMissing ? 'fieldIncomplete' : ''}
                         rows="2"
                         value={expandedStudent.allergies}
                         onChange={(event) =>
                           updateStudentField(expandedStudent.id, 'allergies', event.target.value)
                         }
-                        placeholder="Food, medication, environmental, or none"
+                        placeholder={text('Food, medication, environmental, or none', '食物、药物、环境过敏，或填写无')}
                         required
                       />
                     </label>
                     <label className="full">
-                      <span className="requiredFieldLabel">Medication {!expandedStudent.medication.trim() ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Medication', '用药情况')} {expandedStudentMedicationMissing ? <span className="requiredDot" /> : null}</span>
                       <textarea
                         id={`reg-student-medication-${expandedStudent.id}`}
+                        className={expandedStudentMedicationMissing ? 'fieldIncomplete' : ''}
                         rows="2"
                         value={expandedStudent.medication}
                         onChange={(event) =>
                           updateStudentField(expandedStudent.id, 'medication', event.target.value)
                         }
-                        placeholder="Current medications and timing instructions"
+                        placeholder={text('Current medications and timing instructions', '当前药物及服用时间说明')}
                         required
                       />
                     </label>
                     <label className="full">
-                      <span className="requiredFieldLabel">Previous injuries {!expandedStudent.previousInjury.trim() ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Previous injuries', '既往受伤情况')} {expandedStudentInjuriesMissing ? <span className="requiredDot" /> : null}</span>
                       <textarea
                         id={`reg-student-injuries-${expandedStudent.id}`}
+                        className={expandedStudentInjuriesMissing ? 'fieldIncomplete' : ''}
                         rows="2"
                         value={expandedStudent.previousInjury}
                         onChange={(event) =>
                           updateStudentField(expandedStudent.id, 'previousInjury', event.target.value)
                         }
-                        placeholder="Any previous injuries or physical limitations"
+                        placeholder={text('Any previous injuries or physical limitations', '任何既往受伤或身体限制情况')}
                         required
                       />
                     </label>
                     <label className="full">
-                      <span className="requiredFieldLabel">Other important info {!expandedStudent.healthNotes.trim() ? <span className="requiredDot" /> : null}</span>
+                      <span className="requiredFieldLabel">{text('Other important info', '其他重要信息')} {expandedStudentHealthNotesMissing ? <span className="requiredDot" /> : null}</span>
                       <textarea
                         id={`reg-student-health-${expandedStudent.id}`}
+                        className={expandedStudentHealthNotesMissing ? 'fieldIncomplete' : ''}
                         rows="2"
                         value={expandedStudent.healthNotes}
                         onChange={(event) =>
                           updateStudentField(expandedStudent.id, 'healthNotes', event.target.value)
                         }
-                        placeholder="Anything else our coaching team should know"
+                        placeholder={text('Anything else our coaching team should know', '其他需要教练团队了解的信息')}
                         required
                       />
                     </label>
                   </div>
                 </div>
               ) : (
-                <p className="subhead">All camper fields are collapsed. Tap a camper chip to expand and edit.</p>
+                <p className="subhead">{text('All camper fields are collapsed. Tap a camper chip to expand and edit.', '所有营员信息已折叠。点击营员标签即可展开并编辑。')}</p>
               )}
             </div>
           ) : null}
 
           {step === 2 ? (
             <div className="full">
-              <p className="requiredFieldHint">{step2HasMissing ? <span className="requiredDot" /> : null} Select at least one camp day for each camper.</p>
-              <p className="subhead">
-                Looking for overnight camp? <a href="#overnight-registration">Click here.</a>
-              </p>
+              <p className="requiredFieldHint">{step2HasMissing ? <span className="requiredDot" /> : null} {text('Select at least one camp day for each camper.', '请至少为每位营员选择一天课程。')}</p>
+              <div className="summaryActionRow" style={{ justifyContent: 'flex-start', marginTop: '0.5rem' }}>
+                <a className="button secondary" href="/overnight">
+                  {text('Looking for Overnight Camp?', '想报名过夜营？')}
+                </a>
+              </div>
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
-                  <label>
-                    {`Copy "${activeCamperLabel}" weeks`}
-                    <select
-                      value={scheduleCopySourceId}
-                      onChange={(event) => setScheduleCopySourceId(event.target.value)}
-                    >
-                      <option value="">Select camper</option>
+                  <div className="copyWeeksPicker">
+                    <span className="copyWeeksLabel">{text('Copy weeks from', '从以下营员复制周计划')}</span>
+                    <div className="copyWeeksChipRow" aria-label="Copy weeks source camper">
                       {copySourceOptions.map((option) => (
-                        <option key={`copy-schedule-${option.id}`} value={option.id}>
+                        <button
+                          key={`copy-schedule-${option.id}`}
+                          type="button"
+                          className={`copyWeeksChip ${scheduleCopySourceId === option.id ? 'active' : ''}`}
+                          onClick={() =>
+                            setScheduleCopySourceId((current) => (current === option.id ? '' : option.id))
+                          }
+                          aria-pressed={scheduleCopySourceId === option.id}
+                        >
                           {option.label}
-                        </option>
+                        </button>
                       ))}
-                    </select>
-                  </label>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    className="button secondary"
+                    className="button copyWeeksButton"
                     onClick={() => copyScheduleFromCamper(scheduleCopySourceId)}
                     disabled={!scheduleCopySourceId}
                   >
-                    Copy weeks
+                    {text(`Copy to ${activeCamperLabel}`, `复制到 ${activeCamperLabel}`)}
                   </button>
                   <button type="button" className="button secondary" onClick={clearActiveStudentSchedule}>
-                    Clear all weeks
+                    {text('Clear all weeks', '清空所有周次')}
                   </button>
                 </div>
               ) : null}
@@ -4306,7 +6541,7 @@ export default function HomePage() {
                       <article key={week.id} className="weekCard">
                         <button
                           type="button"
-                          className="weekHead"
+                          className={`weekHead ${expanded ? 'selected' : ''}`}
                           data-week-head={panelKey}
                           onClick={() => setExpandedWeekKey(expanded ? '' : panelKey)}
                         >
@@ -4316,20 +6551,25 @@ export default function HomePage() {
                             </strong>
                             <span>{formatWeekLabel(week)}</span>
                             <em>
-                              Click to expand and register for{' '}
+                              {expanded ? 'Tap to collapse this week for ' : 'Click to expand and register for '}
                               <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
                             </em>
                             {weekSelectionSummary ? (
                               <span className="weekStatusChip">{weekSelectionSummary}</span>
                             ) : null}
                           </span>
+                          <span className="weekHeadTapCta" aria-hidden="true">
+                            <span className="weekHeadTapIcon">☝</span>
+                            <span>{text(expanded ? 'Tap to collapse' : 'Tap to register', expanded ? '点按收起' : '点按报名')}</span>
+                          </span>
                         </button>
                         {expanded ? (
                           <div className="weekBody">
                             <div className="toggleHintRow">
                               <em className="toggleHint">
-                                Select a camp type first. Then tap day chips to toggle FULL DAY, AM, PM, then off for{' '}
+                                <strong>{text('Choose a camp type', '先选择营种')}</strong> {text('first, then choose day chips for', '，然后为以下营员选择日期标签：')}{' '}
                                 <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>.
+                                {` `}{text('Each tap cycles', '每次点击会循环切换')} <strong>{text('FULL DAY', '全天')}</strong> -&gt; <strong>AM</strong> -&gt; <strong>PM</strong> -&gt; {text('off', '关闭')}.
                               </em>
                               <button
                                 type="button"
@@ -4342,9 +6582,8 @@ export default function HomePage() {
                             </div>
                             {helpWeekKey === panelKey ? (
                               <p className="tooltipBubble">
-                                <strong>How it works:</strong> select a camp type first, then tap each day chip to
-                                cycle <strong>FULL DAY</strong> -&gt; <strong>AM</strong> -&gt; <strong>PM</strong>{' '}
-                                -&gt; off.
+                                <strong>{text('How it works:', '操作说明：')}</strong> {text('choose a camp type first, then tap each day chip to cycle', '先选择营种，再点击每日标签循环切换')} <strong>{text('FULL DAY', '全天')}</strong> -&gt; <strong>AM</strong> -&gt; <strong>PM</strong>{' '}
+                                -&gt; {text('off', '关闭')}.
                               </p>
                             ) : null}
                             <>
@@ -4357,7 +6596,7 @@ export default function HomePage() {
                                     }`}
                                     onClick={() => setDayCampType(activeStudent.id, week, 'general')}
                                   >
-                                    General Camp
+                                    {text('General Camp', '普通夏令营')}
                                   </button>
                                 ) : null}
                                 {week.availableCampTypes?.includes('bootcamp') ? (
@@ -4368,23 +6607,23 @@ export default function HomePage() {
                                     }`}
                                     onClick={() => setDayCampType(activeStudent.id, week, 'bootcamp')}
                                   >
-                                    Competition Boot Camp
+                                    {text('Competition Boot Camp', '竞赛强化营')}
                                   </button>
                                 ) : null}
                               </div>
                               <p className="campTypeExplain">
                                 {selectedCampType === 'general'
-                                  ? 'General Camp selected: foundational skill building for all levels.'
+                                  ? text('General Camp selected: foundational skill building for all levels.', '已选择普通夏令营：适合所有水平的基础能力训练。')
                                   : selectedCampType === 'bootcamp'
-                                    ? 'Competition Boot Camp selected: Taolu-focused training for competition track.'
-                                    : 'Choose camp type for this week.'}
+                                    ? text('Competition Boot Camp selected: Taolu-focused training for competition track.', '已选择竞赛强化营：以套路竞赛方向训练为主。')
+                                    : text('Choose camp type for this week, then choose days.', '请先选择本周营种，再选择日期。')}
                               </p>
                               <button
                                 type="button"
                                 className={`modeChip ${weekIsFull ? 'active full' : ''}`}
                                 onClick={() => toggleFullWeek(activeStudent.id, week)}
                               >
-                                Full Week (all Full Day)
+                                {text('Full Week (all Full Day)', '整周（全部全天）')}
                               </button>
                               <div className="chipRow">
                                 {dayKeys.map((day) => {
@@ -4397,7 +6636,7 @@ export default function HomePage() {
                                       onClick={() => cycleDay(activeStudent.id, week, day)}
                                       disabled={!selectedCampType}
                                     >
-                                      {mode === 'NONE' ? day : `${day} ${mode === 'FULL' ? 'FULL DAY' : mode}`}
+                                      {mode === 'NONE' ? day : `${day} ${mode === 'FULL' ? text('FULL DAY', '全天') : mode}`}
                                     </button>
                                   )
                                 })}
@@ -4415,24 +6654,33 @@ export default function HomePage() {
 
           {step === 3 ? (
             <div className="full">
-              <p className="requiredFieldHint">{step3HasMissing ? <span className="requiredDot" /> : null} Each camper must choose lunch days or confirm no lunch.</p>
+              <p className="requiredFieldHint">{step3HasMissing ? <span className="requiredDot" /> : null} {text('Each camper must choose paid lunch days or confirm no paid lunch when applicable.', '每位营员都需要选择付费午餐日期，或在适用时确认不需要付费午餐。')}</p>
               <p className="subhead">
-                Lunch is {currency(adminConfig.tuition.lunchPrice)} per day for General/Boot camp days. We send the
-                menu at the start of each week. Options include box juice or bottled water. New this year, families can
-                also manage lunch booking and see progress photos/videos in the Level Up app.
+                {text(
+                  `Lunch is ${currency(adminConfig.tuition.lunchPrice)} per day for General/Boot camp days. We send the menu at the start of each week. Options include box juice or bottled water. New this year, families can also manage lunch booking and see progress photos/videos in the Level Up app.`,
+                  `普通营/强化营的午餐价格为每天 ${currency(adminConfig.tuition.lunchPrice)}。我们会在每周开始时发送菜单，选项包含盒装果汁或瓶装水。今年新增：家庭还可在 Level Up 应用中管理午餐预订并查看成长照片/视频。`
+                )}
+              </p>
+              <div className="pointsGlowBox compact">
+                <span className="pointsGlowBadge">Points by enrollment</span>
+                <strong>{dayCampPointsBreakdown}</strong>
+                <p>{dayCampPointsUseCopy}</p>
+              </div>
+              <p className="subhead">
+                {text('Weekly reminders: Wednesday bring a change of clothes. Thursday BBQ lunch is included in tuition (packing lunch is optional). Friday is family performance day.', '每周提醒：周三请带备用衣物。周四烧烤午餐已包含在学费内（也可自带午餐）。周五为家庭展示日。')}
               </p>
               <p className="subhead">
-                Looking for overnight camp? <a href="#overnight-registration">Click here.</a>
+                {text('Looking for overnight camp?', '想了解过夜营？')} <a href="/overnight">{text('Open overnight page.', '打开过夜营页面。')}</a>
               </p>
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
                   <label>
-                    Copy another camper lunch
+                    {text('Copy another camper lunch', '复制另一位营员的午餐选择')}
                     <select
                       value={lunchCopySourceId}
                       onChange={(event) => setLunchCopySourceId(event.target.value)}
                     >
-                      <option value="">Select camper</option>
+                      <option value="">{text('Select camper', '选择营员')}</option>
                       {copySourceOptions.map((option) => (
                         <option key={`copy-lunch-${option.id}`} value={option.id}>
                           {option.label}
@@ -4446,10 +6694,10 @@ export default function HomePage() {
                     onClick={() => copyLunchFromCamper(lunchCopySourceId)}
                     disabled={!lunchCopySourceId}
                   >
-                    Copy lunch
+                    {text('Copy lunch', '复制午餐')}
                   </button>
                   <button type="button" className="button secondary" onClick={clearActiveStudentLunch}>
-                    Clear all lunch
+                    {text('Clear all lunch', '清空所有午餐')}
                   </button>
                 </div>
               ) : null}
@@ -4457,14 +6705,18 @@ export default function HomePage() {
               {activeStudent ? (
                 <div className="weekCardList">
                   {getLunchWeeksForStudent(activeStudent, weeksById).length === 0 ? (
-                    <p className="subhead">No registered camp days yet for this camper.</p>
+                    <p className="subhead">{text('No registered camp days yet for this camper.', '这位营员尚未选择任何上课日期。')}</p>
                   ) : (
                     getLunchWeeksForStudent(activeStudent, weeksById).map((row, weekIndex) => {
                       const panelKey = `${activeStudent.id}:${row.weekId}`
                       const expanded = expandedLunchWeekKey === panelKey
-                      const weekLunchDays = row.selectedDays.filter((day) => Boolean(activeStudent.lunch[day.key])).length
+                      const weekIncludedLunchDays = row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length
+                      const weekPaidLunchDays = row.selectedDays.filter(
+                        (day) => !isIncludedLunchDay(day.dayKey) && Boolean(activeStudent.lunch[day.key])
+                      ).length
                       const weekRegisteredDays = row.selectedDays.length
-                      const weekPackDays = Math.max(0, weekRegisteredDays - weekLunchDays)
+                      const weekProvidedLunchDays = weekIncludedLunchDays + weekPaidLunchDays
+                      const weekPackDays = Math.max(0, weekRegisteredDays - weekProvidedLunchDays)
                       return (
                         <article key={row.weekId} className="weekCard">
                           <button
@@ -4478,35 +6730,41 @@ export default function HomePage() {
                               </strong>
                               <span>{formatWeekLabel(row.week)}</span>
                               <em>
-                                Click to expand lunch choices for{' '}
+                                {text('Click to expand lunch choices for', '点击展开以下营员的午餐选择：')}{' '}
                                 <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
                               </em>
                               <span className="weekLunchSummaryLine">
-                                Lunch {weekLunchDays}/{weekRegisteredDays} days · Pack lunch {weekPackDays} days
+                                {text(`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Thu included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`, `已提供午餐 ${weekProvidedLunchDays}/${weekRegisteredDays} 天（付费 ${weekPaidLunchDays} 天，周四含餐 ${weekIncludedLunchDays} 天）· 需自带午餐 ${weekPackDays} 天`)}
                               </span>
                             </span>
                           </button>
                           {expanded ? (
                             <div className="weekBody">
                               <em className="toggleHint">
-                                Tap each chip to toggle lunch for{' '}
+                                {text('Tap each chip to toggle lunch for', '点击每个标签切换以下营员的午餐选择：')}{' '}
                                 <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>.
                               </em>
                               <div className="chipRow">
                                 {row.selectedDays.map((day) => {
+                                  const isIncluded = isIncludedLunchDay(day.dayKey)
                                   const hasLunch = Boolean(activeStudent.lunch[day.key])
                                   return (
                                     <button
                                       key={day.key}
                                       type="button"
-                                      className={`modeChip lunchChip ${hasLunch ? 'yes' : 'no'}`}
+                                      className={`modeChip lunchChip ${isIncluded ? 'full' : hasLunch ? 'yes' : 'no'}`}
                                       onClick={() => toggleLunch(activeStudent.id, row.weekId, day.dayKey)}
                                     >
-                                      {day.dayKey} Lunch {hasLunch ? 'YES' : 'NO'}
+                                      {isIncluded
+                                        ? `${day.dayKey} ${text('BBQ INCLUDED', '烧烤已含')}`
+                                        : `${day.dayKey} ${text(`Lunch ${hasLunch ? 'YES' : 'NO'}`, hasLunch ? '午餐：是' : '午餐：否')}`}
                                     </button>
                                   )
                                 })}
                               </div>
+                              <p className="subhead">
+                                {text('Wed: bring change of clothes · Thu: BBQ lunch included (pack optional) · Fri: family performance day', '周三：请带备用衣物 · 周四：烧烤午餐已含（也可自带） · 周五：家庭展示日')}
+                              </p>
                             </div>
                           ) : null}
                         </article>
@@ -4517,11 +6775,19 @@ export default function HomePage() {
               ) : null}
               {activeStudent ? (
                 <div className="lunchDecisionCard" data-lunch-decision={activeStudent.id}>
+                  {(() => {
+                    const hasAnyPaidLunch = Object.entries(activeStudent.lunch || {}).some(
+                      ([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)
+                    )
+                    const selectableLunchDays = getSelectableLunchDayKeysForStudent(activeStudent).size
+                    const needsDecision = selectableLunchDays > 0
+                    return (
+                      <>
                   <div className="lunchDecisionHeader">
                     <strong className="requiredFieldLabel">
-                      Lunch decision {!Object.values(activeStudent.lunch || {}).some(Boolean) && !activeStudent.lunchConfirmedNone ? <span className="requiredDot" /> : null}
+                      Lunch decision {needsDecision && !hasAnyPaidLunch && !activeStudent.lunchConfirmedNone ? <span className="requiredDot" /> : null}
                     </strong>
-                    {!Object.values(activeStudent.lunch || {}).some(Boolean) && !activeStudent.lunchConfirmedNone ? (
+                    {needsDecision && !hasAnyPaidLunch && !activeStudent.lunchConfirmedNone ? (
                       <span className="lunchRequiredTag">
                         <span className="requiredDot" />
                         Required
@@ -4529,19 +6795,24 @@ export default function HomePage() {
                     ) : null}
                   </div>
                   <p className="subhead">
-                    {Object.values(activeStudent.lunch || {}).some(Boolean)
-                      ? `Lunch selected for ${Object.values(activeStudent.lunch || {}).filter(Boolean).length} day(s).`
-                      : 'No lunch days selected yet. Confirm no lunch if this camper does not need lunch.'}
+                    {!needsDecision
+                      ? 'Only Thursday camp days selected for this camper. BBQ lunch is already included, so no paid lunch selection is needed.'
+                      : hasAnyPaidLunch
+                        ? `Paid lunch selected for ${Object.entries(activeStudent.lunch || {}).filter(([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)).length} day(s).`
+                        : 'No paid lunch days selected yet. Confirm no paid lunch if this camper does not need paid lunch.'}
                   </p>
                   <label className="lunchConfirmNoneRow">
                     <input
                       type="checkbox"
                       checked={Boolean(activeStudent.lunchConfirmedNone)}
                       onChange={(event) => setLunchConfirmedNone(activeStudent.id, event.target.checked)}
-                      disabled={Object.values(activeStudent.lunch || {}).some(Boolean)}
+                      disabled={hasAnyPaidLunch || !needsDecision}
                     />
-                    Confirm no lunch for this camper
+                    Confirm no paid lunch for this camper
                   </label>
+                      </>
+                    )
+                  })()}
                 </div>
               ) : null}
             </div>
@@ -4549,19 +6820,50 @@ export default function HomePage() {
 
           {step === 4 ? (
             <div className="full">
+              {registrationIsSubmitted ? (
+                <div className="registrationSubmittedCard">
+                  <strong>Registration submitted.</strong>
+                  <p>Your registration was submitted successfully for <strong>{selectedLocationLabel}</strong>. Review the summary below.</p>
+                </div>
+              ) : null}
+              {registrationEmailResult ? (
+                <div
+                  className={`registrationEmailStatus registrationEmailStatus--${registrationEmailResult.status}`}
+                >
+                  <strong>
+                    {registrationEmailResult.status === 'sent'
+                      ? 'Step 1 email sent'
+                      : registrationEmailResult.status === 'sent-no-pdf'
+                        ? 'Step 1 email sent without PDF'
+                        : registrationEmailResult.status === 'preview'
+                          ? 'Email preview only'
+                          : registrationEmailResult.status === 'queued'
+                            ? 'Reminder flow queued'
+                            : 'Email send needs attention'}
+                  </strong>
+                  <p>
+                    {registrationEmailResult.status === 'preview'
+                      ? `${registrationEmailResult.detail} Set AWS_REGION and AWS_SES_FROM_EMAIL in this app environment to send live emails.`
+                      : registrationEmailResult.status === 'failed'
+                        ? `${registrationEmailResult.detail} You can still use Send Due Journey Emails Now from admin after email delivery is configured.`
+                        : registrationEmailResult.detail}
+                  </p>
+                </div>
+              ) : null}
+              <p className="subhead">Location selected: <strong>{selectedLocationLabel}</strong></p>
               {adminConfig.tuition.discountEndDate ? (
                 <p className="subhead">
-                  Discount pricing applies through {adminConfig.tuition.discountEndDate}.{' '}
+                  Discount pricing applies through {discountEndDateSpokenLabel.en}.{' '}
                   {discountActive ? 'Discount is currently active.' : 'Discount has ended; regular pricing applies.'}
                 </p>
               ) : null}
-              {discountActive ? (
+              {discountActive && !registrationIsSubmitted ? (
                 <div className={`stepFourDiscountClaim ${registrationDiscountClaimed ? 'claimed' : ''}`}>
                   <div>
                     <strong>Claim discount</strong>
                     <p>
                       You've earned {currency(claimableDiscountTotal)} in discount. Claim before{' '}
-                      {adminConfig.tuition.discountEndDate || 'the discount end date'}.
+                      {discountEndDateSpokenLabel.en}.
                     </p>
                   </div>
                   <button
@@ -4644,63 +6946,99 @@ export default function HomePage() {
                   }, 0)
                 )}
               </p>
-              <p className="reservationHoldNotice">
-                Reservations are held for 72 hours and canceled automatically if payment is not received.
-              </p>
               <div className="summaryActionRow">
-                <button type="button" className="button secondary" onClick={() => openSummaryOverlay(registration)}>
+                <div className="pointsGlowBox compact inlineSummaryPoints">
+                  <span className="pointsGlowBadge">Rewards at a glance</span>
+                  <strong>
+                    {summaries.reduce((sum, item) => {
+                      return sum + getDayCampPointsFromSummary(item.summary)
+                    }, 0).toLocaleString('en-US')} New England Wushu Level Up points currently selected
+                  </strong>
+                  <p>{dayCampPointsBreakdown} {dayCampPointsUseCopy}</p>
+                </div>
+                <a
+                  className="button"
+                  href={buildPaymentPageLinkForRegistration(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
+                >
+                  Open Payment Options
+                </a>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => openSummaryOverlay(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
+                >
                   Open Summary PDF
                 </button>
-                <button type="button" className="button secondary" onClick={() => emailSummaryToSelf(registration)}>
-                  Email Summary to Myself
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={summaryEmailSending || summaryEmailLocked}
+                  onClick={() => emailSummaryToSelf(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
+                >
+                  {summaryEmailSending
+                    ? 'Sending Summary...'
+                    : summaryEmailLocked
+                      ? 'Summary Email Sent'
+                      : 'Email Summary to Myself'}
                 </button>
               </div>
             </div>
           ) : null}
 
           <div className="actions">
-            {step > 1 ? (
+            {registrationIsSubmitted && step === registrationSteps.length ? (
+              <>
+                <button type="button" className="button secondary" onClick={jumpToCampTop}>
+                  Go to Summer Camp Page
+                </button>
+                <button type="button" className="button secondary" onClick={clearRegistrationForm}>
+                  Start New Registration
+                </button>
+              </>
+            ) : step > 1 ? (
               <button type="button" className="button secondary" onClick={previousStep}>
                 Back
               </button>
             ) : (
               <span />
             )}
-
-            {step < registrationSteps.length ? (
+            {!registrationIsSubmitted || step !== registrationSteps.length ? (
+              step < registrationSteps.length ? (
               <button type="button" className="button" onClick={nextStep}>
                 Continue
               </button>
-            ) : (
-              <button className="button" type="submit" disabled={submitting}>
-                {submitting ? 'Submitting...' : 'Submit registration'}
-              </button>
-            )}
+              ) : (
+              <div className="submitActionGroup">
+                {discountActive && !registrationDiscountClaimed ? (
+                  <div className="submitDiscountNudge">
+                    <span>Don't forget to claim discount before submitting.</span>
+                    <button
+                      type="button"
+                      className="button secondary submitDiscountClaimBtn"
+                      onClick={() => setRegistrationDiscountClaimed(true)}
+                    >
+                      Claim {currency(claimableDiscountTotal)}
+                    </button>
+                  </div>
+                ) : null}
+                <button className="button" type="submit" disabled={submitting}>
+                  {submitting ? 'Submitting...' : 'Submit registration'}
+                </button>
+              </div>
+              )
+            ) : null}
           </div>
+          <p className="reservationHoldNotice reservationHoldNoticeInline">
+            Payment not received within 72 hours will cancel this reservation.
+          </p>
           </article>
         </form>
 
         {message ? <p className="message">{message}</p> : null}
-        {submittedRegistrationSnapshot ? (
-          <div className="summaryActionRow">
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => openSummaryOverlay(submittedRegistrationSnapshot)}
-            >
-              Open Submitted Summary PDF
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => emailSummaryToSelf(submittedRegistrationSnapshot)}
-            >
-              Email Submitted Summary
-            </button>
-          </div>
-        ) : null}
       </section>
+      ) : null}
 
+      {showRegistrationSections ? (
       <section className="card section" id="contact-us">
         <h2>Contact Us</h2>
         <p className="subhead">
@@ -4749,13 +7087,79 @@ export default function HomePage() {
           </aside>
         </div>
       </section>
+      ) : null}
 
+      {showRegistrationSections ? (
       <section className="card section" id="overnight-registration">
         <h2>Overnight Camp Registration</h2>
         <p className="subhead">
-          Overnight Camp offers both Full Week and Full Day options. Use this table for current pricing, then request
-          your preferred option below.
+          Overnight Camp offers a weekly rate of $1180, or $980 through May 20. The second week receives an additional $100 off. Tuition covers 7 days of meals, 7 days of academy training, and 7 days of lodging. Outings and the Friday family & friends BBQ are billed separately.
         </p>
+        <div className="campTypeFitBox">
+          <strong>Enrollment Summary</strong>
+          <p>
+            Requested format:{' '}
+            <strong>{overnightRequestOption === 'fullDay' ? 'Overnight Full Day' : 'Overnight Full Week'}</strong>
+          </p>
+          <p>
+            Requested weeks: <strong>{overnightRequestedWeeks}</strong> · Available overnight weeks:{' '}
+            <strong>{overnightWeeks.length}</strong>
+          </p>
+          {overnightSelectedWeeks.length > 0 ? (
+            <p>
+              Selected weeks:{' '}
+              <strong>{overnightSelectedWeeks.map((week) => formatWeekLabel(week)).join(' · ')}</strong>
+            </p>
+          ) : null}
+          {overnightWindowLabel ? (
+            <p>
+              Camp window: <strong>{overnightWindowLabel}</strong>
+            </p>
+          ) : null}
+          <p>
+            Current pricing: Full Week <strong>{currency(overnightFullWeekCurrentPrice)}</strong> · Full Day{' '}
+            <strong>{currency(overnightFullDayCurrentPrice)}</strong>
+          </p>
+          <p>
+            Meals and lodging are included. Sunday drop-off starts at 1:00 PM and Saturday pickup is at 4:00 PM at the camp house
+            (address TBA). Outings and external activity costs are charged separately.
+          </p>
+          <p>
+            Capacity: <strong>12 campers max per overnight week.</strong>
+          </p>
+        </div>
+        <div className="campTypeFitBox">
+          <strong>Overnight Lodging Highlights</strong>
+          <ul className="campTypeHighlightList" style={{ marginTop: '0.5rem' }}>
+            <li>2 full bathrooms and gender-divided lodging setup.</li>
+            <li>Air hockey, ping pong, VR, golf simulator, and double-hoop basketball arcade game.</li>
+            <li>Ample indoor space for supervised evening activities.</li>
+            <li>Huge yard with fenced enclosure for safer outdoor play.</li>
+          </ul>
+        </div>
+        {discountActive ? (
+          <p className="campTypeDiscountNote">
+            Overnight early offer: <strong>$200 off week 1, plus an extra $100 off week 2</strong> through {discountEndDateSpokenLabel.en}.
+          </p>
+        ) : null}
+        <div className="scheduleList overnightScheduleList">
+          {overnightSchedule.map((item) => (
+            <article key={`overnight-${item.day}`} className="scheduleItem">
+              <strong><span className="scheduleDayTag">{item.day}</span></strong>
+              <div className="scheduleThemeGrid">
+                <div className="scheduleThemeBlock">
+                  <p className="scheduleThemeLabel">AM Theme</p>
+                  <p className="scheduleThemeTitle">{item.amTheme}</p>
+                </div>
+                <div className="scheduleThemeBlock">
+                  <p className="scheduleThemeLabel">PM Theme</p>
+                  <p className="scheduleThemeTitle">{item.pmTheme}</p>
+                </div>
+              </div>
+              <p>{item.note}</p>
+            </article>
+          ))}
+        </div>
         <div className="tuitionTableWrap">
           <table className="priceTable">
             <thead>
@@ -4796,16 +7200,148 @@ export default function HomePage() {
             Overnight Full Day
           </button>
         </div>
-        <button
-          type="button"
-          className="button secondary"
-          onClick={() => setMessage(`Requested overnight info for ${overnightRequestOption === 'fullDay' ? 'Overnight Full Day' : 'Overnight Full Week'}.`)}
-        >
-          Request Overnight Info
-        </button>
-      </section>
+        <div className="overnightWeeksRow">
+          <strong>Select one or more overnight weeks</strong>
+          <div className="overnightWeekCheckboxes">
+            {overnightWeeks.length === 0 ? (
+              <p className="subhead">No overnight weeks available yet in admin.</p>
+            ) : (
+              overnightWeeks.map((week) => (
+                <label key={`overnight-week-select-${week.id}`} className="overnightWeekCheckbox">
+                  <input
+                    type="checkbox"
+                    checked={overnightSelectedWeekIds.includes(week.id)}
+                    onChange={() => toggleOvernightWeekSelection(week.id)}
+                  />
+                  <span>{formatWeekLabel(week)}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="grid" style={{ marginTop: '0.8rem' }}>
+          <label>
+            <span className="requiredFieldLabel">
+              Parent/Guardian name {!overnightParentName.trim() ? <span className="requiredDot" /> : null}
+            </span>
+            <input
+              value={overnightParentName}
+              onChange={(event) => setOvernightParentName(event.target.value)}
+              placeholder="Parent/guardian full name"
+              required
+            />
+          </label>
+          <label>
+            <span className="requiredFieldLabel">
+              Contact email {!/\S+@\S+\.\S+/.test(overnightContactEmail || '') ? <span className="requiredDot" /> : null}
+            </span>
+            <input
+              type="email"
+              value={overnightContactEmail}
+              onChange={(event) => setOvernightContactEmail(event.target.value)}
+              placeholder="parent@email.com"
+              required
+            />
+          </label>
+          <label>
+            <span className="requiredFieldLabel">
+              Contact phone {overnightContactPhone.trim().length < 7 ? <span className="requiredDot" /> : null}
+            </span>
+            <input
+              value={overnightContactPhone}
+              onChange={(event) => setOvernightContactPhone(event.target.value)}
+              placeholder="(555) 555-5555"
+              required
+            />
+          </label>
+          <label>
+            <span className="requiredFieldLabel">
+              How will you pay? {!overnightPaymentMethod.trim() ? <span className="requiredDot" /> : null}
+            </span>
+            <select
+              value={overnightPaymentMethod}
+              onChange={(event) => setOvernightPaymentMethod(event.target.value)}
+              required
+            >
+              <option value="">Select payment method</option>
+              {PAYMENT_METHOD_OPTIONS.map((option) => (
+                <option key={`overnight-pay-method-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-      {summaryOverlayOpen ? (
+        {overnightEnrollmentStep === 1 ? (
+          <>
+          <div className="actions">
+            <span />
+            <button
+              type="button"
+              className="button"
+              onClick={nextOvernightEnrollmentStep}
+            >
+              Next: Activity Survey
+            </button>
+          </div>
+          <p className="reservationHoldNotice reservationHoldNoticeInline">
+            Payment not received within 72 hours will cancel this reservation.
+          </p>
+          </>
+        ) : null}
+
+        {overnightEnrollmentStep === 2 ? (
+          <article className="campTypeShowcaseCard" style={{ marginTop: '0.8rem' }}>
+            <div className="campTypeContentPanel">
+              <h3>Step 2: Activity Interest Survey (Overnight)</h3>
+              <p className="subhead">
+                Pick activities your camper enjoys. Choose as many as you want.
+              </p>
+              <div className="overnightActivityGrid">
+                {overnightActivityOptions.map((option) => (
+                  <button
+                    key={`overnight-activity-${option}`}
+                    type="button"
+                    className={`chipButton ${overnightActivitySelections.includes(option) ? 'selected' : ''}`}
+                    onClick={() => toggleOvernightActivity(option)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+              <label style={{ marginTop: '0.75rem' }}>
+                Other activities or requests
+                <textarea
+                  rows="4"
+                  value={overnightActivityCustom}
+                  onChange={(event) => setOvernightActivityCustom(event.target.value)}
+                  placeholder="Tell us any additional overnight interests, routines, or requests..."
+                />
+              </label>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setOvernightEnrollmentStep(1)}
+                >
+                  Back
+                </button>
+                <button type="button" className="button" onClick={submitOvernightEnrollmentRequest} disabled={overnightSubmitting}>
+                  {overnightSubmitting ? 'Submitting...' : 'Submit Overnight Enrollment Request'}
+                </button>
+              </div>
+              <p className="reservationHoldNotice reservationHoldNoticeInline">
+                Payment not received within 72 hours will cancel this reservation.
+              </p>
+            </div>
+          </article>
+        ) : null}
+        {overnightMessage ? <p className="message">{overnightMessage}</p> : null}
+      </section>
+      ) : null}
+
+      {showRegistrationSections && summaryOverlayOpen ? (
         <div className="summaryOverlayBackdrop" role="dialog" aria-modal="true" aria-label="Registration summary PDF view">
           <div className="summaryOverlayPanel">
             <div className="summaryOverlayBar">
@@ -4819,26 +7355,140 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
-            <iframe ref={summaryIframeRef} title="Registration summary preview" srcDoc={summaryOverlayHtml} />
+            <iframe ref={summaryIframeRef} title="Registration summary preview" src={summaryOverlayHtml} />
           </div>
         </div>
       ) : null}
 
-      <nav className="mobileSectionNav" aria-label="Section navigation">
-        <a href="#camp-info">Info</a>
-        <a href="#overview">Overview</a>
-        <a href="#weekly-structure">Week</a>
-        <a href="#level-up">App</a>
-        <a href="#register">Register</a>
-        <a href="#contact-us">Contact</a>
-      </nav>
+      {showRegistrationSections && locationAlbumOpen && activeLocationAlbumPhoto ? (
+        <div
+          className="locationAlbumOverlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={locationAlbumTitle}
+          onClick={() => setLocationAlbumOpen(false)}
+        >
+          <div className="locationAlbumPanel" onClick={(event) => event.stopPropagation()}>
+            <div className="locationAlbumTop">
+              <div>
+                <strong>{locationAlbumTitle}</strong>
+                <p>{locationAlbumIndex + 1} of {locationFacilityPhotos.length}</p>
+              </div>
+              <button type="button" className="button secondary" onClick={() => setLocationAlbumOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="locationAlbumStage">
+              <button
+                type="button"
+                className="locationAlbumNav"
+                onClick={() =>
+                  setLocationAlbumIndex((current) =>
+                    current === 0 ? locationFacilityPhotos.length - 1 : current - 1
+                  )
+                }
+                aria-label="Previous facility photo"
+              >
+                ‹
+              </button>
+              <img
+                src={activeLocationAlbumPhoto}
+                alt={`${selectedLocationLabel} facility photo ${locationAlbumIndex + 1}`}
+                loading="lazy"
+                decoding="async"
+              />
+              <button
+                type="button"
+                className="locationAlbumNav"
+                onClick={() =>
+                  setLocationAlbumIndex((current) =>
+                    current === locationFacilityPhotos.length - 1 ? 0 : current + 1
+                  )
+                }
+                aria-label="Next facility photo"
+              >
+                ›
+              </button>
+            </div>
+            <div className="locationAlbumThumbs">
+              {locationFacilityPhotos.map((url, index) => (
+                <button
+                  key={`location-album-thumb-${registration.location}-${index}`}
+                  type="button"
+                  className={`locationAlbumThumb ${index === locationAlbumIndex ? 'active' : ''}`}
+                  onClick={() => setLocationAlbumIndex(index)}
+                >
+                  <img src={url} alt={`${selectedLocationLabel} facility thumbnail ${index + 1}`} loading="lazy" decoding="async" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
-      <div className="learnAssistDock" aria-label="Camp fit assistant shortcut">
-        <span>{text('Not sure yet?', '还在犹豫？')}</span>
-        <button type="button" className="learnAssistLink" onClick={chooseLearnPath}>
-          {text('Use Camp Fit Assistant to find your best-fit program', '使用营地匹配助手找到最适合的课程')}
+      {showLandingOnlySections ? (
+      <nav className="mobileSectionNav" aria-label="Section navigation">
+        <a href="#camp-info">{text('Top', '顶部')}</a>
+        <a href="#why-camp">{text('Highlights', '亮点')}</a>
+        <a href="#student-stories">{text('Stories', '口碑')}</a>
+        <a href="#weekly-structure">{text('Sample Week', '示例周安排')}</a>
+        <button type="button" onClick={jumpToRegistration}>
+          {text('Claim Offer & Register', '领取优惠并报名')}
         </button>
-      </div>
+      </nav>
+      ) : null}
+
+      {!isRegistrationRoute ? (
+      <>
+        <div className="learnAssistDock" aria-label="Camp fit assistant shortcut">
+          <div className="learnAssistHead">
+            <span>{text('Not sure yet?', '还在犹豫？')}</span>
+            {!isMobileViewport ? (
+              <button
+                type="button"
+                className="assistCollapseBtn"
+                onClick={() => {
+                  if (desktopAssistantVisible) {
+                    setAssistantCollapsed(true)
+                  } else if (currentMode === 'learn' && assistantCollapsed) {
+                    setAssistantCollapsed(false)
+                  } else {
+                    chooseLearnPath()
+                  }
+                }}
+                aria-label={
+                  desktopAssistantVisible
+                    ? text('Hide assistant', '隐藏助手')
+                    : text('Show assistant', '显示助手')
+                }
+                title={
+                  desktopAssistantVisible
+                    ? text('Hide assistant', '隐藏助手')
+                    : text('Show assistant', '显示助手')
+                }
+              >
+                {desktopAssistantVisible
+                  ? text('Hide', '隐藏')
+                  : text('Show Assistant', '显示助手')}
+              </button>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="learnAssistLink"
+            onClick={() => {
+              if (currentMode === 'learn' && assistantCollapsed && !isMobileViewport) {
+                setAssistantCollapsed(false)
+                return
+              }
+              chooseLearnPath()
+            }}
+          >
+            {text('Use Camp Fit Assistant to find your best-fit program', '使用营地匹配助手找到最适合的课程')}
+          </button>
+        </div>
+      </>
+      ) : null}
       </>
       ) : null}
       {discountCountdown && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && isMobileViewport && isDiscountCollapsed ? (
@@ -4852,18 +7502,13 @@ export default function HomePage() {
         </button>
       ) : null}
       {discountCountdown && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && (!isMobileViewport || !isDiscountCollapsed) ? (
-        <div className="discountCountdownDock" aria-label="Discount countdown">
+        <div
+          className={`discountCountdownDock ${isMobileViewport ? 'mobileStrip' : ''} ${
+            showRegistrationSections && isMobileViewport ? 'registrationOffset' : ''
+          }`}
+          aria-label="Discount countdown"
+        >
           <div className="discountCountdownMeta single">
-            {isMobileViewport ? (
-              <button
-                type="button"
-                className="discountHideBtn"
-                aria-label={text('Hide discount', '收起优惠')}
-                onClick={() => setIsDiscountCollapsed(true)}
-              >
-                {text('Hide', '收起')}
-              </button>
-            ) : null}
             <p className="discountAmountHero">
               {discountAmountLabel}
               <span>{text('per week', '每周')}</span>
@@ -4871,34 +7516,66 @@ export default function HomePage() {
             <div className="discountCountdownBoxes" aria-label="Countdown timer">
               <div className="discountTimeBox">
                 <span className="discountTimeValue">{discountCountdown.days}</span>
-                <span className="discountTimeLabel">{text('Days', '天')}</span>
+                <span className="discountTimeLabel">{isMobileViewport ? 'D' : text('Days', '天')}</span>
               </div>
               <div className="discountTimeBox">
                 <span className="discountTimeValue">{String(discountCountdown.hours).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{text('Hours', '时')}</span>
+                <span className="discountTimeLabel">{isMobileViewport ? 'H' : text('Hours', '时')}</span>
               </div>
               <div className="discountTimeBox">
                 <span className="discountTimeValue">{String(discountCountdown.minutes).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{text('Minutes', '分')}</span>
+                <span className="discountTimeLabel">{isMobileViewport ? 'M' : text('Minutes', '分')}</span>
               </div>
               <div className="discountTimeBox">
                 <span className="discountTimeValue">{String(discountCountdown.seconds).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{text('Seconds', '秒')}</span>
+                <span className="discountTimeLabel">{isMobileViewport ? 'S' : text('Seconds', '秒')}</span>
               </div>
             </div>
-            <span>{text('Ends on', '截止日期')} {discountCountdown.endLabel}</span>
-            {adminConfig.tuition.discountCode ? (
-              <p className="discountCodeLine">
-                {text('Code', '优惠码')}: <code>{adminConfig.tuition.discountCode}</code>
-              </p>
+            {!isMobileViewport ? (
+              <>
+                <span>{text('Ends on', '截止日期')} {discountCountdown.endLabel}</span>
+                {adminConfig.tuition.discountCode ? (
+                  <p className="discountCodeLine">
+                    {text('Code', '优惠码')}: <code>{adminConfig.tuition.discountCode}</code>
+                  </p>
+                ) : null}
+                <button type="button" className="button discountClaimBtn" onClick={jumpToRegistration}>
+                  {text('Claim Discount', '立即报名')}
+                </button>
+              </>
             ) : null}
-            <button type="button" className="button discountClaimBtn" onClick={jumpToRegistration}>
-              {text('Claim Discount', '立即报名')}
-            </button>
           </div>
         </div>
       ) : null}
-      {!isMobileLearnOverlayOpen || keepFloatingUiVisible ? (
+      {showRegistrationSections && isMobileViewport ? (
+        <nav className="mobileRegistrationStepBar" aria-label="Registration steps">
+          <div className="mobileRegistrationFlowRibbon">Registering for Day Camp</div>
+          {registrationSteps.map((item) => {
+            const isComplete = isRegistrationStepComplete(item.id)
+            const isMissing = !isComplete
+            const isActive = step === item.id
+            return (
+              <button
+                key={`mobile-reg-step-${item.id}`}
+                type="button"
+                className={`mobileRegistrationStepBtn ${isActive ? 'active' : ''} ${
+                  item.id < step && isComplete ? 'done' : ''
+                } ${item.id < step && isMissing ? 'incomplete' : ''}`}
+                onClick={() => {
+                  setStepDirection(item.id > step ? 'next' : 'prev')
+                  setStep(item.id)
+                }}
+                aria-current={isActive ? 'step' : undefined}
+              >
+                <span className="mobileRegistrationStepNumber">{item.id}</span>
+                <span className="mobileRegistrationStepLabel">{item.title}</span>
+                {isMissing ? <span className="mobileRegistrationStepDot" aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+        </nav>
+      ) : null}
+      {(!isMobileLearnOverlayOpen || keepFloatingUiVisible) ? (
       <div className="langToggleDock" aria-label="Language toggle">
         <button
           type="button"
