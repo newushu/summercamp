@@ -75,6 +75,20 @@ function getLocationLabel(value) {
   return option?.label || 'No location selected'
 }
 
+function formatLocationListLabel(labels = []) {
+  const filtered = labels.filter(Boolean)
+  if (filtered.length === 0) {
+    return 'Locations announced soon'
+  }
+  if (filtered.length === 1) {
+    return `${filtered[0]} Location`
+  }
+  if (filtered.length === 2) {
+    return `${filtered[0]} & ${filtered[1]} Locations`
+  }
+  return `${filtered.slice(0, -1).join(', ')} & ${filtered[filtered.length - 1]} Locations`
+}
+
 function getGeneralProgramForLocation(programConfig, locationValue) {
   const loc = String(locationValue || '').trim()
   if (loc === 'acton') {
@@ -215,8 +229,8 @@ const perks = [
   {
     title: 'Lunch Convenience, No Packing Needed',
     zhTitle: '午餐省心，不用每天备餐',
-    text: "Choose lunch by day so you don't need to pack lunch every camp day.",
-    zhText: '按天选择午餐，无需每天为营地准备便当。',
+    text: "Choose lunch by day so you don't need to pack lunch every camp day. Options vary by week and may include items like burgers, sushi, or hot dogs, typically with a juice box or fruit.",
+    zhText: '可按天选择午餐，无需每天准备便当。每周菜单会有变化，常见选项包括汉堡、寿司或热狗，通常会搭配果汁盒或水果。',
   },
   {
     title: 'Small Groups, More Coach Attention',
@@ -1332,6 +1346,29 @@ export default function HomePage() {
     }
     return `${currency(dayCampPricing.halfDayLow)} - ${currency(dayCampPricing.halfDayHigh)}`
   }, [dayCampPricing.halfDayHigh, dayCampPricing.halfDayLow])
+  const enabledLocationOptions = useMemo(
+    () => LOCATION_OPTIONS.filter((option) => adminConfig.locations?.[option.value]?.enabled !== false),
+    [adminConfig.locations]
+  )
+  const registrationLocationOptions = useMemo(() => {
+    if (!registration.location.trim()) {
+      return enabledLocationOptions
+    }
+    const selectedOption = LOCATION_OPTIONS.find((option) => option.value === registration.location)
+    if (!selectedOption || enabledLocationOptions.some((option) => option.value === selectedOption.value)) {
+      return enabledLocationOptions
+    }
+    return [selectedOption, ...enabledLocationOptions]
+  }, [enabledLocationOptions, registration.location])
+  const enabledLocationLabels = useMemo(
+    () => enabledLocationOptions.map((option) => option.label),
+    [enabledLocationOptions]
+  )
+  const heroLocationLabel = useMemo(
+    () => formatLocationListLabel(enabledLocationLabels),
+    [enabledLocationLabels]
+  )
+  const fullWeekRegularPrice = Number(adminConfig.tuition.regular.fullWeek || 0)
   useEffect(() => {
     let active = true
 
@@ -5128,7 +5165,7 @@ export default function HomePage() {
         <div className="heroIntroRow">
           <div className="heroIntroText">
             <p className="eyebrow">New England Wushu Summer Camp 2026</p>
-            <p className="heroLocationLine">{text('Burlington & Acton Locations', 'Burlington 与 Acton 两大校区')}</p>
+            <p className="heroLocationLine">{text(heroLocationLabel, heroLocationLabel)}</p>
             <h1>{text('Structured martial arts camp for confident, active kids.', '为孩子打造有结构、有成长感的武术夏令营。')}</h1>
             <p className="subhead">
               {text(
@@ -5162,7 +5199,7 @@ export default function HomePage() {
         <div className="heroAchievementGrid" aria-label="Camp achievements">
           <article className="heroAchievementCard">
             <p className="heroAchievementLabel">{text('Locations', '校区')}</p>
-            <h3>{text('Burlington & Acton', 'Burlington 与 Acton')}</h3>
+            <h3>{text(enabledLocationLabels.join(' · ') || 'Locations announced soon', enabledLocationLabels.join(' · ') || 'Locations announced soon')}</h3>
             <p>
               {text(
                 'Choose the location that works best for your commute and your camper’s weekly rhythm.',
@@ -5182,11 +5219,22 @@ export default function HomePage() {
           </article>
           <article className="heroAchievementCard">
             <p className="heroAchievementLabel">{text('Pricing Snapshot', '价格概览')}</p>
-            <h3>{text(`From ${currency(dayCampPricing.fullWeek)}/week`, `整周 ${currency(dayCampPricing.fullWeek)} 起`)}</h3>
+            <h3>{text(
+              discountActive
+                ? `Discounted price from ${currency(dayCampPricing.fullWeek)}/week`
+                : `Regular price from ${currency(dayCampPricing.fullWeek)}/week`,
+              discountActive
+                ? `优惠价整周 ${currency(dayCampPricing.fullWeek)} 起`
+                : `常规价整周 ${currency(dayCampPricing.fullWeek)} 起`
+            )}</h3>
             <p>
               {text(
-                `Full day ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
-                `全天 ${currency(dayCampPricing.fullDay)}/天。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
+                discountActive
+                  ? `Discounted full day ${currency(dayCampPricing.fullDay)}/day through ${discountEndDateSpokenLabel.en}. Regular full week is ${currency(fullWeekRegularPrice)}/week.`
+                  : `Regular full day ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
+                discountActive
+                  ? `优惠全天 ${currency(dayCampPricing.fullDay)}/天，有效至 ${discountEndDateSpokenLabel.zh}。常规整周价格为 ${currency(fullWeekRegularPrice)}/周。`
+                  : `常规全天 ${currency(dayCampPricing.fullDay)}/天。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
               )}
             </p>
           </article>
@@ -5337,30 +5385,53 @@ export default function HomePage() {
         <h2>{text('Pricing', '价格')}</h2>
         <p className="subhead">
           {text(
-            'Clear pricing for the main day-camp options. Families can add lunch by day and claim the current early offer before it ends.',
-            '这是日营主要价格的一览。家庭可按天加购午餐，并在优惠截止前领取当前早鸟价格。'
+            'Clear pricing for the main day-camp options. Families can add lunch by day, and menus vary by week with choices that may include burgers, sushi, or hot dogs plus a juice box or fruit.',
+            '这是日营主要价格的一览。家庭可按天加购午餐；每周菜单会有变化，可能包括汉堡、寿司或热狗，并搭配果汁盒或水果。'
           )}
         </p>
         <div className="pricingGrid">
           <article className="pricingCard featured">
-            <p className="pricingLabel">{text('Full Week', '整周')}</p>
+            <p className="pricingLabel">
+              {text(discountActive ? 'Discounted Full Week' : 'Regular Full Week', discountActive ? '整周优惠价' : '整周常规价')}
+            </p>
             <strong>{currency(dayCampPricing.fullWeek)}</strong>
-            <span>{text('Best value for full camp immersion', '适合完整沉浸式营地体验')}</span>
+            <span>
+              {discountActive
+                ? text(`Regular price ${currency(fullWeekRegularPrice)} until ${discountEndDateSpokenLabel.en}`, `常规价格 ${currency(fullWeekRegularPrice)}，优惠截止至 ${discountEndDateSpokenLabel.zh}`)
+                : text('Best value for full camp immersion', '适合完整沉浸式营地体验')}
+            </span>
           </article>
           <article className="pricingCard">
-            <p className="pricingLabel">{text('Full Day', '全天')}</p>
+            <p className="pricingLabel">
+              {text(discountActive ? 'Discounted Full Day' : 'Regular Full Day', discountActive ? '全天优惠价' : '全天常规价')}
+            </p>
             <strong>{currency(dayCampPricing.fullDay)}</strong>
-            <span>{text('9:00 AM - 4:00 PM', '上午9点至下午4点')}</span>
+            <span>
+              {discountActive
+                ? text(`Discounted price until ${discountEndDateSpokenLabel.en}`, `优惠价截止至 ${discountEndDateSpokenLabel.zh}`)
+                : text('9:00 AM - 4:00 PM', '上午9点至下午4点')}
+            </span>
           </article>
           <article className="pricingCard">
-            <p className="pricingLabel">{text('Half Day', '半天')}</p>
+            <p className="pricingLabel">
+              {text(discountActive ? 'Discounted Half Day' : 'Regular Half Day', discountActive ? '半天优惠价' : '半天常规价')}
+            </p>
             <strong>{halfDayPriceLabel || text('Contact Us', '请联系咨询')}</strong>
-            <span>{text('AM or PM options', '上午或下午均可选')}</span>
+            <span>
+              {discountActive
+                ? text(`Discounted price until ${discountEndDateSpokenLabel.en}`, `优惠价截止至 ${discountEndDateSpokenLabel.zh}`)
+                : text('AM or PM options', '上午或下午均可选')}
+            </span>
           </article>
           <article className="pricingCard accent">
             <p className="pricingLabel">{text('Lunch Add-On', '午餐加购')}</p>
             <strong>{currency(adminConfig.tuition.lunchPrice)}</strong>
-            <span>{text('Available by day', '可按天选择')}</span>
+            <span>
+              {text(
+                'Available by day. Often includes a main choice plus a juice box or fruit.',
+                '可按天选择。通常包含主食选择，并搭配果汁盒或水果。'
+              )}
+            </span>
           </article>
         </div>
         {discountActive ? (
@@ -5565,12 +5636,16 @@ export default function HomePage() {
         <h2>{text('Camp Locations', '营地地点')}</h2>
         <p className="subhead">
           {text(
-            'Families can choose Burlington, Acton, or Wellesley during registration. We serve nearby families across these surrounding towns.',
-            '家庭可在报名时选择 Burlington、Acton 或 Wellesley。我们服务周边多个相邻城镇的家庭。'
+            enabledLocationLabels.length > 0
+              ? `Families can choose ${enabledLocationLabels.join(', ')} during registration. We serve nearby families across these surrounding towns.`
+              : 'Locations are being finalized and will be announced soon.',
+            enabledLocationLabels.length > 0
+              ? `家庭可在报名时选择 ${enabledLocationLabels.join('、')}。我们服务周边多个相邻城镇的家庭。`
+              : '营地地点正在最终确认中，稍后公布。'
           )}
         </p>
         <div className="locationGrid">
-          {LOCATION_OPTIONS.map((location) => {
+          {enabledLocationOptions.map((location) => {
             const addr = getLocationAddress(adminConfig.locations, location.value)
             return (
               <article key={location.value} className="locationCard">
@@ -5813,7 +5888,7 @@ export default function HomePage() {
                   <strong>{selectedLocationLabel}</strong>
                   <span className="registrationLocationHintText">{text('Tap to change location', '点击切换地点')}</span>
                   <div className="registrationLocationInlineToggle" role="group" aria-label={text('Choose registration location', '选择报名地点')}>
-                    {LOCATION_OPTIONS.map((option) => {
+                    {registrationLocationOptions.map((option) => {
                       const active = registration.location === option.value
                       return (
                         <button
@@ -6005,7 +6080,7 @@ export default function HomePage() {
                   required
                 >
                   <option value="">{text('Select location', '选择地点')}</option>
-                  {LOCATION_OPTIONS.map((option) => (
+                  {registrationLocationOptions.map((option) => (
                     <option key={`location-${option.value}`} value={option.value}>
                       {option.label}
                     </option>

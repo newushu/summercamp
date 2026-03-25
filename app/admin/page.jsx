@@ -5813,6 +5813,14 @@ export default function AdminPage() {
               return (
                 <div key={loc.key} className="locationAddressCard">
                   <p className="locationAddressCardLabel">{loc.label}</p>
+                  <label className="locationAddressToggle">
+                    <input
+                      type="checkbox"
+                      checked={addr.enabled !== false}
+                      onChange={(e) => updateLocationAddress(loc.key, 'enabled', e.target.checked)}
+                    />
+                    <span>{addr.enabled !== false ? 'Show on public site' : 'Hidden from public site'}</span>
+                  </label>
                   <label>
                     Street address
                     <input
