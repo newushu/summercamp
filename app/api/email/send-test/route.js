@@ -1,8 +1,10 @@
 import { sendWithSes } from '../../../../lib/emailProvider'
 import {
   buildLeadJourneyMessage,
+  PAYMENT_METHODS_TEXT,
   buildReservationJourneyMessage,
 } from '../../../../lib/emailJourneyRenderer'
+import { buildPaymentSummaryPdfBase64 } from '../../../../lib/paymentSummaryPdf'
 import { supabaseServer, supabaseServerEnabled } from '../../../../lib/supabaseServer'
 
 function isValidEmail(value) {
@@ -28,52 +30,6 @@ async function getEmailBranding() {
   return String(data?.welcome_logo_url || envLogoUrl || '').trim()
 }
 
-function escapePdfText(input) {
-  return String(input || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-}
-
-function buildSimplePdfBase64({ title, lines }) {
-  const normalizedLines = [String(title || 'Payment Summary'), ...(Array.isArray(lines) ? lines : [])]
-    .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .slice(0, 42)
-
-  const streamLines = [
-    'BT',
-    '/F1 12 Tf',
-    '50 760 Td',
-    '15 TL',
-    ...normalizedLines.map((line) => `(${escapePdfText(line)}) Tj T*`),
-    'ET',
-  ]
-  const stream = streamLines.join('\n')
-  const objects = [
-    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
-    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
-    '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj',
-    `4 0 obj << /Length ${Buffer.byteLength(stream, 'utf8')} >> stream\n${stream}\nendstream endobj`,
-    '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
-  ]
-
-  let pdf = '%PDF-1.4\n'
-  const offsets = [0]
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf, 'utf8'))
-    pdf += `${object}\n`
-  }
-  const xrefStart = Buffer.byteLength(pdf, 'utf8')
-  pdf += `xref\n0 ${objects.length + 1}\n`
-  pdf += '0000000000 65535 f \n'
-  for (let index = 1; index <= objects.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`
-  }
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`
-  return Buffer.from(pdf, 'utf8').toString('base64')
-}
-
 export async function POST(request) {
   try {
     const body = await request.json()
@@ -81,6 +37,7 @@ export async function POST(request) {
     const stepNumber = Number(body?.stepNumber || 0)
     const template = body?.template || {}
     const flowKey = String(body?.flowKey || 'lead').trim().toLowerCase()
+    const previewRegistrationType = String(body?.previewRegistrationType || '').trim().toLowerCase()
     const subject = String(template?.subject || '').trim()
     const content = String(template?.body || '').trim()
 
@@ -99,10 +56,38 @@ export async function POST(request) {
     let bodyText = ''
     let html = ''
 
-    if (flowKey === 'reservation') {
+    if (flowKey === 'reservation' || flowKey === 'overnight') {
+      const isOvernightPreview = flowKey === 'overnight' || previewRegistrationType === 'overnight-only'
       const renderedMessage = buildReservationJourneyMessage({
         stepNumber,
         logoUrl,
+        payload: isOvernightPreview
+          ? {
+              registrationType: 'overnight-only',
+              guardianName: 'Calvin Chen',
+              camperNames: ['Ethan Chen'],
+              location: 'Camp House (Address TBA)',
+              paymentMethod: 'Zelle',
+              amountDue: 1860,
+              campWeeks: [
+                { start: '2026-07-12', end: '2026-07-18' },
+                { start: '2026-07-19', end: '2026-07-25' },
+              ],
+              summaryLines: [
+                'Overnight Camp registration',
+                'Parent/Guardian: Calvin Chen',
+                'Contact: calvin@example.com',
+                'Payment method: Zelle',
+                'Overnight student 1: Jul 12 - Jul 18, Jul 19 - Jul 25 | Activities: Sanda fundamentals, Flexibility training, Video review',
+                'Drop-off: Sunday 1:00 PM',
+                'Pickup: Saturday 4:00 PM',
+                'Location: Camp House (Address TBA)',
+                'Week 1: $980.00. Week 2 gets an extra $100.00 off for $880.00.',
+                'Tuition covers lodging and food only. Outing costs are billed separately.',
+                'Grand total: $1,860.00',
+              ],
+            }
+          : undefined,
       })
       bodyText = renderedMessage.bodyText
       html = renderedMessage.html
@@ -116,7 +101,7 @@ export async function POST(request) {
           recommended_plan:
             'General Camp with progression options. If your camper wishes to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
           registration_link: 'https://summer.newushu.com/register',
-          payment_methods: 'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd',
+          payment_methods: PAYMENT_METHODS_TEXT,
           reservation_deadline: 'May 20, 5:00 PM EDT',
           registration_summary:
             'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
@@ -132,22 +117,43 @@ export async function POST(request) {
     }
 
     const attachments =
-      flowKey === 'reservation'
+      flowKey === 'reservation' || flowKey === 'overnight'
         ? [
             {
               filename: 'camp-payment-summary.pdf',
               contentType: 'application/pdf',
-              contentBase64: buildSimplePdfBase64({
+              contentBase64: buildPaymentSummaryPdfBase64({
                 title: 'New England Wushu Payment Summary (Test)',
-                lines: [
-                  `Step ${stepNumber} test email`,
-                  'Amount due: $1,680.00',
-                  '',
-                  'Payment methods:',
-                  'Zelle: wushu688@gmail.com',
-                  'Venmo: @newushu',
-                  'Check (payable to Newushu): 123 Muller Rd',
-                ],
+                campName: 'New England Wushu Summer Camp',
+                guardianName: 'Calvin Chen',
+                recipientEmail: toEmail,
+                submittedLabel: 'Mar 24, 2026, 9:13 PM EDT',
+                reservationDeadlineLabel: 'Mar 27, 2026, 9:13 PM EDT',
+                amountDueLabel:
+                  flowKey === 'overnight' || previewRegistrationType === 'overnight-only' ? '$1,860.00' : '$1,680.00',
+                paymentMethods: PAYMENT_METHODS_TEXT.split('\n'),
+                summaryLines:
+                  flowKey === 'overnight' || previewRegistrationType === 'overnight-only'
+                    ? [
+                        'Overnight Camp registration',
+                        'Parent/Guardian: Calvin Chen',
+                        'Contact: calvin@example.com',
+                        'Payment method: Zelle',
+                        'Overnight student 1: Jul 12 - Jul 18, Jul 19 - Jul 25 | Activities: Sanda fundamentals, Flexibility training, Video review',
+                        'Drop-off: Sunday 1:00 PM',
+                        'Pickup: Saturday 4:00 PM',
+                        'Location: Camp House (Address TBA)',
+                        'Week 1: $980.00. Week 2 gets an extra $100.00 off for $880.00.',
+                        'Grand total: $1,860.00',
+                      ]
+                    : [
+                        'Location: Burlington',
+                        'Parent/Guardian: Calvin Chen',
+                        'Contact: calvin@example.com',
+                        'Payment method: Venmo',
+                        'Ethan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri',
+                        'Grand total: $1,680.00',
+                      ],
               }),
             },
           ]

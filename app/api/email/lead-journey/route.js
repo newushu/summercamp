@@ -10,8 +10,10 @@ import { sendWithSes } from '../../../../lib/emailProvider'
 
 const CAMP_NAME = 'New England Wushu Summer Camp'
 const PAYMENT_METHODS_TEXT = [
-  'Zelle: wushu688@gmail.com',
-  'Venmo: @newushu',
+  'Zelle: wushu688@gmail.com (name: Xiaoyi Chen, head coach)',
+  'Venmo: @newushu (Calvin newushu, head coach at New England Wushu)',
+  'Venmo note: please use Friends & Family to avoid fees. If you choose Goods & Services, add 3.5%.',
+  'Cash: exact change only; hand payment directly to Calvin or Xiaoyi Chen.',
   'Check (payable to Newushu): 123 Muller Rd',
 ].join('\n')
 
@@ -261,6 +263,56 @@ function computeNextSendAt(submittedAtIso, currentStep, scheduleDays) {
   const nextDayOffset = scheduleDays[currentStep]
   const nextAt = new Date(base.getTime() + nextDayOffset * 24 * 60 * 60 * 1000)
   return nextAt.toISOString()
+}
+
+function getDueLeadStep(submittedAtIso, currentStep, scheduleDays, status) {
+  if (String(status || '').toLowerCase() === 'lead_closed') {
+    return null
+  }
+  const submittedAt = new Date(submittedAtIso)
+  if (Number.isNaN(submittedAt.getTime())) {
+    return null
+  }
+  const elapsedDays = (Date.now() - submittedAt.getTime()) / (1000 * 60 * 60 * 24)
+  let dueStep = null
+  for (let index = 0; index < scheduleDays.length; index += 1) {
+    const stepNumber = index + 1
+    if (stepNumber <= Number(currentStep || 0)) {
+      continue
+    }
+    if (elapsedDays >= Number(scheduleDays[index] || 0)) {
+      dueStep = stepNumber
+    }
+  }
+  return dueStep
+}
+
+async function insertLeadAutoSkippedEvents(run, fromStep, sentStep) {
+  const startStep = Math.max(1, Number(fromStep || 0))
+  const endStep = Math.min(5, Number(sentStep || 0))
+  if (endStep <= startStep) {
+    return
+  }
+  const rows = []
+  for (let step = startStep; step < endStep; step += 1) {
+    rows.push({
+      run_id: run.id,
+      profile_id: run.profile_id || null,
+      email: run.email,
+      step_number: step,
+      event_type: 'lead_step_auto_skipped',
+      subject: 'Lead follow-up auto-skipped',
+      body_preview: `Step ${step} was checked off because later overdue step ${endStep} was sent instead.`,
+      event_payload: {
+        journeyType: 'lead_assistant',
+        skippedBecauseLaterStepSent: true,
+        sentStepNumber: endStep,
+      },
+    })
+  }
+  if (rows.length > 0) {
+    await getSupabase().from('email_journey_events').insert(rows)
+  }
 }
 
 async function enqueueLeadJourney(payload) {
@@ -776,9 +828,21 @@ async function processLeadJourneys() {
       }
       const scheduleDays = Array.isArray(payload?.scheduleDays) ? payload.scheduleDays : [0, 2, 4, 6, 8]
       const templates = await getJourneyTemplates()
-      const nextStep = Number(run.current_step || 0) + 1
+      const dueStep = getDueLeadStep(payload?.submittedAt || run.created_at, Number(run.current_step || 0), scheduleDays, run.status)
 
-      if (nextStep > templates.length) {
+      if (!dueStep) {
+        const nextSendAt = computeNextSendAt(payload?.submittedAt || run.created_at, Number(run.current_step || 0), scheduleDays)
+        await getSupabase()
+          .from('email_journey_runs')
+          .update({
+            next_send_at: nextSendAt,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', run.id)
+        continue
+      }
+
+      if (dueStep > templates.length) {
         await getSupabase()
           .from('email_journey_runs')
           .update({
@@ -791,17 +855,18 @@ async function processLeadJourneys() {
         continue
       }
 
+      await insertLeadAutoSkippedEvents(run, Number(run.current_step || 0) + 1, dueStep)
       await sendLeadStepEmail({
         run,
         payload,
         templates,
         scheduleDays,
-        stepNumber: nextStep,
+        stepNumber: dueStep,
       })
       emailed += 1
 
-      const nextSendAt = computeNextSendAt(payload?.submittedAt || run.created_at, nextStep, scheduleDays)
-      const nextStatus = nextStep >= templates.length ? 'lead_closed' : 'lead_active'
+      const nextSendAt = computeNextSendAt(payload?.submittedAt || run.created_at, dueStep, scheduleDays)
+      const nextStatus = dueStep >= templates.length ? 'lead_closed' : 'lead_active'
       if (nextStatus === 'lead_closed') {
         closed += 1
       }
@@ -810,7 +875,7 @@ async function processLeadJourneys() {
         .from('email_journey_runs')
         .update({
           status: nextStatus,
-          current_step: nextStep,
+          current_step: dueStep,
           last_sent_at: new Date().toISOString(),
           next_send_at: nextStatus === 'lead_closed' ? null : nextSendAt,
           updated_at: new Date().toISOString(),

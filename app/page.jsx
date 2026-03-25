@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
-  buildProgramWeekOptions,
   defaultAdminConfig,
   formatDateLabel,
   formatWeekLabel,
@@ -41,8 +40,9 @@ const SURVEY_STEP_DRAFT_KEY = 'new-england-wushu-survey-step-draft-v1'
 const ASSISTANT_COLLAPSED_KEY = 'new-england-wushu-assistant-collapsed-v1'
 const SUPPORT_EMAIL = 'info@newushu.com'
 const PAYMENT_METHOD_OPTIONS = [
-  { value: 'zelle', label: 'Zelle (wushu688@gmail.com)' },
-  { value: 'venmo', label: 'Venmo (@newushu)' },
+  { value: 'zelle', label: 'Zelle (wushu688@gmail.com, Xiaoyi Chen)' },
+  { value: 'venmo', label: 'Venmo (@newushu, Friends & Family preferred)' },
+  { value: 'cash', label: 'Cash (exact change to Calvin or Xiaoyi)' },
   { value: 'check', label: 'Check (mail to 123 Muller Rd, payable to Newushu)' },
   { value: 'other', label: 'Other / will confirm by reply' },
 ]
@@ -229,160 +229,62 @@ const perks = [
   },
 ]
 
-const campTypes = [
+const dayAtCampTimeline = [
   {
-    name: 'General Camp',
-    audience: 'General curriculum, beginner friendly, ages 3+',
-    details:
-      'Perfect first camp experience with movement, balance, coordination, and fun fundamentals.',
-    note: 'Best fit for new students and families exploring Wushu.',
+    time: '9:00 AM',
+    title: 'Warm-up + team games',
+    zhTitle: '热身 + 团队游戏',
+    note: 'Arrival, movement prep, and social energy.',
+    zhNote: '到营、热身准备与团队互动。',
   },
   {
-    name: 'Competition Team Boot Camp',
-    audience: 'For Taolu team and serious competition-track students',
-    details:
-      'A strong pathway to national and international Taolu track training, with focused technical work and routine polish.',
-    note: 'Many of our national and international team members participate in this Boot Camp.',
+    time: '10:00 AM',
+    title: 'Wushu training',
+    zhTitle: '武术训练',
+    note: 'Technique, balance, focus, and level-based coaching.',
+    zhNote: '技术、平衡、专注与分层教学。',
   },
   {
-    name: 'Overnight Camp',
-    audience: 'Immersive training and camp-life experience',
-    details:
-      'Great for building friendships with intensive Wushu training, a fun camp atmosphere, and scheduled outings across all 7 days.',
-    note: 'Limited spots and always a hit.',
-  },
-]
-
-const schedule = [
-  {
-    day: 'Monday',
-    dayZh: '周一',
-    amTheme: 'Socialization + basics',
-    amThemeZh: '社交融入 + 基础训练',
-    pmTheme: 'Introduction to apparatus (ages 7+)',
-    pmThemeZh: '器械入门（7岁以上）',
-    amBlocks: '1) Team welcome games 2) Stance + footwork fundamentals 3) Basic forms practice',
-    amBlocksZh: '1) 团队破冰游戏 2) 马步与步法基础 3) 基础套路练习',
-    lunchBlock: 'Standard lunch block (camp lunch optional).',
-    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
-    pmBlocks: '1) Apparatus safety intro (7+) 2) Balance + control drills 3) Performance practice sets',
-    pmBlocksZh: '1) 器械安全入门（7岁以上）2) 平衡与控制训练 3) 展示练习组',
-    snackBlock: 'Afternoon snack + hydration reset',
-    snackBlockZh: '下午加餐 + 补水调整',
-    dayWhy: 'Monday builds belonging, routine, and confidence early so campers start strong.',
-    dayWhyZh: '周一帮助孩子快速建立归属感、节奏感与自信心，为整周打好开局。',
-    under6Focus:
-      'Ages 3-6 do not train with apparatus. They focus on locomotor patterns, balance, bilateral coordination, and attention control.',
-    under6FocusZh:
-      '3-6岁不进行器械训练，重点发展移动模式、平衡、双侧协调与专注控制。',
+    time: '11:30 AM',
+    title: 'Snack break',
+    zhTitle: '加餐休息',
+    note: 'Reset, hydrate, and recharge.',
+    zhNote: '补充水分，短暂调整。',
   },
   {
-    day: 'Tuesday',
-    dayZh: '周二',
-    amTheme: 'Basic skills + weapons foundations',
-    amThemeZh: '基本功 + 器械基础',
-    pmTheme: 'Sanda skill foundations',
-    pmThemeZh: '散打技术基础',
-    amBlocks: '1) Warm-up mobility 2) Core Wushu technique stations 3) Weapons foundations (eligible groups)',
-    amBlocksZh: '1) 热身与灵活性 2) 武术核心技术分站 3) 器械基础（适龄组）',
-    lunchBlock: 'Standard lunch block (camp lunch optional).',
-    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
-    pmBlocks: '1) Sanda guard + movement 2) Reaction timing drills 3) Supervised partner application',
-    pmBlocksZh: '1) 散打站姿与移动 2) 反应节奏训练 3) 教练监督对练应用',
-    snackBlock: 'Afternoon snack + hydration reset',
-    snackBlockZh: '下午加餐 + 补水调整',
-    dayWhy: 'Tuesday builds technical precision and control while keeping training fun and active.',
-    dayWhyZh: '周二在保持训练趣味和活力的同时，强化技术精度与动作控制。',
-    specialEventTitle: 'Park Power Play',
-    specialEventTitleZh: '公园活力时段',
-    specialEventNote: 'Outdoor play session at the park next door for movement, teamwork, and fresh-air reset.',
-    specialEventNoteZh: '安排隔壁公园户外活动时段，强化体能、协作与户外放松。',
-    specialEventTone: 'tuesday',
-    under6Focus:
-      'Ages 3-6 continue motor-skill development through rhythm, direction changes, spatial awareness, and core stability drills.',
-    under6FocusZh:
-      '3-6岁通过节奏、变向、空间感与核心稳定训练持续提升大运动能力。',
+    time: '12:00 PM',
+    title: 'Lunch',
+    zhTitle: '午餐',
+    note: 'Packed lunch or add-on camp lunch.',
+    zhNote: '可自带午餐，也可选择营地午餐。',
   },
   {
-    day: 'Wednesday',
-    dayZh: '周三',
-    amTheme: 'Self-defense skills',
-    amThemeZh: '自我防护技能',
-    pmTheme: 'Character-building challenge blocks',
-    pmThemeZh: '品格培养训练',
-    amBlocks: '1) Awareness + safety language 2) Boundary-setting practice 3) Confidence-based self-defense drills',
-    amBlocksZh: '1) 安全意识与表达 2) 边界感练习 3) 建立自信的防护训练',
-    lunchBlock: 'Standard lunch block (camp lunch optional).',
-    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
-    pmBlocks: '1) Team challenge stations 2) Discipline + focus circuits 3) Reflection + goal check',
-    pmBlocksZh: '1) 团队任务分站 2) 纪律与专注训练 3) 复盘与目标检查',
-    snackBlock: 'Afternoon snack + hydration reset',
-    snackBlockZh: '下午加餐 + 补水调整',
-    dayWhy: 'Wednesday strengthens character, self-control, and respectful teamwork under pressure.',
-    dayWhyZh: '周三强化品格、自我控制与压力下的合作礼仪。',
-    specialEventTitle: 'Water Balloons',
-    specialEventTitleZh: '水球日',
-    specialEventNote: 'Bring a change of clothes for supervised water balloons and cooling play.',
-    specialEventNoteZh: '请带一套替换衣物，孩子将参加教练看护下的水球活动与清凉游戏。',
-    specialEventTone: 'wednesday',
-    under6Focus:
-      'Ages 3-6 use games-based drills to strengthen proprioception, impulse control, and confidence through successful repetitions.',
-    under6FocusZh:
-      '3-6岁通过游戏化训练提升本体感、冲动控制与成功体验带来的自信。',
+    time: '1:00 PM',
+    title: 'Tumbling + skill work',
+    zhTitle: '翻腾 + 技能训练',
+    note: 'Coordination, body control, and athletic development.',
+    zhNote: '协调性、身体控制与运动能力发展。',
   },
   {
-    day: 'Thursday',
-    dayZh: '周四',
-    amTheme: 'Team-building + socialization',
-    amThemeZh: '团队协作 + 社交发展',
-    pmTheme: 'Integrated skills + BBQ lunch day',
-    pmThemeZh: '综合技能训练 + 周四烧烤午餐',
-    amBlocks: '1) Partner communication games 2) Group coordination tasks 3) Leadership rotations',
-    amBlocksZh: '1) 双人沟通游戏 2) 小组协作任务 3) 轮换领导练习',
-    lunchBlock: 'Thursday BBQ lunch (included in tuition).',
-    lunchBlockZh: '周四烧烤午餐（学费已包含）。',
-    pmBlocks: '1) Wushu + Sanda integration 2) Self-defense review 3) Coach corrections + checkpoint notes',
-    pmBlocksZh: '1) 武术+散打整合 2) 防护复习 3) 教练修正与阶段记录',
-    snackBlock: 'Afternoon snack + hydration reset',
-    snackBlockZh: '下午加餐 + 补水调整',
-    dayWhy: 'Thursday grows social confidence and teamwork while reinforcing real skill retention.',
-    dayWhyZh: '周四在强化技能巩固的同时，提升社交自信与团队协作能力。',
-    specialEventTitle: 'BBQ Thursday',
-    specialEventTitleZh: '周四烧烤日',
-    specialEventNote: 'Camp-provided BBQ lunch day with team games and social activities built into the schedule.',
-    specialEventNoteZh: '营地提供烧烤午餐，并安排团队游戏与社交活动。',
-    specialEventTone: 'thursday',
-    under6Focus:
-      'Ages 3-6 train in short, structured blocks to support motor learning, emotional regulation, and safe social participation.',
-    under6FocusZh:
-      '3-6岁采用短时结构化训练，支持动作学习、情绪调节与安全社交参与。',
+    time: '2:00 PM',
+    title: 'Creative activities',
+    zhTitle: '创意活动',
+    note: 'Arts, team-building, and recovery from hard training.',
+    zhNote: '手工、协作活动与训练后的节奏调整。',
   },
   {
-    day: 'Friday',
-    dayZh: '周五',
-    amTheme: 'Weekly skill review',
-    amThemeZh: '周训练回顾',
-    pmTheme: '4:00 PM family showcase + celebration',
-    pmThemeZh: '下午4:00家庭展示 + 庆祝',
-    amBlocks: '1) Weekly recap circuits 2) Form refinement + timing 3) Showcase run-throughs',
-    amBlocksZh: '1) 周回顾循环训练 2) 套路细化与节奏 3) 展示联排',
-    lunchBlock: 'Standard lunch block (camp lunch optional).',
-    lunchBlockZh: '标准午餐时段（可选营地午餐）。',
-    pmBlocks: '1) Final polish sets 2) Team encouragement prep 3) 4:00 PM family showcase',
-    pmBlocksZh: '1) 最终细节打磨 2) 团队鼓励准备 3) 下午4:00家庭展示',
-    snackBlock: 'Pre-show snack + hydration reset',
-    snackBlockZh: '展示前加餐 + 补水调整',
-    dayWhy: 'Friday turns effort into visible progress, helping campers build confidence and character.',
-    dayWhyZh: '周五把一周努力转化为可见成果，帮助孩子建立更强自信与品格。',
-    specialEventTitle: 'Performance Friday',
-    specialEventTitleZh: '周五展示日',
-    specialEventNote: 'Family showcase starts at 4:00 PM with celebration, photos, and camper recognition.',
-    specialEventNoteZh: '家庭展示下午4:00开始，含庆祝、合影与营员表彰。',
-    specialEventTone: 'friday',
-    under6Focus:
-      'Ages 3-6 showcase age-appropriate movement, confidence, and social growth, without apparatus training.',
-    under6FocusZh:
-      '3-6岁展示符合年龄阶段的动作表现、自信与社交成长，不涉及器械训练。',
+    time: '3:00 PM',
+    title: 'Team games',
+    zhTitle: '团队游戏',
+    note: 'Confidence, friendships, and high-energy fun.',
+    zhNote: '建立自信、友谊与高能量乐趣。',
+  },
+  {
+    time: '4:00 PM',
+    title: 'Pickup',
+    zhTitle: '接送',
+    note: 'Families head home with a full, structured day completed.',
+    zhNote: '一天完整而有结构的营地安排结束。',
   },
 ]
 
@@ -865,21 +767,6 @@ function currency(amount) {
   return `$${Number(amount || 0).toFixed(2)}`
 }
 
-function parseScheduleFeatures(rawText) {
-  const normalized = String(rawText || '').trim()
-  if (!normalized) {
-    return []
-  }
-  const numbered = normalized
-    .split(/\s*\d+\)\s*/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-  if (numbered.length > 1) {
-    return numbered
-  }
-  return [normalized]
-}
-
 function roundUpToFive(value) {
   const next = Math.round(Number(value || 0) / 5) * 5
   return Number.isFinite(next) ? Math.max(0, next) : 0
@@ -1046,24 +933,17 @@ export default function HomePage() {
   const [expandedLunchWeekKey, setExpandedLunchWeekKey] = useState('')
   const [scheduleCopySourceId, setScheduleCopySourceId] = useState('')
   const [lunchCopySourceId, setLunchCopySourceId] = useState('')
-  const [helpWeekKey, setHelpWeekKey] = useState('')
   const [levelUpSlideIndex, setLevelUpSlideIndex] = useState(0)
   const [slideDirection, setSlideDirection] = useState('next')
   const [entryMode, setEntryMode] = useState(() => {
     if (isRegistrationRoute) {
       return 'register'
     }
-    return ''
+    return 'register'
   })
-  const [marketingNeed, setMarketingNeed] = useState('confidence')
-  const [ageFitGroup, setAgeFitGroup] = useState('3-6')
-  const [marketingFlowIndex, setMarketingFlowIndex] = useState(0)
-  const [marketingHighlightIndex, setMarketingHighlightIndex] = useState(0)
   const [testimonialIndex, setTestimonialIndex] = useState(0)
   const [campGalleryIndex, setCampGalleryIndex] = useState(0)
   const [campGalleryDirection, setCampGalleryDirection] = useState('next')
-  const [activeCampTypeKey, setActiveCampTypeKey] = useState('general')
-  const [campTypeMediaIndex, setCampTypeMediaIndex] = useState(0)
   const [summaryExpanded, setSummaryExpanded] = useState(false)
   const [summaryOverlayOpen, setSummaryOverlayOpen] = useState(false)
   const [summaryOverlayHtml, setSummaryOverlayHtml] = useState('')
@@ -1103,10 +983,6 @@ export default function HomePage() {
   const surveyLeadAutosaveTimerRef = useRef(null)
   const registrationLeadAutosaveTimerRef = useRef(null)
 
-  useEffect(() => {
-    setCampTypeMediaIndex(0)
-  }, [activeCampTypeKey])
-
   const missingConfig = useMemo(() => !supabaseEnabled, [])
   const generalWeeks = useMemo(
     () => getSelectedWeeks('general', getGeneralProgramForLocation(adminConfig.programs.general, registration.location)),
@@ -1123,40 +999,13 @@ export default function HomePage() {
       setLocationAlbumOpen(false)
     }
   }, [locationFacilityPhotos])
-  const generalWeekOptions = useMemo(
-    () =>
-      buildProgramWeekOptions(
-        'general',
-        adminConfig.programs.general.startDate,
-        adminConfig.programs.general.endDate
-      ),
-    [adminConfig.programs.general.endDate, adminConfig.programs.general.startDate]
-  )
   const bootcampWeeks = useMemo(
     () => getSelectedWeeks('bootcamp', adminConfig.programs.bootcamp),
     [adminConfig.programs.bootcamp]
   )
-  const bootcampWeekOptions = useMemo(
-    () =>
-      buildProgramWeekOptions(
-        'bootcamp',
-        adminConfig.programs.bootcamp.startDate,
-        adminConfig.programs.bootcamp.endDate
-      ),
-    [adminConfig.programs.bootcamp.endDate, adminConfig.programs.bootcamp.startDate]
-  )
   const overnightWeeks = useMemo(() => getSelectedWeeks('overnight', adminConfig.programs.overnight), [
     adminConfig.programs.overnight,
   ])
-  const overnightWeekOptions = useMemo(
-    () =>
-      buildProgramWeekOptions(
-        'overnight',
-        adminConfig.programs.overnight.startDate,
-        adminConfig.programs.overnight.endDate
-      ),
-    [adminConfig.programs.overnight.endDate, adminConfig.programs.overnight.startDate]
-  )
   const overnightWindowLabel = useMemo(() => {
     const start = adminConfig.programs.overnight.startDate
     const end = adminConfig.programs.overnight.endDate
@@ -1267,32 +1116,6 @@ export default function HomePage() {
   const dayCampPointsUseCopy = text(
     'Points can be saved for prizes, equipment, and future discounts during fall or spring season.',
     '积分可用于兑换奖品、装备，以及秋季或春季课程的后续优惠。'
-  )
-  const overnightPointsUseCopy = text(
-    'Points can be saved for prizes, equipment, and future discounts during fall or spring season.',
-    '积分可用于兑换奖品、装备，以及秋季或春季课程的后续优惠。'
-  )
-  const marketingFlowTitles = useMemo(
-    () => [
-      text('Camp goals and outcomes', '营地目标与收获'),
-      text('Training style and structure', '训练方式与结构'),
-      text('Program options', '课程选项'),
-      text('Ready to register', '准备报名'),
-    ],
-    [text]
-  )
-  const marketingHighlights = useMemo(
-    () => [
-      text('Daily structure keeps kids focused, active, and growing.', '每日结构化安排，让孩子专注、活跃、持续成长。'),
-      text('Experienced coaches teach with clear standards and safety.', '经验教练按清晰标准与安全规范教学。'),
-      text('Small groups mean better corrections and real progress.', '小班分组让动作纠正更精准，进步更明显。'),
-      text('Parents see progress through daily photos and updates.', '家长通过每日照片和更新清晰看到成长。'),
-      text('Lunch options reduce weekday stress for busy families.', '午餐可选，明显减轻家庭平日日程压力。'),
-      text('Weekly showcases build confidence and communication skills.', '每周展示提升孩子表达力与舞台自信。'),
-      text('Game-based training keeps learning challenging and fun.', '游戏化训练让学习既有挑战也有乐趣。'),
-      text('Age-level pathways match each child’s pace and goals.', '按年龄分层路径匹配每个孩子节奏与目标。'),
-    ],
-    [text]
   )
   const campGalleryItems = useMemo(() => {
     const surveyImages = Array.isArray(adminConfig.media.surveyStepImageUrls)
@@ -1422,6 +1245,51 @@ export default function HomePage() {
       }
     })
   }, [adminConfig.tuition, discountActive])
+  const dayCampSeasonLabel = useMemo(() => {
+    const allWeeks = [...generalWeeks, ...bootcampWeeks].sort((a, b) => a.start.localeCompare(b.start))
+    if (allWeeks.length === 0) {
+      return 'June - August'
+    }
+    return `${formatDateLabel(allWeeks[0].start)} - ${formatDateLabel(allWeeks[allWeeks.length - 1].end)}`
+  }, [bootcampWeeks, generalWeeks])
+  const dayCampPricing = useMemo(() => {
+    const regular = adminConfig.tuition.regular || {}
+    const discount = adminConfig.tuition.discount || {}
+    const effective = (regularValue, discountValue) => {
+      const regularNumber = Number(regularValue || 0)
+      const discountedNumber = Number(discountValue || 0)
+      if (!discountActive) {
+        return regularNumber
+      }
+      if (discountedNumber > 0) {
+        return Math.min(regularNumber || discountedNumber, discountedNumber)
+      }
+      return regularNumber
+    }
+    const fullWeek = effective(regular.fullWeek, discount.fullWeek)
+    const fullDay = effective(regular.fullDay, discount.fullDay)
+    const amHalf = effective(regular.amHalf, discount.amHalf)
+    const pmHalf = effective(regular.pmHalf, discount.pmHalf)
+    const halfDayLow = [amHalf, pmHalf].filter((value) => value > 0).sort((a, b) => a - b)[0] || 0
+    const halfDayHigh = [amHalf, pmHalf].filter((value) => value > 0).sort((a, b) => b - a)[0] || 0
+    return {
+      fullWeek,
+      fullDay,
+      amHalf,
+      pmHalf,
+      halfDayLow,
+      halfDayHigh,
+    }
+  }, [adminConfig.tuition.discount, adminConfig.tuition.regular, discountActive])
+  const halfDayPriceLabel = useMemo(() => {
+    if (dayCampPricing.halfDayLow <= 0) {
+      return ''
+    }
+    if (dayCampPricing.halfDayLow === dayCampPricing.halfDayHigh) {
+      return `${currency(dayCampPricing.halfDayLow)}`
+    }
+    return `${currency(dayCampPricing.halfDayLow)} - ${currency(dayCampPricing.halfDayHigh)}`
+  }, [dayCampPricing.halfDayHigh, dayCampPricing.halfDayLow])
   useEffect(() => {
     let active = true
 
@@ -2359,86 +2227,6 @@ export default function HomePage() {
     setContactMessage('Opening your email app. If it does not open, email us directly.')
   }
 
-  function getMarketingNeedResponse() {
-    if (marketingNeed === 'martial-arts') {
-      return text(
-        'Great focus. Coaches build martial arts fundamentals step-by-step: stance, technique control, timing, and confident execution.',
-        '非常好。教练将分步骤建立武术基础：站姿、动作控制、节奏把握与自信完成。'
-      )
-    }
-    if (marketingNeed === 'gross-motor') {
-      return text(
-        'Excellent choice. Gross motor skills improve through agility, coordination, balance, and full-body movement progressions.',
-        '非常好。通过敏捷、协调、平衡和全身动作递进训练，可明显提升大运动能力。'
-      )
-    }
-    if (marketingNeed === 'self-defense') {
-      return text(
-        'Strong option. Students learn practical self-defense awareness, reaction timing, and calm decision-making in a controlled setting.',
-        '很好的方向。孩子将在可控训练环境中学习实用自我保护意识、反应节奏和冷静判断。'
-      )
-    }
-    if (marketingNeed === 'tumbling') {
-      return text(
-        'Excellent choice. Our qualified coaches have taught hundreds of students tumbling skills with step-by-step progressions for safe and confident learning.',
-        '非常好。我们的专业教练已系统教授数百名学员翻腾技巧，通过分阶段训练实现安全且自信的进步。'
-      )
-    }
-    if (marketingNeed === 'social') {
-      return text(
-        'Perfect fit. Daily team challenges and partner drills are designed to build friendships, communication, and social confidence.',
-        '非常适合。每日团队挑战和搭档训练专门帮助建立友谊、沟通力和社交自信。'
-      )
-    }
-    return text(
-      'Excellent focus. Our step-by-step coaching model helps campers build confidence through visible progress every week.',
-      '非常好。我们分阶段教练模型通过每周可见进步来持续建立孩子自信。'
-    )
-  }
-
-  function getAgeFitResponse() {
-    if (ageFitGroup === '3-6') {
-      return text(
-        'Need a strong early foundation for your child? Ages 3-6 focus on fun gross-motor basics that build balance, coordination, attention, and early confidence while keeping kids active and happy.',
-        '想为孩子打好早期成长基础吗？3-6岁阶段通过有趣的大运动基础训练，建立平衡、协调、专注和早期自信，同时让孩子保持活跃与快乐。'
-      )
-    }
-    if (ageFitGroup === '7-10') {
-      return text(
-        'Want to turn energy into skill and character? Ages 7-10 is the ideal window to build real fundamentals, lasting interest, confidence, and positive discipline in a welcoming team environment.',
-        '想把孩子的精力转化为技能与品格吗？7-10岁是建立核心基础和长期兴趣的黄金阶段，在友好团队环境中提升自信与良好纪律。'
-      )
-    }
-    if (ageFitGroup === '11-13') {
-      return text(
-        'Looking for structure during pre-teen years? Ages 11-13 build consistency, leadership, and performance confidence while developing strong habits for health, focus, and long-term character.',
-        '希望在青春前期建立更强结构感吗？11-13岁可重点培养持续性、领导力与展示自信，并形成有利于健康、专注和长期品格的好习惯。'
-      )
-    }
-    return text(
-      'Ready to build strength, discipline, and future readiness? Ages 14+ focus on serious training habits, athletic achievement, and measurable progress that supports high-school resume growth while strengthening lifelong health.',
-      '准备好提升力量、自律与未来竞争力了吗？14岁以上阶段聚焦系统训练习惯、运动成绩与可量化进步，助力高中履历成长，同时强化长期健康。'
-    )
-  }
-
-  function previousMarketingFlowStep() {
-    setMarketingFlowIndex((current) => Math.max(0, current - 1))
-  }
-
-  function nextMarketingFlowStep() {
-    setMarketingFlowIndex((current) => Math.min(3, current + 1))
-  }
-
-  function previousMarketingHighlight() {
-    setMarketingHighlightIndex((current) =>
-      (current - 1 + marketingHighlights.length) % marketingHighlights.length
-    )
-  }
-
-  function nextMarketingHighlight() {
-    setMarketingHighlightIndex((current) => (current + 1) % marketingHighlights.length)
-  }
-
   function localizeTestimonialValue(value, fallbackValue) {
     if (language !== 'zh') {
       return value || fallbackValue
@@ -2603,7 +2391,6 @@ export default function HomePage() {
     setExpandedStudentId('')
     setExpandedWeekKey('')
     setExpandedLunchWeekKey('')
-    setHelpWeekKey('')
     setStep(1)
     setRegistrationDiscountClaimed(false)
     setRegistrationEmailResult(null)
@@ -3876,7 +3663,7 @@ export default function HomePage() {
     step === 1
       ? 'Step 1: Family & camper details'
       : step === 2
-        ? `Step 2: Select which weeks ${activeStudentDisplayName} will attend`
+        ? `Step 2: Choose weeks, camp type, and days for ${activeStudentDisplayName}`
         : step === 3
           ? `Step 3: Select lunch options for ${activeStudentDisplayName}`
           : 'Step 4: Review totals and submit registration'
@@ -3939,107 +3726,6 @@ export default function HomePage() {
     }),
     [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls]
   )
-  const campTypeShowcase = useMemo(() => ([
-    {
-      key: 'general',
-      title: adminConfig.campTypeShowcase?.general?.title || text('General Camp', '普通营'),
-      summary: adminConfig.campTypeShowcase?.general?.summary || text(
-        `Ages 3+ · Up to ${generalWeekOptions.length} weekly options · Pick Full Week, Full Day, AM or PM.`,
-        `3岁以上 · 最多 ${generalWeekOptions.length} 周可选 · 可选整周、整天、上午或下午。`
-      ),
-      suitedFor: adminConfig.campTypeShowcase?.general?.suitedFor || text(
-        'Best for beginners and returning campers. Campers are grouped by age and level for safe, steady progression.',
-        '适合新学员与返营学员。按年龄和水平分组，安全且稳步成长。'
-      ),
-      highlights: adminConfig.campTypeShowcase?.general?.highlights?.length
-        ? adminConfig.campTypeShowcase.general.highlights
-        : [
-            text('Try core Wushu elements in a fun, beginner-friendly way.', '以有趣易上手方式体验武术核心内容。'),
-            text('Build confidence, balance, focus, and discipline week by week.', '逐周提升自信、平衡、专注与纪律。'),
-            text("Stay active every day with games, movement drills, and coach guidance.", '每天通过游戏、动作训练和教练指导保持活跃。'),
-          ],
-      media: [
-        ...(adminConfig.campTypeShowcase?.general?.media || []).map((item, index) => ({
-          src: item?.url || [landingSectionVisuals.campDates, landingSectionVisuals.whyCamp, adminConfig.media.surveyStepImageUrls?.[0] || ''][index] || '',
-          caption: item?.caption || '',
-          tone: item?.tone || 'general',
-        })),
-      ].filter((item) => item.src),
-    },
-    {
-      key: 'bootcamp',
-      title: adminConfig.campTypeShowcase?.bootcamp?.title || text('Boot Camp (Taolu Competition Team)', '集训营（套路竞赛队）'),
-      summary: adminConfig.campTypeShowcase?.bootcamp?.summary || text(
-        `National & international Taolu pathway · Up to ${bootcampWeekOptions.length} weekly options.`,
-        `国家级与国际级套路进阶路径 · 最多 ${bootcampWeekOptions.length} 周可选。`
-      ),
-      suitedFor: adminConfig.campTypeShowcase?.bootcamp?.suitedFor || text(
-        'Great for athletes targeting national/international Taolu track development and serious competition preparation.',
-        '适合希望冲刺国家级/国际级套路路径并进行高强度竞赛准备的学员。'
-      ),
-      highlights: adminConfig.campTypeShowcase?.bootcamp?.highlights?.length
-        ? adminConfig.campTypeShowcase.bootcamp.highlights
-        : [
-            text('Many of our national and international team members train in this Boot Camp.', '我们许多国家级与国际级队员都参与该集训营训练。'),
-            text('Train Taolu routines with competition-level coaching and corrections.', '由高水平教练进行套路训练与动作修正。'),
-            text('Sharpen power, precision, flexibility, and performance quality.', '强化力量、精度、柔韧与表现力。'),
-            text('Prepare through structured goals for national/international track readiness.', '通过结构化目标训练，为国家级/国际级竞赛路径做准备。'),
-          ],
-      media: [
-        ...(adminConfig.campTypeShowcase?.bootcamp?.media || []).map((item, index) => ({
-          src: item?.url || [landingSectionVisuals.marketingFlow, landingSectionVisuals.weekly, adminConfig.media.surveyStepImageUrls?.[2] || ''][index] || '',
-          caption: item?.caption || '',
-          tone: item?.tone || 'bootcamp',
-        })),
-      ].filter((item) => item.src),
-    },
-    {
-      key: 'overnight',
-      title: adminConfig.campTypeShowcase?.overnight?.title || text('Overnight Camp', '过夜营'),
-      summary: adminConfig.campTypeShowcase?.overnight?.summary || text(
-        `Immersive Sunday-Saturday weeks · Up to ${overnightWeekOptions.length} overnight options.`,
-        `沉浸式周日到周六营期 · 最多 ${overnightWeekOptions.length} 周可选。`
-      ),
-      suitedFor: adminConfig.campTypeShowcase?.overnight?.suitedFor || text(
-        'Great for families who want a deeper camp-life experience with intensive training, independence, and team bonding.',
-        '适合希望获得更深度营地生活体验的家庭，兼顾高强度训练、独立性与团队连接。'
-      ),
-      highlights: adminConfig.campTypeShowcase?.overnight?.highlights?.length
-        ? adminConfig.campTypeShowcase.overnight.highlights
-        : [
-            text('Build independence and resilience in a supervised camp-life setting.', '在规范管理下培养独立性与抗压能力。'),
-            text('Train, bond, and grow through full-week immersive structure.', '在整周沉浸式节奏中完成训练、协作与成长。'),
-            text('Lodging includes 2 full baths with gender-divided sleeping areas and ample indoor space.', '住宿包含2个完整卫浴，按性别分区住宿，室内活动空间充足。'),
-            text('On-site amenities include air hockey, ping pong, VR, golf simulator, and a double-hoop basketball arcade game.', '住宿配套含气垫球、乒乓球、VR、高尔夫模拟器和双篮筐篮球机。'),
-            text('Huge yard with fenced enclosure supports safe outdoor activity and supervised free time.', '超大庭院并配有围栏封闭区域，支持安全户外活动与看护自由活动。'),
-            text('Limited spots each week (12 campers max) for high-quality coach attention.', '每周名额有限（最多12人），确保高质量教练关注。'),
-          ],
-      media: [
-        ...(adminConfig.campTypeShowcase?.overnight?.media || []).map((item, index) => ({
-          src: item?.url || [landingSectionVisuals.weekly, landingSectionVisuals.testimonials, adminConfig.media.surveyStepImageUrls?.[4] || ''][index] || '',
-          caption: item?.caption || '',
-          tone: item?.tone || 'overnight',
-        })),
-      ].filter((item) => item.src),
-    },
-  ]), [
-    adminConfig.campTypeShowcase,
-    adminConfig.media.surveyStepImageUrls,
-    bootcampWeekOptions.length,
-    generalWeekOptions.length,
-    landingSectionVisuals.campDates,
-    landingSectionVisuals.marketingFlow,
-    landingSectionVisuals.testimonials,
-    landingSectionVisuals.weekly,
-    landingSectionVisuals.whyCamp,
-    overnightWeekOptions.length,
-    text,
-  ])
-  const activeCampType = campTypeShowcase.find((item) => item.key === activeCampTypeKey) || campTypeShowcase[0]
-  const activeCampTypeMedia = activeCampType?.media?.length
-    ? activeCampType.media[((campTypeMediaIndex % activeCampType.media.length) + activeCampType.media.length) % activeCampType.media.length]
-    : null
-  const activeCampTypeMediaLength = activeCampType?.media?.length || 0
   const claimableDiscountTotal = getClaimableDiscountTotal()
   const surveyEmailInvalid =
     surveyStep === 1 && surveyMessage.toLowerCase().includes('valid email')
@@ -4250,6 +3936,7 @@ export default function HomePage() {
   const desktopAssistantMounted = currentMode === 'learn' && !isMobileViewport
   const desktopAssistantVisible = desktopAssistantMounted && !assistantCollapsed
   const keepFloatingUiVisible = false
+  const showLegacyStartPage = false
   const showMainCampPage =
     isRegistrationRoute || currentMode === 'register' || (currentMode === 'learn' && !isMobileViewport)
   const showLandingOnlySections = !isRegistrationRoute && showMainCampPage
@@ -4340,7 +4027,7 @@ export default function HomePage() {
       </aside>
       ) : null}
 
-      {currentMode === '' || isMobileLearnOverlayOpen ? (
+      {showLegacyStartPage && (currentMode === '' || isMobileLearnOverlayOpen) ? (
       <section
         className={`card section startSection ${adminConfig.media.surveyMobileBgUrl ? 'startMobileBg' : ''}`}
         id="start-here"
@@ -5145,62 +4832,81 @@ export default function HomePage() {
         <div className="heroIntroRow">
           <div className="heroIntroText">
             <p className="eyebrow">New England Wushu Summer Camp 2026</p>
-            <h1>{text('Train hard, build confidence, and have a summer kids remember.', '刻苦训练，建立自信，成就难忘夏天。')}</h1>
+            <p className="heroLocationLine">{text('Burlington & Acton Locations', 'Burlington 与 Acton 两大校区')}</p>
+            <h1>{text('Structured martial arts camp for confident, active kids.', '为孩子打造有结构、有成长感的武术夏令营。')}</h1>
             <p className="subhead">
               {text(
-                'Ages 3-17. Small groups. Quality coaching. Weekly family showcases.',
-                '3-17岁。小班教学。优质教练。每周家庭展示。'
+                'Ages 3-17. All levels welcome. Full-week, full-day, and half-day options across summer.',
+                '3-17岁。所有水平均可参加。整个夏季提供整周、全天与半天选择。'
               )}
             </p>
+            <div className="heroQuickFacts" aria-label={text('Key camp facts', '营地关键信息')}>
+              <span>{text('Ages 3-17', '3-17岁')}</span>
+              <span>{text('Full-Day & Half-Day', '全天与半天可选')}</span>
+              <span>{text(dayCampSeasonLabel, dayCampSeasonLabel)}</span>
+              <span>{text('All Levels Welcome', '所有水平欢迎参加')}</span>
+            </div>
           </div>
           <div className="heroIntroLogo" aria-label="New England Wushu logo">
             {pageHeroLogo}
           </div>
         </div>
+        <div className="heroDecisionStrip">
+          <article className="heroDecisionCard">
+            <p className="heroAchievementLabel">{text('Program Format', '课程形式')}</p>
+            <h3>{text('Weekly camps with flexible enrollment options', '按周报名，并可灵活选择上课形式')}</h3>
+            <p>{text('Choose full week, full day, or half day based on your family schedule.', '可根据家庭安排选择整周、全天或半天。')}</p>
+          </article>
+          <article className="heroDecisionCard">
+            <p className="heroAchievementLabel">{text('What makes it different', '核心差异')}</p>
+            <h3>{text('Real martial arts training with structure and fun', '真正的武术训练，兼顾结构感与乐趣')}</h3>
+            <p>{text('Not chaotic free play. Campers train, build discipline, and still have a great summer experience.', '不是无序放养式活动。孩子会训练、建立纪律，同时也能享受精彩夏天。')}</p>
+          </article>
+        </div>
         <div className="heroAchievementGrid" aria-label="Camp achievements">
           <article className="heroAchievementCard">
-            <p className="heroAchievementLabel">{text('Award Recognition', '荣誉认证')}</p>
-            <h3>{text('Award-Winning 2022, 2023, 2024, 2025, 2026', '连续获奖 2022、2023、2024、2025、2026')}</h3>
+            <p className="heroAchievementLabel">{text('Locations', '校区')}</p>
+            <h3>{text('Burlington & Acton', 'Burlington 与 Acton')}</h3>
             <p>
               {text(
-                'Recognized in Burlington for coaching quality, program consistency, and family trust year after year.',
-                '在伯灵顿因教学质量、课程稳定性与家长口碑连续多年获得认可。'
+                'Choose the location that works best for your commute and your camper’s weekly rhythm.',
+                '选择最适合接送与家庭节奏的校区。'
               )}
             </p>
           </article>
           <article className="heroAchievementCard">
-            <p className="heroAchievementLabel">{text('Athlete Pathway', '学员成长路径')}</p>
-            <h3>{text('Junior, National & International Medalist Track', '青少组-国家级-国际级奖牌成长路线')}</h3>
+            <p className="heroAchievementLabel">{text('Camp Window', '营期')}</p>
+            <h3>{text(dayCampSeasonLabel, dayCampSeasonLabel)}</h3>
             <p>
               {text(
-                'Campers train with methods shaped by junior, national, and international medal-level experience.',
-                '训练体系源于青少组、国家级与国际级奖牌经验，帮助孩子建立更高标准技能路径。'
+                'Summer weeks run across the main family vacation window, so planning is straightforward.',
+                '营期覆盖主要暑假时间段，方便家庭直接规划。'
               )}
             </p>
           </article>
           <article className="heroAchievementCard">
-            <p className="heroAchievementLabel">{text('Healthy Development', '健康成长')}</p>
-            <h3>{text('Stay Active, Build Health, Learn Cool Skills', '保持活跃、增强体质、学到酷技能')}</h3>
+            <p className="heroAchievementLabel">{text('Pricing Snapshot', '价格概览')}</p>
+            <h3>{text(`From ${currency(dayCampPricing.fullWeek)}/week`, `整周 ${currency(dayCampPricing.fullWeek)} 起`)}</h3>
             <p>
               {text(
-                'High-energy training keeps kids active, healthy, and learning cool skills with confidence.',
-                '高能训练让孩子保持活力与健康，并在自信中学到酷技能。'
+                `Full day ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
+                `全天 ${currency(dayCampPricing.fullDay)}/天。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
               )}
             </p>
           </article>
         </div>
         <div className="heroCompactPoints">
           <article className="heroCompactPointCard">
-            <p className="heroAchievementLabel">{text('Ages 3+ Foundation', '3岁以上基础启蒙')}</p>
-            <h3>{text('Great for foundational growth, gross motor and basic Wushu skills', '非常适合基础成长、大运动能力与武术基本功')}</h3>
+            <p className="heroAchievementLabel">{text('General Camp', '普通营')}</p>
+            <h3>{text('Best for beginners and returning campers who want structure, movement, and fun.', '适合新学员与返营学员，重视结构、运动与乐趣。')}</h3>
           </article>
           <article className="heroCompactPointCard">
-            <p className="heroAchievementLabel">{text('Safe Environment', '安全环境')}</p>
-            <h3>{text('Fun, Safe, Structured Training', '有趣、安全、结构化训练')}</h3>
+            <p className="heroAchievementLabel">{text('Competition Boot Camp', '竞赛集训营')}</p>
+            <h3>{text('For serious athletes building technique, polish, and competition readiness.', '适合希望强化技术、细节与竞赛准备的学员。')}</h3>
           </article>
           <article className="heroCompactPointCard">
-            <p className="heroAchievementLabel">{text('Family Convenience', '家庭便捷')}</p>
-            <h3>{text('Lunch + Daily Logs, Photos & Videos', '午餐 + 每日日志、照片与视频')}</h3>
+            <p className="heroAchievementLabel">{text('Family Confidence', '家长安心')}</p>
+            <h3>{text('Daily structure, small groups, real coaching, and visible progress.', '日程清晰、小班教学、真实训练，并且成长可见。')}</h3>
           </article>
         </div>
 
@@ -5212,12 +4918,15 @@ export default function HomePage() {
 
         <div className="heroActions">
           <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
-            {text('Claim Early Offer & Register Now', '领取早鸟优惠并立即报名')}
+            {text('Register Now', '立即报名')}
           </button>
+          <a className="button" href="#camp-dates">
+            {text('See Camp Options', '查看营地选项')}
+          </a>
           <p className="heroActionNote">
             {text(
-              'Secure your spot now and lock in your camp weeks with priority pricing.',
-              '立即锁定名额与营期，并享受优先优惠价格。'
+              'Secure your preferred weeks early and lock in current pricing.',
+              '尽早锁定心仪营期并保留当前价格。'
             )}
           </p>
         </div>
@@ -5304,22 +5013,22 @@ export default function HomePage() {
           </figure>
         ) : null}
         <div className="featureShowcaseHead">
-          <p className="eyebrow">{text('Camp Highlights', '营地亮点')}</p>
-          <h2>{text('Designed for growth, confidence, and fun', '为成长、自信与快乐而设计')}</h2>
-        </div>
-        <div className="pointsGlowBox compact">
-          <span className="pointsGlowBadge">New England Wushu Level Up points</span>
-          <strong>{dayCampPointsBreakdown}</strong>
-          <p>{dayCampPointsUseCopy}</p>
+          <p className="eyebrow">{text('Why Families Choose Us', '家长为什么选择我们')}</p>
+          <h2>{text('A premium camp experience with real structure behind it', '真正有体系支撑的高质量夏令营体验')}</h2>
         </div>
         <div className="premiumFeatureGrid">
           {perks.map((perk) => (
             <article key={perk.title} className="premiumFeatureCard">
-              <span className="premiumFeatureIcon" aria-hidden="true">◆</span>
+              <span className="premiumFeatureIcon" aria-hidden="true">✓</span>
               <h3>{text(perk.title, perk.zhTitle)}</h3>
               <p>{text(perk.text, perk.zhText)}</p>
             </article>
           ))}
+        </div>
+        <div className="heroActions">
+          <button type="button" className="button" onClick={jumpToRegistration}>
+            {text('Register Now', '立即报名')}
+          </button>
         </div>
       </section>
 
@@ -5329,234 +5038,50 @@ export default function HomePage() {
             <img src={landingSectionVisuals.marketingFlow} alt="Camp fit flow banner" />
           </figure>
         ) : null}
-        <h2>{text('What makes this camp the right fit?', '为什么这个营地是合适的选择？')}</h2>
+        <h2>{text('Pricing', '价格')}</h2>
         <p className="subhead">
           {text(
-            'Compare fit highlights, training style, and program options in one clean view.',
-            '在一个清晰视图中快速对比匹配亮点、训练风格和课程选项。'
+            'Clear pricing for the main day-camp options. Families can add lunch by day and claim the current early offer before it ends.',
+            '这是日营主要价格的一览。家庭可按天加购午餐，并在优惠截止前领取当前早鸟价格。'
           )}
         </p>
-        <div className="marketingFlowFrame">
-          <div className="marketingFlowProgress">
+        <div className="pricingGrid">
+          <article className="pricingCard featured">
+            <p className="pricingLabel">{text('Full Week', '整周')}</p>
+            <strong>{currency(dayCampPricing.fullWeek)}</strong>
+            <span>{text('Best value for full camp immersion', '适合完整沉浸式营地体验')}</span>
+          </article>
+          <article className="pricingCard">
+            <p className="pricingLabel">{text('Full Day', '全天')}</p>
+            <strong>{currency(dayCampPricing.fullDay)}</strong>
+            <span>{text('9:00 AM - 4:00 PM', '上午9点至下午4点')}</span>
+          </article>
+          <article className="pricingCard">
+            <p className="pricingLabel">{text('Half Day', '半天')}</p>
+            <strong>{halfDayPriceLabel || text('Contact Us', '请联系咨询')}</strong>
+            <span>{text('AM or PM options', '上午或下午均可选')}</span>
+          </article>
+          <article className="pricingCard accent">
+            <p className="pricingLabel">{text('Lunch Add-On', '午餐加购')}</p>
+            <strong>{currency(adminConfig.tuition.lunchPrice)}</strong>
+            <span>{text('Available by day', '可按天选择')}</span>
+          </article>
+        </div>
+        {discountActive ? (
+          <div className="pricingPromoCard">
             <strong>
-              {marketingFlowTitles[marketingFlowIndex] || marketingFlowTitles[0]}
+              {text(
+                `Early Bird Discount: Save ${currency(fullWeekDiscountAmount)} per full week before ${discountEndDateSpokenLabel.en}.`,
+                `早鸟优惠：在 ${discountEndDateSpokenLabel.zh} 前报名，整周每周立减 ${currency(fullWeekDiscountAmount)}。`
+              )}
             </strong>
-            <div className="marketingFlowDots" aria-hidden="true">
-              {marketingFlowTitles.map((_, index) => (
-                <span
-                  key={`marketing-flow-dot-${index}`}
-                  className={`dot ${marketingFlowIndex === index ? 'active' : ''}`}
-                />
-              ))}
-            </div>
+            <p>{text('Reserve now to lock in the current offer.', '现在报名即可锁定当前优惠。')}</p>
           </div>
-        <article className="overviewSlide marketingNeedDirect">
-          <h3>{text('Best Fit by Age Group', '按年龄查看最佳匹配')}</h3>
-          <div className="surveyChoiceRow marketingNeedChipRow">
-            <button
-              type="button"
-              className={`choiceChip ${ageFitGroup === '3-6' ? 'active' : ''}`}
-              onClick={() => setAgeFitGroup('3-6')}
-            >
-              {text('Ages 3-6', '3-6岁')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${ageFitGroup === '7-10' ? 'active' : ''}`}
-              onClick={() => setAgeFitGroup('7-10')}
-            >
-              {text('Ages 7-10', '7-10岁')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${ageFitGroup === '11-13' ? 'active' : ''}`}
-              onClick={() => setAgeFitGroup('11-13')}
-            >
-              {text('Ages 11-13', '11-13岁')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${ageFitGroup === '14+' ? 'active' : ''}`}
-              onClick={() => setAgeFitGroup('14+')}
-            >
-              {text('Ages 14+', '14岁以上')}
-            </button>
-          </div>
-          <p key={`age-fit-${ageFitGroup}`} className="surveyInlineResponse">
-            {getAgeFitResponse()}
-          </p>
-          <h3 className="goalHeading">{text('What is your goal?', '您的目标是什么？')}</h3>
-          <div className="surveyChoiceRow marketingNeedChipRow">
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'confidence' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('confidence')}
-            >
-              {text('Confidence', '自信')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'martial-arts' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('martial-arts')}
-            >
-              {text('Martial Arts Skills', '武术技能')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'gross-motor' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('gross-motor')}
-            >
-              {text('Gross Motor Skills', '大运动能力')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'self-defense' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('self-defense')}
-            >
-              {text('Self-Defense', '自我防护')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'tumbling' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('tumbling')}
-            >
-              {text('Tumbling Skills', '翻腾技巧')}
-            </button>
-            <button
-              type="button"
-              className={`choiceChip ${marketingNeed === 'social' ? 'active' : ''}`}
-              onClick={() => setMarketingNeed('social')}
-            >
-              {text('Social Skills', '社交能力')}
-            </button>
-          </div>
-          <p key={`marketing-need-${marketingNeed}`} className="surveyInlineResponse">
-            {getMarketingNeedResponse()}
-          </p>
-        </article>
-        <div className="marketingFlowStack">
-          {marketingFlowIndex === 0 ? (
-            <article className="overviewSlide next">
-              <h3>{text('Need a program that builds real confidence?', '需要真正提升自信的课程吗？')}</h3>
-              <p>
-                {text(
-                  'Ages 3-17 train in level-based groups with clear weekly progress goals and family showcases.',
-                  '3-17岁分层训练，每周有清晰成长目标，并通过家庭展示强化成果。'
-                )}
-              </p>
-              <div className="overviewStatRow">
-                <span className="overviewStatPill">{generalWeeks.length || 0} {text('General weeks', '普通营周次')}</span>
-                <span className="overviewStatPill">{bootcampWeeks.length || 0} {text('Boot Camp weeks', '集训营周次')}</span>
-                <span className="overviewStatPill">{overnightWeeks.length || 0} {text('Overnight weeks', '过夜营周次')}</span>
-              </div>
-            </article>
-          ) : null}
-
-          {marketingFlowIndex === 1 ? (
-            <article className="overviewSlide next">
-              <h3>{text('Want structure, not random activities?', '希望有体系，而不是零散活动？')}</h3>
-              <div className="marketingHighlightCard" key={`marketing-highlight-${marketingHighlightIndex}-${language}`}>
-                <p>{marketingHighlights[marketingHighlightIndex]}</p>
-                <div className="marketingHighlightControls">
-                  <button
-                    type="button"
-                    className="marketingArrowBtn"
-                    onClick={previousMarketingHighlight}
-                    aria-label={text('Previous highlight', '上一个亮点')}
-                  >
-                    ←
-                  </button>
-                  <div className="marketingHighlightDots" aria-label={text('Highlight position', '亮点位置')}>
-                    {marketingHighlights.map((_, index) => (
-                      <button
-                        key={`marketing-highlight-dot-${index}`}
-                        type="button"
-                        className={`dot ${marketingHighlightIndex === index ? 'active' : ''}`}
-                        onClick={() => setMarketingHighlightIndex(index)}
-                        aria-label={text(`Go to highlight ${index + 1}`, `跳转到亮点 ${index + 1}`)}
-                      />
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="marketingArrowBtn"
-                    onClick={nextMarketingHighlight}
-                    aria-label={text('Next highlight', '下一个亮点')}
-                  >
-                    →
-                  </button>
-                </div>
-              </div>
-            </article>
-          ) : null}
-
-          {marketingFlowIndex === 2 ? (
-            <article className="overviewSlide next">
-              <h3>{text('Need options for different goals?', '需要匹配不同目标的路径吗？')}</h3>
-              <p className="overviewLeadCompact">
-                {text(
-                  'Choose the track that best supports martial arts skills, gross motor development, and your camper’s confidence.',
-                  '选择最适合孩子的路径，兼顾武术技能、大运动能力和自信成长。'
-                )}
-              </p>
-              <div className="overviewStatRow">
-                <span className="overviewStatPill">{text('Martial arts skills', '武术技能')}</span>
-                <span className="overviewStatPill">{text('Gross motor skills', '大运动能力')}</span>
-                <span className="overviewStatPill">{text('Confidence + discipline', '自信 + 纪律')}</span>
-              </div>
-              <div className="overviewPointList">
-                {campTypes.map((camp) => (
-                  <p key={camp.name} className="overviewPointItem">
-                    <span className="overviewPointDot" aria-hidden="true" />
-                    <strong>{camp.name}:</strong> {camp.audience}
-                  </p>
-                ))}
-              </div>
-            </article>
-          ) : null}
-
-          {marketingFlowIndex === 3 ? (
-            <article className="overviewSlide marketingInteractiveCard next">
-              <h3>{text('Ready to take the next step?', '准备好下一步了吗？')}</h3>
-              <p className="overviewLeadCompact">
-                {text(
-                  'Review the fit guidance above, then reserve your camp weeks with confidence.',
-                  '先查看上方匹配建议，再自信地预留营期。'
-                )}
-              </p>
-              <div className="marketingPrimaryCtaRow">
-                <button type="button" className="button" onClick={jumpToRegistration}>
-                  {text('Claim Early Offer & Register', '领取早鸟优惠并报名')}
-                </button>
-              </div>
-            </article>
-          ) : null}
-        </div>
-        <div className="marketingStepActions">
-          <button
-            type="button"
-            className="marketingArrowBtn"
-            onClick={previousMarketingFlowStep}
-            disabled={marketingFlowIndex === 0}
-            aria-label={text('Previous section', '上一部分')}
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            className="marketingArrowBtn"
-            onClick={nextMarketingFlowStep}
-            disabled={marketingFlowIndex === 3}
-            aria-label={text('Next section', '下一部分')}
-          >
-            →
-          </button>
-        </div>
+        ) : null}
         <div className="heroActions">
-          <button type="button" className="button" onClick={jumpToRegistration}>
-            {text('Claim Offer & Start Registration', '领取优惠并开始报名')}
+          <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
+            {text('Register Now', '立即报名')}
           </button>
-        </div>
         </div>
       </section>
 
@@ -5635,11 +5160,11 @@ export default function HomePage() {
       </section>
 
       <section id="camp-dates" className="card section">
-        <h2>{text('Choose Your Camp Type', '选择适合您的营地类型')}</h2>
+        <h2>{text('Camp Options', '营地选项')}</h2>
         <p className="subhead">
           {text(
-            'Pick a camp type to see who it is best for, what your child gets, and current highlights.',
-            '选择营地类型，查看适合人群、核心收获与当前亮点。'
+            'The two main day-camp paths are easy to compare below. Overnight camp stays available as a separate immersive option.',
+            '下方可直接比较两种主要日营路径。过夜营仍作为单独的沉浸式选择开放。'
           )}
         </p>
         {discountActive ? (
@@ -5651,105 +5176,46 @@ export default function HomePage() {
           </p>
         ) : null}
         <article className="campTypeShowcaseCard">
-          <div className="campTypeMediaPanel">
-            {activeCampTypeMedia?.src ? (
-              <>
-                <img src={activeCampTypeMedia.src} alt={text(`${activeCampType.title} media`, `${activeCampType.title} 图片`)} />
-                {activeCampTypeMedia.caption ? (
-                  <div className={`campTypeMediaCaption ${activeCampTypeMedia.tone || 'general'}`}>
-                    {activeCampTypeMedia.caption}
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <div className="heroMediaPlaceholder">
-                <strong>{text('Camp media slot', '营地媒体占位')}</strong>
-                <span>{text('Upload camp media in /admin.', '请在 /admin 中上传营地媒体。')}</span>
-              </div>
-            )}
-            {activeCampTypeMediaLength > 1 ? (
-              <div className="campTypeMediaControls">
-                <button
-                  type="button"
-                  className="campTypeMediaArrow"
-                  onClick={() => setCampTypeMediaIndex((prev) => prev - 1)}
-                  aria-label={text('Previous camp media', '上一张营地媒体')}
-                >
-                  ←
-                </button>
-                <div className="heroGalleryDots" aria-label={text('Camp media position', '营地媒体位置')}>
-                  {activeCampType.media.map((_, index) => (
-                    <button
-                      key={`camp-type-media-${activeCampType.key}-${index}`}
-                      type="button"
-                      className={`dot ${index === ((campTypeMediaIndex % activeCampTypeMediaLength) + activeCampTypeMediaLength) % activeCampTypeMediaLength ? 'active' : ''}`}
-                      onClick={() => setCampTypeMediaIndex(index)}
-                      aria-label={text(`Go to media ${index + 1}`, `跳转到第 ${index + 1} 张`)}
-                    />
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="campTypeMediaArrow"
-                  onClick={() => setCampTypeMediaIndex((prev) => prev + 1)}
-                  aria-label={text('Next camp media', '下一张营地媒体')}
-                >
-                  →
-                </button>
-              </div>
-            ) : null}
+          <div className="campOptionsGrid">
+            <article className="campOptionCard">
+              <p className="heroAchievementLabel">{text('General Camp', '普通营')}</p>
+              <h3>{text('All levels welcome', '所有水平均可参加')}</h3>
+              <p>{text('Fun, structured training with games, arts and crafts, team activities, and weekly confidence-building moments.', '有趣且有结构的训练，融合游戏、手工、团队活动和每周建立自信的展示时刻。')}</p>
+              <ul className="campTypeHighlightList">
+                <li>{text('Best for beginners and returning campers', '适合新学员与返营学员')}</li>
+                <li>{text('Balance of training, games, and creativity', '训练、游戏与创意活动平衡结合')}</li>
+                <li>{text('Small groups and visible weekly progress', '小班教学，成长清晰可见')}</li>
+              </ul>
+            </article>
+            <article className="campOptionCard bootcamp">
+              <p className="heroAchievementLabel">{text('Competition Team Boot Camp', '竞赛队集训营')}</p>
+              <h3>{text('Advanced and competition-focused', '偏进阶与竞赛导向')}</h3>
+              <p>{text('A focused training path for students building performance quality, routine polish, and competition readiness.', '为希望提升表现力、套路细节与竞赛准备度的学员提供更专注的训练路径。')}</p>
+              <ul className="campTypeHighlightList">
+                <li>{text('For serious students preparing for competition', '适合认真准备竞赛的学员')}</li>
+                <li>{text('More technical correction and training intensity', '更强调技术修正与训练强度')}</li>
+                <li>{text('Led by experienced competition coaches', '由有竞赛经验的教练带领')}</li>
+              </ul>
+            </article>
           </div>
-          <div className="campTypeContentPanel">
-            <h3>{activeCampType.title}</h3>
-            <p className="subhead">{activeCampType.summary}</p>
+          <div className="campOptionFooter">
             <div className="pointsGlowBox compact">
-              <span className="pointsGlowBadge">
-                {activeCampType.key === 'overnight'
-                  ? `${OVERNIGHT_WEEKLY_POINTS.toLocaleString('en-US')} points per week`
-                  : 'Points by enrollment'}
-              </span>
-              <strong>
-                {activeCampType.key === 'overnight'
-                  ? 'Overnight campers earn 5,000 New England Wushu Level Up points for each full week enrollment.'
-                  : 'Summer campers earn 2,500 points for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.'}
-              </strong>
-              <p>{activeCampType.key === 'overnight' ? overnightPointsUseCopy : dayCampPointsUseCopy}</p>
+              <span className="pointsGlowBadge">New England Wushu Level Up</span>
+              <strong>{dayCampPointsBreakdown}</strong>
+              <p>{dayCampPointsUseCopy}</p>
             </div>
-            <div className="campTypeFitBox">
-              <strong>{text('Who this is best for', '适合人群')}</strong>
-              <p>{activeCampType.suitedFor}</p>
+            <div className="overnightMiniCard">
+              <strong>{text('Need something more immersive?', '需要更沉浸式的选择吗？')}</strong>
+              <p>{text('Our Overnight Camp offers a separate full-week live-in experience with training, outings, and camp-life bonding.', '过夜营提供独立的整周住宿式体验，包含训练、外出活动与营地生活。')}</p>
+              <a className="button" href="/overnight">
+                {text('Explore Overnight Camp', '查看过夜营')}
+              </a>
             </div>
-            {activeCampType.key === 'overnight' ? (
-              <div className="adminActions campTypeOvernightCtaRow">
-                <a className="button heroPrimaryCta" href="/overnight">
-                  {text('Open Overnight Camp Page', '打开过夜营页面')}
-                </a>
-              </div>
-            ) : null}
-            <ul className="campTypeHighlightList">
-              {activeCampType.highlights.map((item) => (
-                <li key={`${activeCampType.key}-${item}`}>{item}</li>
-              ))}
-            </ul>
-          </div>
-          <div className="campTypeBottomTabs" role="tablist" aria-label={text('Camp types', '营地类型')}>
-            {campTypeShowcase.map((campType) => (
-              <button
-                key={`camp-type-tab-${campType.key}`}
-                type="button"
-                className={`campTypeBottomTab ${activeCampType.key === campType.key ? 'active' : ''}`}
-                onClick={() => setActiveCampTypeKey(campType.key)}
-                role="tab"
-                aria-selected={activeCampType.key === campType.key}
-              >
-                {campType.title}
-              </button>
-            ))}
           </div>
         </article>
         <div className="heroActions">
           <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
-            {text('Claim Early Offer & Register', '领取早鸟优惠并报名')}
+            {text('Register Now', '立即报名')}
           </button>
         </div>
       </section>
@@ -5760,90 +5226,41 @@ export default function HomePage() {
             <img src={landingSectionVisuals.weekly} alt="Weekly structure banner" />
           </figure>
         ) : null}
-        <h2>{text('What does a typical General Camp week look like?', '普通营的一周通常如何安排？')}</h2>
+        <h2>{text('A Day at Camp', '营地的一天')}</h2>
         <p className="subhead">
           {text(
-            'This is the General Camp weekly structure. Each day has a clear AM/PM theme across basics, weapons, Sanda, self-defense, character building, and social growth.',
-            '以下为普通营每周结构。每天都有明确的上午/下午主题，覆盖基础训练、器械、散打、自我防护、品格培养与社交成长。'
+            'Parents want to know what the day actually feels like. This is the flow most families can expect from a standard full day at camp.',
+            '家长最关心的一点之一就是：孩子一天大概怎么安排。以下是标准全天营的典型日程。'
           )}
         </p>
-        <p className="subhead">
-          {text(
-            'Ages 3-6 follow a dedicated motor-skill track and do not train with apparatus. Families receive daily app updates with photos/videos and coach notes.',
-            '3-6岁采用专门的大运动能力训练路径，不进行器械训练。家长可通过应用每日查看照片/视频与教练评语。'
-          )}
-        </p>
-        <div className="scheduleList">
-          {schedule.map((item) => (
-            <article key={item.day} className="scheduleItem">
-              <strong><span className="scheduleDayTag">{text(item.day, item.dayZh || item.day)}</span></strong>
-              <div className="scheduleThemeGrid">
-                <div className="scheduleThemeBlock">
-                  <p className="scheduleThemeLabel">{text('AM Theme', '上午主题')}</p>
-                  <p className="scheduleThemeTitle">{text(item.amTheme, item.amThemeZh || item.amTheme)}</p>
-                  <ul className="scheduleFeatureList">
-                    {parseScheduleFeatures(text(item.amBlocks, item.amBlocksZh || item.amBlocks)).map((feature, index) => (
-                      <li key={`${item.day}-am-${index}`} className="scheduleFeatureItem">
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="scheduleThemeBlock">
-                  <p className="scheduleThemeLabel">{text('Lunch', '午餐')}</p>
-                  <p className="scheduleThemeTitle">
-                    {item.day === 'Thursday'
-                      ? text('BBQ Thursday', '周四烧烤日')
-                      : text('Midday Reset', '午间调整')}
-                  </p>
-                  <p>
-                    {item.day === 'Thursday'
-                      ? text(
-                        'Thursday BBQ lunch is included, so families get a no-pack lunch day.',
-                        '周四烧烤午餐已包含，家长这天不用准备午餐。'
-                      )
-                      : text(
-                        `Camp lunch is just ${currency(adminConfig.tuition.lunchPrice)} per day, can be selected day-by-day in the Level Up app, and means no lunch packing for busy mornings.`,
-                        `营地午餐每天仅 ${currency(adminConfig.tuition.lunchPrice)}，可在 Level Up App 按天选择，让忙碌早晨不用再准备午餐。`
-                      )}
-                  </p>
-                </div>
-                <div className="scheduleThemeBlock">
-                  <p className="scheduleThemeLabel">{text('PM Theme', '下午主题')}</p>
-                  <p className="scheduleThemeTitle">{text(item.pmTheme, item.pmThemeZh || item.pmTheme)}</p>
-                  <ul className="scheduleFeatureList">
-                    {parseScheduleFeatures(text(item.pmBlocks, item.pmBlocksZh || item.pmBlocks)).map((feature, index) => (
-                      <li key={`${item.day}-pm-${index}`} className="scheduleFeatureItem">
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+        <div className="dayTimeline">
+          {dayAtCampTimeline.map((item) => (
+            <article key={item.time} className="dayTimelineItem">
+              <p className="dayTimelineTime">{item.time}</p>
+              <div>
+                <h3>{text(item.title, item.zhTitle)}</h3>
+                <p>{text(item.note, item.zhNote)}</p>
               </div>
-              {item.specialEventTitle ? (
-                <div className={`scheduleSpecialEvent scheduleSpecialEvent-${item.specialEventTone || 'default'}`}>
-                  <p className="scheduleSpecialEventLabel">{text('Special Event', '特别活动')}</p>
-                  <p className="scheduleSpecialEventTitle">
-                    {text(item.specialEventTitle, item.specialEventTitleZh || item.specialEventTitle)}
-                  </p>
-                  <p>{text(item.specialEventNote, item.specialEventNoteZh || item.specialEventNote)}</p>
-                </div>
-              ) : null}
-              <p className="under6Track">
-                <strong>{text('Snack:', '加餐：')}</strong> {text(item.snackBlock, item.snackBlockZh || item.snackBlock)}
-              </p>
-              <p className="under6Track">
-                <strong>{text('Why this day matters:', '这一天的重要性：')}</strong> {text(item.dayWhy, item.dayWhyZh || item.dayWhy)}
-              </p>
-              <p className="under6Track">
-                <strong>{text('Ages 3-6 track:', '3-6岁训练重点：')}</strong> {text(item.under6Focus, item.under6FocusZh || item.under6Focus)}
-              </p>
             </article>
           ))}
         </div>
+        <div className="daySupportGrid">
+          <article className="daySupportCard">
+            <strong>{text('Built-in structure', '内置结构感')}</strong>
+            <p>{text('The day has rhythm and purpose, not random filler activities.', '每天都有清晰节奏和目标，不是随意拼凑的活动。')}</p>
+          </article>
+          <article className="daySupportCard">
+            <strong>{text('Lunch made easier', '午餐更省心')}</strong>
+            <p>{text(`Lunch can be added by day for ${currency(adminConfig.tuition.lunchPrice)}, and Thursday BBQ is included.`, `午餐可按天加购，每天 ${currency(adminConfig.tuition.lunchPrice)}，周四烧烤已包含。`)}</p>
+          </article>
+          <article className="daySupportCard">
+            <strong>{text('Visible progress', '成长可见')}</strong>
+            <p>{text('Families get daily updates, photos, and coach notes through the app.', '家庭可通过应用查看每日日志、照片与教练反馈。')}</p>
+          </article>
+        </div>
         <div className="heroActions">
-          <button type="button" className="button" onClick={jumpToRegistration}>
-            {text('Reserve a Spot for This Week Plan', '按此周计划预留名额')}
+          <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
+            {text('Register Now', '立即报名')}
           </button>
         </div>
       </section>
@@ -6614,7 +6031,7 @@ export default function HomePage() {
                             </strong>
                             <span>{formatWeekLabel(week)}</span>
                             <em>
-                              {expanded ? 'Tap to collapse this week for ' : 'Click to expand and register for '}
+                              {expanded ? 'Tap to close this week for ' : 'Open this week to choose camp type and days for '}
                               <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
                             </em>
                             {weekSelectionSummary ? (
@@ -6628,27 +6045,14 @@ export default function HomePage() {
                         </button>
                         {expanded ? (
                           <div className="weekBody">
-                            <div className="toggleHintRow">
-                              <em className="toggleHint">
-                                <strong>{text('Choose a camp type', '先选择营种')}</strong> {text('first, then choose day chips for', '，然后为以下营员选择日期标签：')}{' '}
-                                <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>.
-                                {` `}{text('Each tap cycles', '每次点击会循环切换')} <strong>{text('FULL DAY', '全天')}</strong> -&gt; <strong>AM</strong> -&gt; <strong>PM</strong> -&gt; {text('off', '关闭')}.
-                              </em>
-                              <button
-                                type="button"
-                                className="tooltipBtn"
-                                onClick={() => setHelpWeekKey(helpWeekKey === panelKey ? '' : panelKey)}
-                                title="Show toggle help"
-                              >
-                                ?
-                              </button>
-                            </div>
-                            {helpWeekKey === panelKey ? (
-                              <p className="tooltipBubble">
-                                <strong>{text('How it works:', '操作说明：')}</strong> {text('choose a camp type first, then tap each day chip to cycle', '先选择营种，再点击每日标签循环切换')} <strong>{text('FULL DAY', '全天')}</strong> -&gt; <strong>AM</strong> -&gt; <strong>PM</strong>{' '}
-                                -&gt; {text('off', '关闭')}.
+                            <div className="toggleHintBox">
+                              <p className="toggleHint">
+                                <strong>{text('For this week, choose camp type first.', '这一周请先选择营种。')}</strong>
                               </p>
-                            ) : null}
+                              <p className="toggleHintSubline">
+                                {text('Then tap each day to choose: Full Day -> AM -> PM -> Off.', '然后点击每天来选择：全天 -> 上午 -> 下午 -> 关闭。')}
+                              </p>
+                            </div>
                             <>
                               <div className="campTypeRow">
                                 {week.availableCampTypes?.includes('general') ? (
@@ -6676,17 +6080,17 @@ export default function HomePage() {
                               </div>
                               <p className="campTypeExplain">
                                 {selectedCampType === 'general'
-                                  ? text('General Camp selected: foundational skill building for all levels.', '已选择普通夏令营：适合所有水平的基础能力训练。')
+                                  ? text('General Camp selected. Now choose the days below.', '已选择普通夏令营。现在请在下方选择日期。')
                                   : selectedCampType === 'bootcamp'
-                                    ? text('Competition Boot Camp selected: Taolu-focused training for competition track.', '已选择竞赛强化营：以套路竞赛方向训练为主。')
-                                    : text('Choose camp type for this week, then choose days.', '请先选择本周营种，再选择日期。')}
+                                    ? text('Competition Boot Camp selected. Now choose the days below.', '已选择竞赛强化营。现在请在下方选择日期。')
+                                    : text('Select a camp type above to unlock this week’s day choices.', '请先在上方选择营种，再为这一周选择日期。')}
                               </p>
                               <button
                                 type="button"
                                 className={`modeChip ${weekIsFull ? 'active full' : ''}`}
                                 onClick={() => toggleFullWeek(activeStudent.id, week)}
                               >
-                                {text('Full Week (all Full Day)', '整周（全部全天）')}
+                                {text('Choose Full Week (all days = Full Day)', '选择整周（所有日期 = 全天）')}
                               </button>
                               <div className="chipRow">
                                 {dayKeys.map((day) => {

@@ -1,12 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
 
 * {
   box-sizing: border-box;
 }
 
 :root {
-  font-family: 'Manrope', 'Avenir Next', 'Segoe UI', sans-serif;
-  line-height: 1.45;
+  font-family: 'Manrope', 'Inter', 'Avenir Next', 'Segoe UI', sans-serif;
+  line-height: 1.5;
   font-weight: 400;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -25,12 +25,11 @@ body {
 
 .page {
   min-height: 100vh;
-  padding: 1rem;
+  padding: 1.25rem;
   background:
-    radial-gradient(900px 440px at 8% -10%, #ffe8a3, transparent),
-    radial-gradient(700px 380px at 92% -4%, #86efac, transparent),
-    radial-gradient(880px 420px at 55% 108%, #99f6e4, transparent),
-    #f7fafc;
+    radial-gradient(1200px 600px at 15% -8%, rgba(219, 234, 254, 0.5), transparent),
+    radial-gradient(800px 500px at 90% 5%, rgba(224, 242, 254, 0.35), transparent),
+    #f8fafc;
 }
 
 .page.startOnly {
@@ -66,11 +65,14 @@ body {
 .card {
   width: min(980px, 100%);
   margin: 0 auto;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid #dde5ee;
-  border-radius: 20px;
-  padding: 1.25rem;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.1);
+  background: #ffffff;
+  border: 1px solid rgba(203, 213, 225, 0.7);
+  border-radius: 24px;
+  padding: 1.75rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(15, 23, 42, 0.06),
+    0 24px 56px rgba(15, 23, 42, 0.07);
 }
 
 .section {
@@ -78,16 +80,16 @@ body {
 }
 
 .page:not(.adminPage) .section {
-  margin-top: 1.45rem;
+  margin-top: 2rem;
 }
 
 .eyebrow {
   margin: 0;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #9a3412;
-  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  color: #1d4ed8;
+  font-size: 0.75rem;
 }
 
 h1,
@@ -96,36 +98,44 @@ h3 {
   margin: 0;
   color: #0f172a;
   font-family: 'Sora', 'Manrope', 'Avenir Next', sans-serif;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 h1 {
-  margin-top: 0.5rem;
-  font-size: clamp(1.7rem, 4.2vw, 2.8rem);
+  margin-top: 0.6rem;
+  font-size: clamp(2rem, 5vw, 3.4rem);
   max-width: 16ch;
+  line-height: 1.1;
 }
 
 h2 {
-  font-size: clamp(1.25rem, 2.2vw, 1.7rem);
-  margin-bottom: 0.8rem;
+  font-size: clamp(1.4rem, 2.6vw, 2rem);
+  margin-bottom: 0.9rem;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
 }
 
 h3 {
-  font-size: 1rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.015em;
 }
 
 .subhead {
-  margin: 0.6rem 0 0;
-  color: #334155;
-  line-height: 1.62;
+  margin: 0.7rem 0 0;
+  color: #475569;
+  line-height: 1.7;
+  font-size: 1.02rem;
 }
 
 .hero {
   position: relative;
   overflow: hidden;
-  border: 1px solid #bfdbfe;
-  background: linear-gradient(145deg, #ffffff 0%, #f6fbff 48%, #e6f4ff 100%);
-  box-shadow: 0 20px 42px rgba(30, 64, 175, 0.12);
+  border: 1px solid rgba(147, 197, 253, 0.5);
+  background: linear-gradient(160deg, #ffffff 0%, #f8fbff 35%, #eef5ff 70%, #e8f2ff 100%);
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 12px 32px rgba(30, 64, 175, 0.1),
+    0 32px 64px rgba(30, 64, 175, 0.08);
 }
 
 .heroIntroRow {
@@ -137,6 +147,14 @@ h3 {
 
 .heroIntroText {
   min-width: 0;
+}
+
+.heroLocationLine {
+  margin: 0.3rem 0 0;
+  color: #1d4ed8;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .heroIntroLogo {
@@ -178,8 +196,8 @@ h3 {
 
 .heroActions {
   display: flex;
-  gap: 0.62rem;
-  margin-top: 1.2rem;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
@@ -190,29 +208,31 @@ h3 {
   width: 100%;
   text-align: center;
   color: #0f766e;
-  font-size: 0.86rem;
-  font-weight: 700;
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
 .heroPrimaryCta {
   min-width: clamp(260px, 34vw, 390px);
-  border-color: rgba(14, 116, 144, 0.56);
+  border: 1px solid rgba(30, 64, 175, 0.3);
   color: #ffffff;
-  background:
-    radial-gradient(120% 180% at 10% 8%, rgba(254, 240, 138, 0.28), transparent 56%),
-    linear-gradient(140deg, #0b7fc8 0%, #1d4ed8 58%, #0ea5e9 100%);
+  background: linear-gradient(140deg, #1d4ed8 0%, #2563eb 50%, #1e40af 100%);
   box-shadow:
-    0 18px 32px rgba(29, 78, 216, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.34);
-  font-weight: 900;
+    0 1px 2px rgba(15, 23, 42, 0.1),
+    0 8px 24px rgba(29, 78, 216, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  font-weight: 800;
   letter-spacing: 0.01em;
+  font-size: 1rem;
+  padding: 0.85rem 1.5rem;
 }
 
 .heroPrimaryCta:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   box-shadow:
-    0 22px 38px rgba(29, 78, 216, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.38);
+    0 2px 4px rgba(15, 23, 42, 0.08),
+    0 16px 36px rgba(29, 78, 216, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
 .heroGalleryWrap {
@@ -259,10 +279,12 @@ h3 {
 
 .heroGalleryMain {
   margin: 0;
-  border-radius: 18px;
+  border-radius: 20px;
   overflow: hidden;
-  border: 1px solid #dbeafe;
-  box-shadow: 0 16px 34px rgba(30, 64, 175, 0.18);
+  border: 1px solid rgba(219, 234, 254, 0.6);
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.06),
+    0 16px 40px rgba(30, 64, 175, 0.14);
 }
 
 .heroGalleryMain.next {
@@ -328,13 +350,14 @@ h3 {
 }
 
 .heroGalleryCaption {
-  margin: 0.6rem 0 0;
-  border: 1px solid #fde68a;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  margin: 0.7rem 0 0;
+  border: 1px solid rgba(253, 230, 138, 0.8);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fffdf5 0%, #fefce8 100%);
   color: #78350f;
-  padding: 0.5rem 0.62rem;
-  font-weight: 700;
+  padding: 0.55rem 0.75rem;
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 
 .heroGalleryDots {
@@ -380,22 +403,22 @@ h3 {
 }
 
 .heroAchievementCard {
-  border: 1px solid #bfdbfe;
-  border-radius: 16px;
-  background:
-    radial-gradient(140% 170% at 100% 0%, rgba(253, 186, 116, 0.2), transparent 62%),
-    linear-gradient(160deg, #ffffff 0%, #f4f9ff 100%);
-  padding: 1rem;
-  box-shadow: 0 14px 28px rgba(30, 64, 175, 0.12);
+  border: 1px solid rgba(191, 219, 254, 0.8);
+  border-radius: 20px;
+  background: linear-gradient(160deg, #ffffff 0%, #f6fbff 100%);
+  padding: 1.25rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 10px 24px rgba(30, 64, 175, 0.08);
 }
 
 .heroAchievementLabel {
   margin: 0;
-  font-size: 0.74rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #9a3412;
+  color: #1d4ed8;
 }
 
 .heroAchievementCard h3 {
@@ -415,6 +438,57 @@ h3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.heroQuickFacts {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.heroQuickFacts span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(191, 219, 254, 0.8);
+  border-radius: 999px;
+  padding: 0.42rem 0.88rem;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1e3a8a;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.06),
+    0 8px 18px rgba(30, 64, 175, 0.08);
+}
+
+.heroDecisionStrip {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.heroDecisionCard {
+  border: 1px solid rgba(219, 234, 254, 0.9);
+  border-radius: 20px;
+  padding: 1.25rem;
+  background: linear-gradient(160deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 10px 24px rgba(30, 64, 175, 0.07);
+}
+
+.heroDecisionCard h3 {
+  margin: 0.24rem 0 0;
+  font-size: 1.02rem;
+  line-height: 1.32;
+}
+
+.heroDecisionCard p {
+  margin: 0.42rem 0 0;
+  color: #475569;
 }
 
 .pointsGlowBox {
@@ -468,13 +542,13 @@ h3 {
 }
 
 .heroCompactPointCard {
-  border: 1px solid #bfdbfe;
-  border-radius: 16px;
-  background:
-    radial-gradient(140% 170% at 100% 0%, rgba(253, 186, 116, 0.16), transparent 62%),
-    linear-gradient(160deg, #ffffff 0%, #f4f9ff 100%);
-  padding: 0.85rem;
-  box-shadow: 0 12px 24px rgba(30, 64, 175, 0.1);
+  border: 1px solid rgba(191, 219, 254, 0.8);
+  border-radius: 20px;
+  background: linear-gradient(160deg, #ffffff 0%, #f6fbff 100%);
+  padding: 1.1rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 20px rgba(30, 64, 175, 0.07);
 }
 
 .heroCompactPointCard h3 {
@@ -491,16 +565,15 @@ h3 {
 }
 
 .heroTrustRow span {
-  border: 1px solid #93c5fd;
+  border: 1px solid rgba(147, 197, 253, 0.7);
   border-radius: 999px;
-  background:
-    radial-gradient(120% 140% at 15% 10%, rgba(254, 240, 138, 0.34), transparent 60%),
-    linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-  color: #1e40af;
-  font-size: 0.76rem;
-  font-weight: 800;
-  padding: 0.28rem 0.62rem;
-  box-shadow: 0 8px 16px rgba(30, 64, 175, 0.12);
+  background: linear-gradient(135deg, #f0f7ff 0%, #e0eeff 100%);
+  color: #1e3a8a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 0.32rem 0.72rem;
+  box-shadow: 0 2px 8px rgba(30, 64, 175, 0.1);
 }
 
 .heroMarketingCard {
@@ -901,12 +974,12 @@ h3 {
 }
 
 .campFeatureShowcase {
-  border: 1px solid #bfdbfe;
-  background: linear-gradient(160deg, #ffffff 0%, #f8fbff 48%, #edf7ff 100%);
+  border: 1px solid rgba(191, 219, 254, 0.6);
+  background: linear-gradient(160deg, #ffffff 0%, #f6fbff 55%, #eef5ff 100%);
 }
 
 .featureShowcaseHead {
-  margin-bottom: 0.8rem;
+  margin-bottom: 1.1rem;
 }
 
 .featureShowcaseHead h2 {
@@ -922,11 +995,13 @@ h3 {
 
 .premiumFeatureCard {
   position: relative;
-  border: 1px solid #dbeafe;
-  border-radius: 18px;
-  background: linear-gradient(162deg, #ffffff 0%, #f8fbff 60%, #edf7ff 100%);
-  padding: 1rem 1rem 0.95rem;
-  box-shadow: 0 15px 32px rgba(30, 64, 175, 0.12);
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 1.25rem 1.25rem 1.2rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(30, 64, 175, 0.07);
   overflow: hidden;
 }
 
@@ -937,34 +1012,36 @@ h3 {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: linear-gradient(180deg, #60a5fa, #22d3ee);
+  border-radius: 3px 0 0 3px;
+  background: linear-gradient(180deg, #3b82f6, #0ea5e9);
 }
 
 .premiumFeatureIcon {
   display: inline-flex;
-  width: 1.55rem;
-  height: 1.55rem;
+  width: 1.75rem;
+  height: 1.75rem;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: radial-gradient(circle at 30% 30%, #ffffff 0%, #dbeafe 68%);
-  color: #1e40af;
-  font-size: 0.78rem;
-  margin-bottom: 0.5rem;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
+  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+  color: #1d4ed8;
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin-bottom: 0.6rem;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
 }
 
 .premiumFeatureCard h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.02rem;
   line-height: 1.3;
 }
 
 .premiumFeatureCard p {
-  margin: 0.42rem 0 0;
-  color: #334155;
-  font-size: 0.92rem;
-  line-height: 1.5;
+  margin: 0.5rem 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+  line-height: 1.6;
 }
 
 .perkCard {
@@ -986,8 +1063,8 @@ h3 {
 }
 
 .testimonialsHero {
-  border: 1px solid #bfdbfe;
-  background: linear-gradient(145deg, #ffffff 0%, #f3f9ff 100%);
+  border: 1px solid rgba(191, 219, 254, 0.6);
+  background: linear-gradient(155deg, #ffffff 0%, #f6fbff 55%, #eef5ff 100%);
 }
 
 .testimonialsGrid {
@@ -1024,11 +1101,13 @@ h3 {
 }
 
 .testimonialCard {
-  border: 1px solid #dbeafe;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  padding: 0.9rem;
-  box-shadow: 0 12px 24px rgba(30, 64, 175, 0.1);
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 1.25rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(30, 64, 175, 0.08);
 }
 
 .testimonialCardActive {
@@ -1406,12 +1485,204 @@ h3 {
 }
 
 .campTypeShowcaseCard {
-  margin-top: 0.72rem;
+  margin-top: 0.9rem;
+  border: 1px solid rgba(191, 219, 254, 0.6);
+  border-radius: 22px;
+  background: linear-gradient(150deg, #ffffff 0%, #f6fbff 100%);
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, 0.04),
+    0 12px 32px rgba(30, 64, 175, 0.1);
+  overflow: hidden;
+}
+
+.pricingGrid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.pricingCard {
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 20px;
+  padding: 1.25rem;
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 20px rgba(30, 64, 175, 0.07);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.pricingCard.featured {
+  border-color: rgba(251, 191, 36, 0.6);
+  background: linear-gradient(155deg, #fffcf0 0%, #fffbe8 100%);
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 20px rgba(217, 119, 6, 0.1);
+}
+
+.pricingCard.accent {
+  border-color: rgba(167, 243, 208, 0.7);
+  background: linear-gradient(155deg, #f0fdf8 0%, #f0fdfb 100%);
+}
+
+.pricingLabel {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+}
+
+.pricingCard strong {
+  font-family: 'Sora', 'Manrope', 'Avenir Next', sans-serif;
+  font-size: 1.45rem;
+  color: #0f172a;
+}
+
+.pricingCard span {
+  color: #475569;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.pricingPromoCard {
+  margin-top: 0.95rem;
+  border: 1px solid #fbbf24;
+  border-radius: 18px;
+  padding: 0.95rem 1rem;
+  background: linear-gradient(145deg, #fff8e1 0%, #fffdf7 100%);
+  box-shadow: 0 14px 28px rgba(217, 119, 6, 0.1);
+}
+
+.pricingPromoCard strong {
+  display: block;
+  color: #7c2d12;
+}
+
+.pricingPromoCard p {
+  margin: 0.35rem 0 0;
+  color: #9a3412;
+}
+
+.campOptionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.campOptionCard {
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 20px;
+  padding: 1.25rem;
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 20px rgba(30, 64, 175, 0.07);
+}
+
+.campOptionCard.bootcamp {
+  border-color: rgba(254, 215, 170, 0.8);
+  background: linear-gradient(165deg, #ffffff 0%, #fff9f4 100%);
+}
+
+.campOptionCard h3 {
+  margin: 0.26rem 0 0;
+  font-size: 1.08rem;
+}
+
+.campOptionCard p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+}
+
+.campOptionFooter {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 1rem;
+  padding: 0 1rem 1rem;
+}
+
+.overnightMiniCard {
   border: 1px solid #bfdbfe;
   border-radius: 18px;
-  background: linear-gradient(150deg, #ffffff 0%, #eff6ff 100%);
-  box-shadow: 0 18px 36px rgba(30, 64, 175, 0.15);
-  overflow: hidden;
+  background: linear-gradient(145deg, #f8fafc 0%, #eff6ff 100%);
+  padding: 1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.overnightMiniCard p {
+  margin: 0;
+  color: #475569;
+}
+
+.dayTimeline {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.dayTimelineItem {
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 6px 16px rgba(30, 64, 175, 0.06);
+}
+
+.dayTimelineTime {
+  margin: 0;
+  color: #1d4ed8;
+  font-weight: 800;
+  font-size: 0.92rem;
+}
+
+.dayTimelineItem h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.dayTimelineItem p:last-child {
+  margin: 0.28rem 0 0;
+  color: #475569;
+}
+
+.daySupportGrid {
+  margin-top: 0.95rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.daySupportCard {
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 18px;
+  padding: 1.1rem;
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 6px 16px rgba(15, 23, 42, 0.05);
+}
+
+.daySupportCard strong {
+  display: block;
+  color: #0f172a;
+}
+
+.daySupportCard p {
+  margin: 0.34rem 0 0;
+  color: #475569;
 }
 
 .campTypeMediaPanel {
@@ -2444,18 +2715,20 @@ h3 {
 }
 
 .sectionMediaBanner {
-  margin: 0 0 0.85rem;
-  border: 1px solid #fde68a;
-  border-radius: 16px;
+  margin: 0 0 1.1rem;
+  border: 1px solid rgba(226, 232, 240, 0.6);
+  border-radius: 18px;
   overflow: hidden;
-  background: linear-gradient(135deg, #fefce8 0%, #f0fdf4 100%);
-  box-shadow: 0 14px 26px rgba(120, 53, 15, 0.12);
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, 0.04),
+    0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
 .sectionMediaBanner img {
   display: block;
   width: 100%;
-  max-height: 260px;
+  max-height: 280px;
   object-fit: cover;
 }
 
@@ -3512,17 +3785,19 @@ h3 {
 }
 
 .dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   border: none;
-  background: #bfdbfe;
+  background: #dbeafe;
   cursor: pointer;
   padding: 0;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .dot.active {
   background: #2563eb;
+  transform: scale(1.25);
 }
 
 .regSummarySticky {
@@ -4129,6 +4404,11 @@ h3 {
   background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
 }
 
+.paymentOptionCard--coral {
+  border-color: #fda4af;
+  background: linear-gradient(180deg, #fff5f5 0%, #ffe4e6 100%);
+}
+
 .paymentOptionTitle {
   margin: 0;
   font-size: 0.85rem;
@@ -4141,6 +4421,42 @@ h3 {
 .paymentOptionCard p {
   margin: 0;
   color: #475569;
+}
+
+.paymentOptionValueBox {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.paymentOptionValueBox span {
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.paymentOptionValueBox strong {
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.paymentOptionFeeLine {
+  color: #9a3412;
+  font-weight: 700;
+}
+
+.paymentFeeNotice {
+  margin-top: 0.7rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #fdba74;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  color: #9a3412;
 }
 
 .paymentSummaryPanel {
@@ -4334,55 +4650,40 @@ h3 {
   gap: 0.55rem;
 }
 
-.toggleHint {
-  margin: 0;
-  width: 100%;
-  font-size: 0.82rem;
-  line-height: 1.4;
-  color: #7c2d12;
-  font-weight: 700;
+.toggleHintBox {
   border: 1px solid #f59e0b;
-  border-radius: 10px;
+  border-radius: 12px;
   background:
     radial-gradient(120% 160% at 10% 10%, rgba(253, 224, 71, 0.45), transparent 58%),
     linear-gradient(145deg, #fffbeb 0%, #fef3c7 100%);
-  padding: 0.5rem 0.6rem;
+  padding: 0.6rem 0.7rem;
   box-shadow: 0 8px 16px rgba(180, 83, 9, 0.12);
+  display: grid;
+  gap: 0.18rem;
 }
 
-.toggleHintRow {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.tooltipBtn {
-  border: 1px solid #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 999px;
+.toggleHint {
+  margin: 0;
+  width: 100%;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  color: #7c2d12;
   font-weight: 800;
-  line-height: 1;
-  cursor: pointer;
+}
+
+.toggleHintSubline {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #92400e;
+  font-weight: 700;
 }
 
 .campTypeExplain {
   margin: 0;
   color: #334155;
   font-size: 0.86rem;
-  font-style: italic;
-}
-
-.tooltipBubble {
-  margin: 0;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid #bfdbfe;
-  border-radius: 10px;
-  background: #eff6ff;
-  color: #1e3a8a;
-  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .chipRow {
@@ -4941,11 +5242,13 @@ h3 {
 }
 
 .locationCard {
-  border: 1px solid #dbeafe;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  padding: 0.95rem;
-  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(219, 234, 254, 0.8);
+  border-radius: 20px;
+  background: #ffffff;
+  padding: 1.1rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 8px 20px rgba(37, 99, 235, 0.07);
 }
 
 .locationCardHead {
@@ -5364,9 +5667,15 @@ textarea:focus {
 }
 
 .button {
-  border: none;
+  border: 1px solid rgba(2, 132, 199, 0.4);
   color: #ffffff;
-  background: linear-gradient(120deg, #0369a1, #0284c7);
+  background: linear-gradient(135deg, #0369a1 0%, #0284c7 50%, #0ea5e9 100%);
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.06),
+    0 6px 18px rgba(3, 105, 161, 0.2);
+  font-size: 0.95rem;
+  padding: 0.72rem 1.2rem;
+  transition: transform 0.15s ease, box-shadow 0.18s ease;
 }
 
 .button:disabled {
@@ -6686,10 +6995,19 @@ textarea:focus {
   }
 
   .heroAchievementGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .heroCompactPoints {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .heroDecisionStrip,
+  .pricingGrid,
+  .campOptionsGrid,
+  .campOptionFooter,
+  .dayTimeline,
+  .daySupportGrid {
     grid-template-columns: 1fr;
   }
 
@@ -7010,20 +7328,24 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .page:not(.adminPage) .section {
+    margin-top: 1.25rem;
+  }
+
   .heroIntroRow {
     gap: 0.7rem;
   }
 
   .heroIntroLogo .pageHeroLogoImage,
   .heroIntroLogo .pageHeroLogoPlaceholder {
-    width: 92px;
-    height: 92px;
-    border-radius: 20px;
+    width: 88px;
+    height: 88px;
+    border-radius: 18px;
   }
 
   .page {
-    padding: 0.7rem;
-    padding-bottom: 10.8rem;
+    padding: 0.875rem;
+    padding-bottom: 11rem;
   }
 
   .page.registrationRoute {
@@ -7031,7 +7353,8 @@ textarea:focus {
   }
 
   .card {
-    padding: 1rem;
+    padding: 1.25rem;
+    border-radius: 20px;
   }
 
   .heroGalleryRail {
@@ -7095,8 +7418,16 @@ textarea:focus {
   .perkGrid,
   .premiumFeatureGrid,
   .scheduleList,
-  .surveyAgeGrid {
+  .surveyAgeGrid,
+  .daySupportGrid,
+  .heroAchievementGrid,
+  .heroCompactPoints {
     grid-template-columns: 1fr;
+  }
+
+  .dayTimelineItem {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
   }
 
   .registrationTabs {
@@ -7184,19 +7515,22 @@ textarea:focus {
 
   .mobileSectionNav {
     position: fixed;
-    left: 0.6rem;
-    right: 0.6rem;
-    bottom: 0.7rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
     z-index: 64;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.22rem;
-    padding: 0.35rem;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.94);
-    border: 1px solid #cbd5e1;
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
-    backdrop-filter: blur(6px);
+    padding: 0.4rem;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid rgba(203, 213, 225, 0.8);
+    box-shadow:
+      0 2px 8px rgba(15, 23, 42, 0.06),
+      0 16px 32px rgba(15, 23, 42, 0.14);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .adminFloatingSaveBar {
@@ -7216,11 +7550,12 @@ textarea:focus {
     text-align: center;
     font-size: 0.64rem;
     font-weight: 700;
-    color: #0f172a;
-    padding: 0.34rem 0.1rem;
-    border-radius: 10px;
-    background: #f8fafc;
-    border: 1px solid #dbe5f0;
+    color: #334155;
+    padding: 0.38rem 0.1rem;
+    border-radius: 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background 0.12s ease, color 0.12s ease;
   }
 
   .mobileSectionNav button {
@@ -7228,19 +7563,20 @@ textarea:focus {
     text-align: center;
     font-size: 0.64rem;
     font-weight: 800;
-    color: #7c2d12;
-    padding: 0.34rem 0.1rem;
-    border-radius: 10px;
-    background: linear-gradient(140deg, #fde68a 0%, #f59e0b 100%);
-    border: 1px solid #f59e0b;
+    color: #ffffff;
+    padding: 0.38rem 0.1rem;
+    border-radius: 12px;
+    background: linear-gradient(140deg, #2563eb 0%, #1d4ed8 100%);
+    border: 1px solid rgba(37, 99, 235, 0.4);
     cursor: pointer;
+    box-shadow: 0 4px 12px rgba(29, 78, 216, 0.28);
   }
 
   .mobileSectionNav a,
   .mobileSectionNav button {
     text-decoration: none;
     text-align: center;
-    min-height: 2.05rem;
+    min-height: 2.15rem;
   }
 
   .mobileSectionNav a:active {

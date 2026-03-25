@@ -11,6 +11,7 @@ import {
 } from '../../lib/campAdminApi'
 import {
   buildLeadJourneyMessage,
+  PAYMENT_METHODS_TEXT,
   buildReservationJourneyMessage,
 } from '../../lib/emailJourneyRenderer'
 import {
@@ -568,7 +569,24 @@ const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) 
         : index === 7
             ? 'P3'
             : 'P4',
-  timingLabel: item.dayLabel,
+  timingLabel:
+    index === 0
+      ? '0h'
+      : index === 1
+        ? '12h'
+        : index === 2
+          ? '36h'
+          : index === 3
+            ? '66h'
+            : index === 4
+              ? '72h'
+              : index === 5
+                ? '-7d'
+                : index === 6
+                  ? '-5d'
+                  : index === 7
+                    ? '-3d'
+                    : '-1d',
   description: item.objective,
 }))
 
@@ -578,6 +596,18 @@ function normalizeAdminEmail(value) {
 
 function buildTrackerCell(status = 'pending', at = '') {
   return { status, at }
+}
+
+function isArchivedRegistrationRecord(record) {
+  const entries = Array.isArray(record?.accounting_entries) ? record.accounting_entries : []
+  if (entries.length === 0) {
+    return false
+  }
+  return entries.every((entry) => Boolean(entry?.archived))
+}
+
+function isTestJourneyStatus(status = '') {
+  return String(status || '').startsWith('test_')
 }
 
 function formatTrackerDateTime(value) {
@@ -635,13 +665,21 @@ function buildLeadCriteria(row, isRegistered) {
   const dueOffsets = [0, 1, 3, 5, 7]
   const nextColumn = leadTrackerColumns.find((column) => {
     const status = row.steps[column.key]?.status || 'pending'
-    return !['sent', 'preview', 'closed'].includes(status)
+    return !isTrackerStepHandled(status)
   })
   const lines = [
     ...(isTestRow ? ['Admin test send: this is not a live lead automation'] : []),
     `Submitted ${formatTrackerDateTime(row.createdAt)}`,
     `Elapsed: ${formatElapsedSince(row.createdAt)}`,
   ]
+  if (isTestRow) {
+    if (isRegistered) {
+      lines.push('Blocked: this email already exists in registrations')
+    } else {
+      lines.push('Test rows do not autosend in the due-email processor')
+    }
+    return lines
+  }
   if (isRegistered) {
     lines.push('Blocked: this email already exists in registrations')
     return lines
@@ -675,8 +713,16 @@ function buildReservationCriteria(row) {
     `Submitted ${formatTrackerDateTime(row.createdAt)}`,
     `Elapsed: ${formatElapsedSince(row.createdAt)}`,
   ]
+  if (isTestRow) {
+    lines.push('Test rows do not autosend in the due-email processor')
+    return lines
+  }
   if (statusValue === 'paid') {
     lines.push('Paid: prep emails follow first camp-week timing')
+    return lines
+  }
+  if (!row?.runId) {
+    lines.push('No active journey run attached, so this row will not autosend from the tracker')
     return lines
   }
   const dueOffsetsHours = [0, 12, 36, 66, 72]
@@ -684,7 +730,7 @@ function buildReservationCriteria(row) {
     .filter((column) => String(column.key || '').startsWith('step_'))
     .find((column) => {
       const status = row.steps[column.key]?.status || 'pending'
-      return !['sent', 'preview', 'closed'].includes(status)
+      return !isTrackerStepHandled(status)
     })
   if (!nextColumn) {
     lines.push('All unpaid reminder steps already handled')
@@ -717,13 +763,15 @@ function getTrackerCellLabel(cell) {
       return 'Closed'
     case 'paid':
       return 'Paid'
+    case 'skipped':
+      return 'Auto-skipped'
     default:
       return '-'
   }
 }
 
 function isTrackerStepHandled(status = '') {
-  return ['sent', 'preview', 'closed'].includes(String(status || ''))
+  return ['sent', 'preview', 'closed', 'skipped'].includes(String(status || ''))
 }
 
 function isPaidPrepHandled(status = '') {
@@ -1610,6 +1658,7 @@ export default function AdminPage() {
       const stepNumber = Number(event?.step_number || 0)
       if (
         !eventType.startsWith('lead_journey_') &&
+        eventType !== 'lead_step_auto_skipped' &&
         eventType !== 'test_sent_lead' &&
         eventType !== 'test_preview_only_lead'
       ) {
@@ -1623,6 +1672,8 @@ export default function AdminPage() {
         row.steps[key] = buildTrackerCell('sent', event?.event_at)
       } else if ((eventType === 'lead_journey_preview' || eventType === 'test_preview_only_lead') && row.steps[key].status !== 'sent') {
         row.steps[key] = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'lead_step_auto_skipped' && row.steps[key].status === 'pending') {
+        row.steps[key] = buildTrackerCell('skipped', event?.event_at)
       } else if (eventType === 'lead_journey_error' && row.steps[key].status === 'pending') {
         row.steps[key] = buildTrackerCell('error', event?.event_at)
       }
@@ -1653,10 +1704,12 @@ export default function AdminPage() {
     const nonLeadRuns = emailJourneyRuns
       .filter((run) => !String(run?.status || '').startsWith('lead_'))
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    const liveNonLeadRuns = nonLeadRuns.filter((run) => !isTestJourneyStatus(run?.status))
+    const testNonLeadRuns = nonLeadRuns.filter((run) => isTestJourneyStatus(run?.status))
 
     const getDistance = (left, right) => Math.abs(new Date(left || 0).getTime() - new Date(right || 0).getTime())
 
-    for (const run of nonLeadRuns) {
+    for (const run of liveNonLeadRuns) {
       const email = normalizeAdminEmail(run?.email)
       if (!email) continue
       if (!unmatchedRunsByEmail.has(email)) {
@@ -1668,6 +1721,7 @@ export default function AdminPage() {
     for (const registration of registrationRecords) {
       const email = normalizeAdminEmail(registration?.guardian_email)
       if (!email) continue
+      const registrationArchived = isArchivedRegistrationRecord(registration)
       const key = `registration-${registration.id}`
       const row = {
         key,
@@ -1700,6 +1754,9 @@ export default function AdminPage() {
           row.status = matchedRun?.status || ''
         }
       }
+      if (registrationArchived && !row.runId) {
+        continue
+      }
       rows.push(row)
       rowByKey.set(key, row)
       if (row.runId) {
@@ -1707,7 +1764,7 @@ export default function AdminPage() {
       }
     }
 
-    for (const run of nonLeadRuns) {
+    for (const run of liveNonLeadRuns) {
       const runId = Number(run?.id || 0)
       if (!runId || rowByRunId.has(runId)) continue
       const email = normalizeAdminEmail(run?.email)
@@ -1733,6 +1790,28 @@ export default function AdminPage() {
         row.registrationType = String(
           (parseMaybeJson(matchingRegistration?.medical_notes, {}) || {})?.registrationType || ''
         ).trim()
+      }
+      rows.push(row)
+      rowByKey.set(key, row)
+      rowByRunId.set(runId, row)
+    }
+
+    for (const run of testNonLeadRuns) {
+      const runId = Number(run?.id || 0)
+      if (!runId || rowByRunId.has(runId)) continue
+      const email = normalizeAdminEmail(run?.email)
+      const key = `test-run-${runId}`
+      const row = {
+        key,
+        registrationId: null,
+        runId,
+        email,
+        guardianName: '',
+        createdAt: run?.created_at || '',
+        status: run?.status || '',
+        registrationType: '',
+        criteria: [],
+        steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
       rows.push(row)
       rowByKey.set(key, row)
@@ -1775,6 +1854,10 @@ export default function AdminPage() {
         if (row.steps[`step_${stepNumber}`].status !== 'sent') {
           row.steps[`step_${stepNumber}`] = buildTrackerCell('preview', event?.event_at)
         }
+      } else if (eventType === 'reservation_step_auto_skipped' && stepNumber >= 1 && stepNumber <= 5) {
+        if (row.steps[`step_${stepNumber}`].status === 'pending') {
+          row.steps[`step_${stepNumber}`] = buildTrackerCell('skipped', event?.event_at)
+        }
       } else if (eventType === 'paid_prep_7d_sent') {
         row.steps.paid_7d = buildTrackerCell('sent', event?.event_at)
       } else if (eventType === 'paid_prep_5d_sent') {
@@ -1813,19 +1896,36 @@ export default function AdminPage() {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   }, [emailEvents, emailJourneyRuns, registrationRecords])
   const standardReservationJourneyTrackerRows = useMemo(
-    () => reservationJourneyTrackerRows.filter((row) => row.registrationType !== 'overnight-only'),
+    () =>
+      reservationJourneyTrackerRows.filter(
+        (row) => row.registrationType !== 'overnight-only' && !isTestJourneyStatus(row.status)
+      ),
     [reservationJourneyTrackerRows]
   )
   const overnightReservationJourneyTrackerRows = useMemo(
-    () => reservationJourneyTrackerRows.filter((row) => row.registrationType === 'overnight-only'),
+    () =>
+      reservationJourneyTrackerRows.filter(
+        (row) => row.registrationType === 'overnight-only' && !isTestJourneyStatus(row.status)
+      ),
+    [reservationJourneyTrackerRows]
+  )
+  const testReservationJourneyTrackerRows = useMemo(
+    () => reservationJourneyTrackerRows.filter((row) => isTestJourneyStatus(row.status)),
     [reservationJourneyTrackerRows]
   )
   const activeReservationJourneyTrackerRows = useMemo(
     () =>
       activeReservationTrackerView === 'overnight'
         ? overnightReservationJourneyTrackerRows
-        : standardReservationJourneyTrackerRows,
-    [activeReservationTrackerView, overnightReservationJourneyTrackerRows, standardReservationJourneyTrackerRows]
+        : activeReservationTrackerView === 'tests'
+          ? testReservationJourneyTrackerRows
+          : standardReservationJourneyTrackerRows,
+    [
+      activeReservationTrackerView,
+      overnightReservationJourneyTrackerRows,
+      standardReservationJourneyTrackerRows,
+      testReservationJourneyTrackerRows,
+    ]
   )
   const reservationRunIdByRegistrationId = useMemo(() => {
     const map = {}
@@ -2042,7 +2142,7 @@ export default function AdminPage() {
     const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
     const dayOffsets = [0, 1, 3, 5, 7]
     for (const row of leadJourneyTrackerRows) {
-      if (row.isRegistered || !row.createdAt) continue
+      if (row.isRegistered || !row.createdAt || String(row.status || '').startsWith('test_')) continue
       const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
       if (!nextColumn) continue
       const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
@@ -2058,7 +2158,7 @@ export default function AdminPage() {
     const now = Date.now()
     const upcomingBoundary = now + 24 * 60 * 60 * 1000
     for (const row of leadJourneyTrackerRows) {
-      if (row.isRegistered || !row.createdAt) continue
+      if (row.isRegistered || !row.createdAt || String(row.status || '').startsWith('test_')) continue
       const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
       if (!nextColumn) continue
       const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
@@ -2075,7 +2175,7 @@ export default function AdminPage() {
     const now = Date.now()
     for (const row of reservationJourneyTrackerRows) {
       const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0 || !row.createdAt) continue
+      if (registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
         const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
@@ -2103,6 +2203,10 @@ export default function AdminPage() {
         continue
       }
 
+      if (!row.runId) {
+        continue
+      }
+
       const nextColumn = reservationTrackerColumns
         .filter((column) => String(column.key || '').startsWith('step_'))
         .find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
@@ -2121,7 +2225,7 @@ export default function AdminPage() {
     const upcomingBoundary = now + 24 * 60 * 60 * 1000
     for (const row of reservationJourneyTrackerRows) {
       const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0 || !row.createdAt) continue
+      if (registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
         const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
@@ -2146,6 +2250,10 @@ export default function AdminPage() {
           }
           break
         }
+        continue
+      }
+
+      if (!row.runId) {
         continue
       }
 
@@ -2219,6 +2327,9 @@ export default function AdminPage() {
     if (row?.isRegistered || !row?.createdAt || !column?.key) {
       return ''
     }
+    if (String(row?.status || '').startsWith('test_')) {
+      return ''
+    }
     const nextColumn = leadTrackerColumns.find((item) => !isTrackerStepHandled(row.steps[item.key]?.status))
     if (!nextColumn || nextColumn.key !== column.key) {
       return ''
@@ -2240,6 +2351,12 @@ export default function AdminPage() {
   }
   const getReservationTrackerTimingState = (row, column) => {
     if (!row?.createdAt || !column?.key) {
+      return ''
+    }
+    if (String(row?.status || '').startsWith('test_')) {
+      return ''
+    }
+    if (!row?.runId && String(row?.status || '') !== 'paid') {
       return ''
     }
     const now = Date.now()
@@ -2403,6 +2520,8 @@ export default function AdminPage() {
   const activeLeadJourneyTemplate = config.emailJourney[activeJourneyTab] || config.emailJourney[0]
   const activeReservationTemplate =
     reservationJourneyTemplates[activeReservationJourneyTab] || reservationJourneyTemplates[0]
+  const isLeadJourneyFlow = activeJourneyFlow === 'lead'
+  const isOvernightJourneyFlow = activeJourneyFlow === 'overnight'
 
   function getLevelUpScreenshotCaption(index) {
     return (
@@ -2493,7 +2612,7 @@ export default function AdminPage() {
       .replaceAll('{registration_link}', registrationLink)
       .replaceAll(
         '{payment_methods}',
-        'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd'
+        PAYMENT_METHODS_TEXT
       )
       .replaceAll('{reservation_deadline}', 'May 20, 5:00 PM')
       .replaceAll(
@@ -2512,7 +2631,7 @@ export default function AdminPage() {
       recommended_plan:
         'General Camp with progression options. If your camper wishes to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
       registration_link: 'https://summer.newushu.com/register',
-      payment_methods: 'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd',
+      payment_methods: PAYMENT_METHODS_TEXT,
       reservation_deadline: 'May 20, 5:00 PM EDT',
       registration_summary:
         'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
@@ -2521,12 +2640,65 @@ export default function AdminPage() {
     }
   }
 
+  function buildReservationPreviewPayload(previewType = 'standard') {
+    if (previewType === 'overnight') {
+      return {
+        registrationType: 'overnight-only',
+        guardianName: 'Calvin Chen',
+        camperNames: ['Ethan Chen'],
+        location: 'Camp House (Address TBA)',
+        paymentMethod: 'Zelle',
+        amountDue: 1860,
+        campWeeks: [
+          { start: '2026-07-12', end: '2026-07-18' },
+          { start: '2026-07-19', end: '2026-07-25' },
+        ],
+        summaryLines: [
+          'Overnight Camp registration',
+          'Parent/Guardian: Calvin Chen',
+          'Contact: calvin@example.com',
+          'Payment method: Zelle',
+          'Overnight student 1: Jul 12 - Jul 18, Jul 19 - Jul 25 | Activities: Sanda fundamentals, Flexibility training, Video review',
+          'Drop-off: Sunday 1:00 PM',
+          'Pickup: Saturday 4:00 PM',
+          'Location: Camp House (Address TBA)',
+          'Week 1: $980.00. Week 2 gets an extra $100.00 off for $880.00.',
+          'Tuition covers lodging and food only. Outing costs are billed separately.',
+          'Grand total: $1,860.00',
+        ],
+      }
+    }
+
+    return {
+      registrationType: '',
+      guardianName: 'Calvin Chen',
+      camperNames: ['Ethan Chen'],
+      location: 'Burlington',
+      paymentMethod: 'Zelle',
+      amountDue: 1680,
+      campWeeks: [
+        { start: '2026-07-07', end: '2026-07-11' },
+        { start: '2026-07-14', end: '2026-07-18' },
+      ],
+      summaryLines: [
+        'Location: Burlington',
+        'Parent/Guardian: Calvin Chen',
+        'Contact: calvin@example.com',
+        'Payment method: Zelle',
+        'Ethan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri',
+        'Grand total: $1,680.00',
+        'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:00 PM',
+      ],
+    }
+  }
+
   function buildJourneyPreviewHtmlFromTemplate(stepIndex, template, flowKey = 'lead') {
-    if (flowKey === 'reservation') {
+    if (flowKey === 'reservation' || flowKey === 'overnight') {
       return buildReservationJourneyMessage({
         stepNumber: stepIndex + 1,
         logoUrl: config.media?.welcomeLogoUrl || '',
         landingCarouselImageUrls: config.media?.landingCarouselImageUrls || [],
+        payload: buildReservationPreviewPayload(flowKey === 'overnight' ? 'overnight' : 'standard'),
       }).html
     }
 
@@ -2562,6 +2734,7 @@ export default function AdminPage() {
           toEmail: recipient,
           stepNumber: stepIndex + 1,
           flowKey,
+          previewRegistrationType: flowKey === 'overnight' ? 'overnight-only' : 'standard',
           template: {
             subject: renderJourneyTemplate(template.subject),
             body: renderJourneyTemplate(template.body),
@@ -2605,8 +2778,8 @@ export default function AdminPage() {
       })
     }
 
-    setSavedMessage(
-      result?.previewOnly
+      setSavedMessage(
+        result?.previewOnly
         ? 'Template preview succeeded. Configure SES to send real test emails.'
         : `Step ${stepIndex + 1} test email sent to ${recipient}.`
     )
@@ -5964,7 +6137,7 @@ export default function AdminPage() {
       <section className="card section">
         <h2>Email Journey Builder</h2>
         <p className="subhead">
-          Two automation flows: families who shared email but did not submit registration, and submitted-registration 72-hour payment reminders.
+          Three automation views: survey leads, standard submitted-registration reminders, and overnight submitted-registration reminders.
         </p>
         <div className="journeyFlowTabs" role="tablist" aria-label="Journey flow type">
           <button
@@ -5985,6 +6158,15 @@ export default function AdminPage() {
           >
             Submitted Registration 72h
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeJourneyFlow === 'overnight'}
+            className={`journeyFlowTabBtn ${activeJourneyFlow === 'overnight' ? 'active' : ''}`}
+            onClick={() => setActiveJourneyFlow('overnight')}
+          >
+            Overnight Registration 72h
+          </button>
         </div>
         <div className="adminGrid journeyBuilderGrid">
           <label>
@@ -5997,7 +6179,7 @@ export default function AdminPage() {
             />
           </label>
           <div className="adminActions">
-            {activeJourneyFlow === 'lead' ? (
+            {isLeadJourneyFlow ? (
               <button type="button" className="button secondary" onClick={applyPremiumJourneyTemplates}>
                 Load Premium Templates
               </button>
@@ -6007,21 +6189,21 @@ export default function AdminPage() {
               className="button secondary"
               onClick={() =>
                 sendTestEmailForStep(
-                  activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
-                  activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
+                  isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
                   activeJourneyFlow
                 )
               }
               disabled={sendingTestStep > 0}
             >
-              {sendingTestStep === (activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+              {sendingTestStep === (isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
                 ? 'Sending test...'
-                : `Send Test for Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+                : `Send Test for Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
             </button>
           </div>
         </div>
         <div className="journeyGrid">
-          {(activeJourneyFlow === 'lead' ? emailJourneyBlueprint : reservationJourneyBlueprint).map((item) => (
+          {(isLeadJourneyFlow ? emailJourneyBlueprint : reservationJourneyBlueprint).map((item) => (
             <article key={item.step} className="journeyCard">
               <p className="journeyDay">{item.step}</p>
               <h4>{item.objective}</h4>
@@ -6030,12 +6212,12 @@ export default function AdminPage() {
           ))}
         </div>
         <div className="surveySubTabs">
-          {(activeJourneyFlow === 'lead' ? config.emailJourney : reservationJourneyTemplates).map((item, index) => (
+          {(isLeadJourneyFlow ? config.emailJourney : reservationJourneyTemplates).map((item, index) => (
             <button
               key={`${item.dayLabel}-${index}`}
               type="button"
               className={`subTabBtn ${
-                activeJourneyFlow === 'lead'
+                isLeadJourneyFlow
                   ? activeJourneyTab === index
                     ? 'active'
                     : ''
@@ -6044,12 +6226,12 @@ export default function AdminPage() {
                     : ''
               }`}
               onClick={() =>
-                activeJourneyFlow === 'lead'
+                isLeadJourneyFlow
                   ? setActiveJourneyTab(index)
                   : setActiveReservationJourneyTab(index)
               }
             >
-              {activeJourneyFlow === 'lead'
+              {isLeadJourneyFlow
                 ? `Step ${index + 1}`
                 : reservationJourneyBlueprint[index]?.step || `Step ${index + 1}`}
             </button>
@@ -6058,13 +6240,13 @@ export default function AdminPage() {
         <article className="journeyCard adminJourneyCard">
           <p className="journeyDay">Selected Step</p>
           <h4>
-            {(activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate)?.title ||
-              `Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+            {(isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate)?.title ||
+              `Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
           </h4>
           <p className="subhead">
             Manual send checks all due journey thresholds and logs each email as it goes. If a step is overdue, it sends immediately on this run.
           </p>
-          {activeJourneyFlow === 'lead' ? (
+          {isLeadJourneyFlow ? (
             <div className="adminGrid">
               <label>
                 Day label
@@ -6119,43 +6301,45 @@ export default function AdminPage() {
               {processingJourneyEmails ? 'Processing all due emails...' : 'Send All Due Journey Emails Now'}
             </button>
             <span>
-              {(activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate)?.dayLabel || ''}
+              {(isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate)?.dayLabel || ''}
             </span>
             <button
               type="button"
               className="button secondary"
               onClick={() =>
                 sendTestEmailForStep(
-                  activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
-                  activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
+                  isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
                   activeJourneyFlow
                 )
               }
               disabled={sendingTestStep > 0}
             >
-              {sendingTestStep === (activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+              {sendingTestStep === (isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
                 ? 'Sending test...'
-                : `Send Test for Step ${activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+                : `Send Test for Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
             </button>
           </div>
           <p className="subhead">
-            {activeJourneyFlow === 'lead'
+            {isLeadJourneyFlow
               ? 'Click step tabs to review premium survey-lead emails in live preview.'
-              : 'Click step tabs to review premium submitted-registration reminder emails in live preview.'}
+              : isOvernightJourneyFlow
+                ? 'Click step tabs to review the overnight registration reminder version in live preview.'
+                : 'Click step tabs to review premium submitted-registration reminder emails in live preview.'}
           </p>
         </article>
         <article className="journeyCard adminJourneyCard">
           <p className="journeyDay">
-            Live Preview (Step {activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1})
+            Live Preview (Step {isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1})
           </p>
           <iframe
             title={`Journey email preview step ${
-              activeJourneyFlow === 'lead' ? activeJourneyTab + 1 : activeReservationJourneyTab + 1
+              isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1
             }`}
             className="adminEmailPreviewFrame"
             srcDoc={buildJourneyPreviewHtmlFromTemplate(
-              activeJourneyFlow === 'lead' ? activeJourneyTab : activeReservationJourneyTab,
-              activeJourneyFlow === 'lead' ? activeLeadJourneyTemplate : activeReservationTemplate,
+              isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
+              isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
               activeJourneyFlow
             )}
           />
@@ -7167,12 +7351,21 @@ export default function AdminPage() {
               >
                 Overnight Registration 72h ({overnightReservationJourneyTrackerRows.length})
               </button>
+              <button
+                type="button"
+                className={`adminSubTabBtn ${activeReservationTrackerView === 'tests' ? 'active' : ''}`}
+                onClick={() => setActiveReservationTrackerView('tests')}
+              >
+                Test Runs ({testReservationJourneyTrackerRows.length})
+              </button>
             </div>
             {activeReservationJourneyTrackerRows.length === 0 ? (
               <p className="subhead">
                 {activeReservationTrackerView === 'overnight'
                   ? 'No overnight registration journeys yet.'
-                  : 'No registered-family journeys yet.'}
+                  : activeReservationTrackerView === 'tests'
+                    ? 'No test reservation runs yet.'
+                    : 'No registered-family journeys yet.'}
               </p>
             ) : (
               <div className="tuitionTableWrap trackerTableWrap">

@@ -1,11 +1,14 @@
 import { supabaseServer, supabaseServerEnabled } from '../../../../lib/supabaseServer'
 import { sendWithSes } from '../../../../lib/emailProvider'
 import { buildPaymentPageHref } from '../../../../lib/paymentPageLink'
+import { buildPaymentSummaryPdfBase64 } from '../../../../lib/paymentSummaryPdf'
 
 const CAMP_NAME = 'New England Wushu Summer Camp'
 const PAYMENT_METHODS_TEXT = [
-  'Zelle: wushu688@gmail.com',
-  'Venmo: @newushu',
+  'Zelle: wushu688@gmail.com (name: Xiaoyi Chen, head coach)',
+  'Venmo: @newushu (Calvin newushu, head coach at New England Wushu)',
+  'Venmo note: please use Friends & Family to avoid fees. If you choose Goods & Services, add 3.5%.',
+  'Cash: exact change only; hand payment directly to Calvin or Xiaoyi Chen.',
   'Check (payable to Newushu): 123 Muller Rd',
 ].join('\n')
 const SHOULD_ATTACH_RESERVATION_PDF =
@@ -177,6 +180,14 @@ function formatCurrency(value) {
   return `$${amount.toFixed(2)}`
 }
 
+function calculateVenmoGoodsServicesTotal(amount) {
+  const baseAmount = Number(amount || 0)
+  if (!Number.isFinite(baseAmount) || baseAmount <= 0) {
+    return 0
+  }
+  return Math.round(baseAmount * 1.035 * 100) / 100
+}
+
 function parseDateOnly(value) {
   const raw = String(value || '').trim()
   if (!raw) {
@@ -265,52 +276,6 @@ function getUpsellOfferLines(payload) {
     'Points can be saved for prizes, equipment, and future discounts during the fall or spring season.',
     offerLine,
   ]
-}
-
-function escapePdfText(input) {
-  return String(input || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)')
-}
-
-function buildSimplePdfBase64({ title, lines }) {
-  const maxLines = 42
-  const normalizedLines = [String(title || 'Payment Summary'), ...(Array.isArray(lines) ? lines : [])]
-    .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .slice(0, maxLines)
-  const contentRows = [
-    'BT',
-    '/F1 12 Tf',
-    '50 760 Td',
-    '15 TL',
-    ...normalizedLines.map((line) => `(${escapePdfText(line)}) Tj T*`),
-    'ET',
-  ]
-  const stream = contentRows.join('\n')
-  const objects = [
-    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
-    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
-    '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj',
-    `4 0 obj << /Length ${Buffer.byteLength(stream, 'utf8')} >> stream\n${stream}\nendstream endobj`,
-    '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
-  ]
-
-  let pdf = '%PDF-1.4\n'
-  const offsets = [0]
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf, 'utf8'))
-    pdf += `${object}\n`
-  }
-  const xrefStart = Buffer.byteLength(pdf, 'utf8')
-  pdf += `xref\n0 ${objects.length + 1}\n`
-  pdf += '0000000000 65535 f \n'
-  for (let index = 1; index <= objects.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`
-  }
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`
-  return Buffer.from(pdf, 'utf8').toString('base64')
 }
 
 function buildRegistrationSummaryHtml(summaryLines) {
@@ -412,7 +377,7 @@ function buildInfoCard({ title, accentColor, background, borderColor, bodyHtml }
   `
 }
 
-function buildPaymentMethodsHtml() {
+function buildPaymentMethodsHtml(amountDue = 0) {
   const rows = PAYMENT_METHODS_TEXT.split('\n')
     .map((line) => {
       const [label, ...valueParts] = line.split(':')
@@ -428,6 +393,7 @@ function buildPaymentMethodsHtml() {
       `
     })
     .join('')
+  const goodsServicesTotal = calculateVenmoGoodsServicesTotal(amountDue)
 
   return buildInfoCard({
     title: 'Payment Methods',
@@ -438,6 +404,13 @@ function buildPaymentMethodsHtml() {
       <table style="width:100%;border-collapse:collapse;border:1px solid #fdba74;border-radius:12px;overflow:hidden;background:#fffefc;">
         <tbody>${rows}</tbody>
       </table>
+      ${
+        goodsServicesTotal > 0
+          ? `<div style="margin-top:10px;padding:10px 12px;border:1px solid #fdba74;border-radius:12px;background:#fff7ed;color:#9a3412;">
+              Venmo Goods &amp; Services total: <strong>${escapeHtml(formatCurrency(goodsServicesTotal))}</strong>
+            </div>`
+          : ''
+      }
     `,
   })
 }
@@ -500,7 +473,7 @@ function buildEmailHtml({
     `
       : ''
 
-  const paymentMethodsHtml = showPaymentMethods ? buildPaymentMethodsHtml() : ''
+  const paymentMethodsHtml = showPaymentMethods ? buildPaymentMethodsHtml(amountDue) : ''
   const upsellHtml = buildUpsellHtml(payload)
   const levelUpHtml = buildLevelUpHtml(payload)
 
@@ -769,6 +742,34 @@ function nextSendAtIso(submittedAtIso, currentStep, status) {
   return new Date(Date.now() + 5 * 60 * 1000).toISOString()
 }
 
+async function insertReservationAutoSkippedEvents(run, fromStep, sentStep) {
+  const startStep = Math.max(1, Number(fromStep || 0))
+  const endStep = Math.min(5, Number(sentStep || 0))
+  if (endStep <= startStep) {
+    return
+  }
+  const rows = []
+  for (let step = startStep; step < endStep; step += 1) {
+    rows.push({
+      run_id: run.id,
+      profile_id: run.profile_id,
+      email: run.email,
+      step_number: step,
+      event_type: 'reservation_step_auto_skipped',
+      subject: 'Reservation reminder auto-skipped',
+      body_preview: `Step ${step} was checked off because later overdue reminder R${endStep} was sent instead.`,
+      event_payload: {
+        phase: 'unpaid',
+        skippedBecauseLaterStepSent: true,
+        sentStepNumber: endStep,
+      },
+    })
+  }
+  if (rows.length > 0) {
+    await supabaseServer.from('email_journey_events').insert(rows)
+  }
+}
+
 function getPaidPrepSchedule(payload) {
   const campWeeks = normalizeCampWeeks(payload)
   if (campWeeks.length === 0) {
@@ -1026,17 +1027,6 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
   })
   const attachInvoicePdf = SHOULD_ATTACH_RESERVATION_PDF && summaryLines.length > 0
   const attachmentLines = [
-    `Camp: ${CAMP_NAME}`,
-    `Guardian: ${payload?.guardianName || firstName}`,
-    `Recipient: ${recipientEmail}`,
-    `Submitted: ${new Date(submittedAtIso).toLocaleString('en-US')}`,
-    `Reservation deadline: ${reservationDeadlineLabel}`,
-    `Amount due: ${formatCurrency(amountDue)}`,
-    '',
-    'Payment methods:',
-    ...PAYMENT_METHODS_TEXT.split('\n'),
-    '',
-    'Registration summary:',
     ...summaryLines,
   ]
   const attachments = attachInvoicePdf
@@ -1044,9 +1034,16 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
         {
           filename: 'camp-payment-summary.pdf',
           contentType: 'application/pdf',
-          contentBase64: buildSimplePdfBase64({
+          contentBase64: buildPaymentSummaryPdfBase64({
             title: `${CAMP_NAME} Payment Summary`,
-            lines: attachmentLines,
+            campName: CAMP_NAME,
+            guardianName: payload?.guardianName || firstName,
+            recipientEmail,
+            submittedLabel: new Date(submittedAtIso).toLocaleString('en-US'),
+            reservationDeadlineLabel,
+            amountDueLabel: formatCurrency(amountDue),
+            paymentMethods: PAYMENT_METHODS_TEXT.split('\n'),
+            summaryLines: attachmentLines,
           }),
         },
       ]
@@ -1316,6 +1313,7 @@ async function processDueReservationJourneys() {
         continue
       }
 
+      await insertReservationAutoSkippedEvents(run, Number(run.current_step || 0) + 1, dueStep)
       await sendJourneyEmail({ run, payload, stepNumber: dueStep })
       emailed += 1
 
