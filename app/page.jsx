@@ -1025,7 +1025,7 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [stepDirection, setStepDirection] = useState('next')
-  const [countdownNow, setCountdownNow] = useState(() => new Date())
+  const [countdownNow, setCountdownNow] = useState(null)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [assistantCollapsed, setAssistantCollapsed] = useState(() => readAssistantCollapsedDraft())
   const [isDiscountCollapsed, setIsDiscountCollapsed] = useState(false)
@@ -1375,6 +1375,9 @@ export default function HomePage() {
   }, [summaries, weeksById])
 
   const discountActive = useMemo(() => {
+    if (!countdownNow) {
+      return false
+    }
     const end = parseDateLocal(adminConfig.tuition.discountEndDate)
     if (!end) {
       return false
@@ -1383,6 +1386,9 @@ export default function HomePage() {
     return countdownNow.getTime() <= endDateTime.getTime()
   }, [adminConfig.tuition.discountEndDate, countdownNow])
   const discountCountdown = useMemo(() => {
+    if (!countdownNow) {
+      return null
+    }
     const end = parseDateLocal(adminConfig.tuition.discountEndDate)
     if (!end) {
       return null
@@ -1524,6 +1530,7 @@ export default function HomePage() {
   }, [isRegistrationRoute])
 
   useEffect(() => {
+    setCountdownNow(new Date())
     const timer = window.setInterval(() => {
       setCountdownNow(new Date())
     }, 1000)
@@ -2555,6 +2562,31 @@ export default function HomePage() {
     if (expandedStudentId === studentId) {
       setExpandedStudentId('')
     }
+  }
+
+  function confirmAndRemoveStudent(studentId) {
+    if (registration.students.length <= 1) {
+      return
+    }
+    const studentIndex = registration.students.findIndex((student) => student.id === studentId)
+    const student = registration.students[studentIndex]
+    if (!student) {
+      return
+    }
+    const label = student.fullName.trim() || `Camper ${studentIndex + 1}`
+    const confirmed =
+      typeof window === 'undefined'
+        ? true
+        : window.confirm(
+            text(
+              `This will remove camper ${label} from registration.`,
+              `这将把营员 ${label} 从报名中移除。`
+            )
+          )
+    if (!confirmed) {
+      return
+    }
+    removeStudent(studentId)
   }
 
   function clearRegistrationForm() {
@@ -4186,8 +4218,8 @@ export default function HomePage() {
         <h2>{text('Welcome to Wushu Summer Camp', '欢迎来到武术夏令营')}</h2>
         <p className="startAwardLine">
           {text(
-            'Winner of 2025, 2025, 2025, 2023 Best Martial Arts School',
-            '荣获 2025、2025、2025、2023 年度最佳武术学校'
+            'Winner of 2022, 2023, 2024, 2025, and 2026 Best Martial Arts School in the area',
+            '荣获 2022、2023、2024、2025 和 2026 年本地区最佳武术学校'
           )}
         </p>
         <p className="startWushuLine">
@@ -4349,7 +4381,7 @@ export default function HomePage() {
         </p>
         <div className="startGoSummerInline">
           <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
-            {text('Go to Summer Camp Landing Page', '进入夏令营主页')}
+            {text('Go to Summer Day Camp Page', '进入夏令营日营页面')}
           </button>
           <a className="button secondary goSummerChip" href="/overnight">
             {text('Go to Overnight Camp Page', '进入过夜营页面')}
@@ -4751,7 +4783,7 @@ export default function HomePage() {
         >
           <div className="mobileOverlayTopActions desktopSurveyTopActions">
             <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
-              {text('Go to Summer Camp Page', '进入夏令营页面')}
+              {text('Go to Summer Day Camp Page', '进入夏令营日营页面')}
             </button>
             <button
               type="button"
@@ -5938,7 +5970,7 @@ export default function HomePage() {
               {text('Clear form', '清空表单')}
             </button>
             <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
-              {text('Go to Summer Camp Page', '进入夏令营页面')}
+              {text('Go to Summer Day Camp Page', '进入夏令营日营页面')}
             </button>
           </div>
         </header>
@@ -5985,30 +6017,12 @@ export default function HomePage() {
         </div>
 
         <div className="regSummarySticky">
-          <div className="regSummaryTopRow">
-            <div className="registrationLocationBanner registrationLocationSummaryCard compact">
-              <span className="registrationLocationLabel">{text('Registration location', '报名地点')}</span>
-              <strong>{selectedLocationLabel}</strong>
-              <span className="registrationLocationHintText">{text('Tap to change location', '点击切换地点')}</span>
-              <div className="registrationLocationInlineToggle" role="group" aria-label={text('Choose registration location', '选择报名地点')}>
-                {LOCATION_OPTIONS.map((option) => {
-                  const active = registration.location === option.value
-                  return (
-                    <button
-                      key={`summary-location-${option.value}`}
-                      type="button"
-                      className={`registrationLocationToggleBtn ${active ? 'active' : ''}`}
-                      aria-pressed={active}
-                      onClick={() => updateContact('location', option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-            <button type="button" className="button siblingAddButton regSummaryAddCamper" onClick={addStudent}>
-              {text('+ Add sibling camper', '+ 添加兄弟姐妹营员')}
+          <div className="registrationStatusRow regSummaryStatusBar">
+            <span className={`registrationStatusChip ${registrationIsSubmitted ? 'submitted' : 'pending'}`}>
+              {registrationIsSubmitted ? text('Registration Submitted', '报名已提交') : text('Registration Not Confirmed', '报名未确认')}
+            </span>
+            <button type="button" className="button siblingAddButton regSummaryAddCamperSmall" onClick={addStudent}>
+              {text('+ Add camper', '+ 添加营员')}
             </button>
           </div>
           <div className="regSummaryCamperSwitch regSummaryCamperSwitchTop" aria-label="Camper switcher">
@@ -6017,23 +6031,32 @@ export default function HomePage() {
               const active = resolvedActiveStudentId === student.id
               const missing = isCamperMissingAnyStep(student)
               return (
-                <button
+                <div
                   key={`summary-camper-top-${student.id}`}
-                  type="button"
                   className={`registrationCamperTab regSummaryCamperChip ${active ? 'active' : ''}`}
-                  onClick={() => activateCamper(student.id)}
-                  aria-pressed={active}
                 >
-                  {label}
-                  {missing ? <span className="registrationCamperAlertDot" aria-hidden="true" /> : null}
-                </button>
+                  <button
+                    type="button"
+                    className="regSummaryCamperMainBtn"
+                    onClick={() => activateCamper(student.id)}
+                    aria-pressed={active}
+                  >
+                    <span>{label}</span>
+                    {missing ? <span className="registrationCamperAlertDot" aria-hidden="true" /> : null}
+                  </button>
+                  {registration.students.length > 1 ? (
+                    <button
+                      type="button"
+                      className="regSummaryCamperRemoveBtn"
+                      aria-label={text(`Remove ${label}`, `移除 ${label}`)}
+                      onClick={() => confirmAndRemoveStudent(student.id)}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
               )
             })}
-          </div>
-          <div className="registrationStatusRow">
-            <span className={`registrationStatusChip ${registrationIsSubmitted ? 'submitted' : 'pending'}`}>
-              {registrationIsSubmitted ? text('Registration Submitted', '报名已提交') : text('Registration Not Confirmed', '报名未确认')}
-            </span>
           </div>
           <button
             type="button"
@@ -6044,14 +6067,42 @@ export default function HomePage() {
             <span>
               <strong>{text('Registration summary', '报名摘要')}</strong>
               <em>
-                {registration.students.length} {text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} ·{' '}
-                {summaryDigest.totalCampDays} {text('selected day blocks', '个已选上课时段')} · {summaryDigest.totalPaidLunchDays} {text('paid lunch days', '个付费午餐日')} · {summaryDigest.totalIncludedLunchDays} {text('Thu included lunch days', '个周四含午餐日')}
+                {summaryExpanded
+                  ? `${registration.students.length} ${text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} · ${summaryDigest.totalCampDays} ${text('selected day blocks', '个已选上课时段')} · ${summaryDigest.totalPaidLunchDays} ${text('paid lunch days', '个付费午餐日')} · ${summaryDigest.totalIncludedLunchDays} ${text('Thu included lunch days', '个周四含午餐日')}`
+                  : text('Tap to expand summary', '点击展开摘要')}
               </em>
             </span>
-            <span className={`regSummaryChevron ${summaryExpanded ? 'open' : ''}`}>⌄</span>
+            <span className="regSummaryToggleAction">
+              {summaryExpanded ? text('Minimize', '最小化') : text('Expand', '展开')}
+              <span className={`regSummaryChevron ${summaryExpanded ? 'open' : ''}`}>⌄</span>
+            </span>
           </button>
           {summaryExpanded ? (
-            <div className="regSummaryGrid">
+            <>
+              <div className="regSummaryTopRow">
+                <div className="registrationLocationBanner registrationLocationSummaryCard compact">
+                  <span className="registrationLocationLabel">{text('Registration location', '报名地点')}</span>
+                  <strong>{selectedLocationLabel}</strong>
+                  <span className="registrationLocationHintText">{text('Tap to change location', '点击切换地点')}</span>
+                  <div className="registrationLocationInlineToggle" role="group" aria-label={text('Choose registration location', '选择报名地点')}>
+                    {LOCATION_OPTIONS.map((option) => {
+                      const active = registration.location === option.value
+                      return (
+                        <button
+                          key={`summary-location-${option.value}`}
+                          type="button"
+                          className={`registrationLocationToggleBtn ${active ? 'active' : ''}`}
+                          aria-pressed={active}
+                          onClick={() => updateContact('location', option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="regSummaryGrid">
               {summaries.map(({ student, summary }) => (
                 (() => {
                 const generalTotal =
@@ -6167,7 +6218,8 @@ export default function HomePage() {
                 )
                 })()
               ))}
-            </div>
+              </div>
+            </>
           ) : null}
           <p className="regStepHint">
             <strong>{stepShortTitle}</strong>
@@ -6345,23 +6397,34 @@ export default function HomePage() {
 
               {registration.students.map((student, index) => (
                 <div key={student.id} className="full studentCollapsedRow">
-                  <button
-                    type="button"
-                    className="studentCollapsedHead"
-                    onClick={() => {
-                      setActiveStudentId(student.id)
-                      setExpandedStudentId(expandedStudentId === student.id ? '' : student.id)
-                    }}
-                  >
-                    <span>
-                      <strong className="camperCardName">{student.fullName.trim() || `Camper ${index + 1}`}</strong>
-                      <span className="camperCardMeta">{text(`Camper ${index + 1}`, `营员 ${index + 1}`)}</span>
-                      <span className="studentDetailCta">
-                        {text(`Click here to view details for ${student.fullName.trim() || `Camper ${index + 1}`}`, `点击查看 ${student.fullName.trim() || `营员 ${index + 1}`} 的详情`)}
+                  <div className="studentCollapsedBar">
+                    <button
+                      type="button"
+                      className="studentCollapsedHead"
+                      onClick={() => {
+                        setActiveStudentId(student.id)
+                        setExpandedStudentId(expandedStudentId === student.id ? '' : student.id)
+                      }}
+                    >
+                      <span>
+                        <strong className="camperCardName">{student.fullName.trim() || `Camper ${index + 1}`}</strong>
+                        <span className="camperCardMeta">{text(`Camper ${index + 1}`, `营员 ${index + 1}`)}</span>
+                        <span className="studentDetailCta">
+                          {text(`Click here to view details for ${student.fullName.trim() || `Camper ${index + 1}`}`, `点击查看 ${student.fullName.trim() || `营员 ${index + 1}`} 的详情`)}
+                        </span>
                       </span>
-                    </span>
-                    {!isStudentComplete(student) ? <span className="requiredDot" /> : null}
-                  </button>
+                      {!isStudentComplete(student) ? <span className="requiredDot" /> : null}
+                    </button>
+                    {registration.students.length > 1 ? (
+                      <button
+                        type="button"
+                        className="button secondary studentCollapsedRemoveBtn"
+                        onClick={() => confirmAndRemoveStudent(student.id)}
+                      >
+                        {text('Remove camper', '移除此营员')}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
 
@@ -6377,9 +6440,9 @@ export default function HomePage() {
                       <button
                         type="button"
                         className="button secondary"
-                        onClick={() => removeStudent(expandedStudent.id)}
+                        onClick={() => confirmAndRemoveStudent(expandedStudent.id)}
                       >
-                        Remove
+                        {text('Remove camper', '移除此营员')}
                       </button>
                     ) : null}
                   </div>
@@ -6989,7 +7052,7 @@ export default function HomePage() {
             {registrationIsSubmitted && step === registrationSteps.length ? (
               <>
                 <button type="button" className="button secondary" onClick={jumpToCampTop}>
-                  Go to Summer Camp Page
+                  Go to Summer Day Camp Page
                 </button>
                 <button type="button" className="button secondary" onClick={clearRegistrationForm}>
                   Start New Registration
@@ -7515,19 +7578,19 @@ export default function HomePage() {
             </p>
             <div className="discountCountdownBoxes" aria-label="Countdown timer">
               <div className="discountTimeBox">
-                <span className="discountTimeValue">{discountCountdown.days}</span>
+                <span className="discountTimeValue" suppressHydrationWarning>{discountCountdown.days}</span>
                 <span className="discountTimeLabel">{isMobileViewport ? 'D' : text('Days', '天')}</span>
               </div>
               <div className="discountTimeBox">
-                <span className="discountTimeValue">{String(discountCountdown.hours).padStart(2, '0')}</span>
+                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.hours).padStart(2, '0')}</span>
                 <span className="discountTimeLabel">{isMobileViewport ? 'H' : text('Hours', '时')}</span>
               </div>
               <div className="discountTimeBox">
-                <span className="discountTimeValue">{String(discountCountdown.minutes).padStart(2, '0')}</span>
+                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.minutes).padStart(2, '0')}</span>
                 <span className="discountTimeLabel">{isMobileViewport ? 'M' : text('Minutes', '分')}</span>
               </div>
               <div className="discountTimeBox">
-                <span className="discountTimeValue">{String(discountCountdown.seconds).padStart(2, '0')}</span>
+                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.seconds).padStart(2, '0')}</span>
                 <span className="discountTimeLabel">{isMobileViewport ? 'S' : text('Seconds', '秒')}</span>
               </div>
             </div>

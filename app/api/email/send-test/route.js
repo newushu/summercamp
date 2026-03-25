@@ -1,17 +1,12 @@
 import { sendWithSes } from '../../../../lib/emailProvider'
+import {
+  buildLeadJourneyMessage,
+  buildReservationJourneyMessage,
+} from '../../../../lib/emailJourneyRenderer'
 import { supabaseServer, supabaseServerEnabled } from '../../../../lib/supabaseServer'
 
 function isValidEmail(value) {
   return /^\S+@\S+\.\S+$/.test(String(value || '').trim())
-}
-
-function escapeHtml(input) {
-  return String(input || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 }
 
 async function getEmailBranding() {
@@ -31,76 +26,6 @@ async function getEmailBranding() {
   }
 
   return String(data?.welcome_logo_url || envLogoUrl || '').trim()
-}
-
-function buildLevelUpRewardsHtml() {
-  return `
-    <div style="margin:12px 0 0;padding:12px;border:1px solid #fcd34d;border-radius:12px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
-      <p style="margin:0;font-size:14px;color:#b45309;font-weight:700;">New England Wushu Level Up Rewards</p>
-      <p style="margin:6px 0 0;font-size:14px;color:#7c2d12;">Earn 2,500 points for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.</p>
-      <p style="margin:6px 0 0;font-size:14px;color:#7c2d12;">Points can be saved for prizes, equipment, and future discounts during the fall or spring season.</p>
-    </div>
-  `
-}
-
-function buildMarketingEmailHtml({ subject, content, stepNumber, logoUrl = '' }) {
-  const safeSubject = escapeHtml(subject)
-  let greetingHtml = ''
-  const sectionHtml = String(content || '')
-    .split(/\n\s*\n/)
-    .map((group) =>
-      group
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-    )
-    .filter((group) => group.length > 0)
-    .map((group, index) => {
-      const lines = [...group]
-      if (!greetingHtml && /^(hi|hello)\b/i.test(lines[0] || '')) {
-        greetingHtml = `<p style="margin:16px 0 0;font-size:16px;color:#334155;">${escapeHtml(lines.shift())}</p>`
-      }
-      if (lines.length === 0) return ''
-      return `
-        <div style="margin:16px 0 0;padding:16px 18px;border:1px solid ${index === 0 ? '#fde68a' : '#dbe5f0'};border-radius:18px;background:${index === 0 ? 'linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%)' : '#ffffff'};box-shadow:0 10px 24px rgba(15,23,42,0.05);">
-          ${lines
-            .map((line) => `<p style="margin:0 0 10px;font-size:16px;line-height:1.6;color:#334155;">${escapeHtml(line)}</p>`)
-            .join('')}
-        </div>
-      `
-    })
-    .join('')
-  return `
-    <div style="margin:0;padding:20px;background:linear-gradient(180deg,#fff7ed 0%,#eff6ff 100%);">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(194,65,12,0.12);font-family:Arial,sans-serif;color:#0f172a;">
-        <div style="padding:14px 18px;background:linear-gradient(135deg,#f59e0b 0%,#f97316 36%,#0284c7 100%);color:#ffffff;">
-          ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="New England Wushu" style="display:block;max-height:48px;margin:0 0 10px;" />` : ''}
-          <p style="margin:0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">New England Wushu Summer Camp</p>
-          <p style="margin:6px 0 0;font-size:13px;opacity:0.95;">Summer 2026 Family Update</p>
-        </div>
-        <div style="padding:22px 20px 14px;">
-          <div style="margin:0 0 14px;padding:10px 12px;border:1px solid #f59e0b;border-radius:12px;background:#fffbeb;color:#92400e;font-size:13px;font-weight:700;">
-            Admin test email. This is not a live automated journey send.
-          </div>
-          <div style="padding:16px 18px;border:1px solid #fde68a;border-radius:20px;background:linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%);">
-            <h2 style="margin:0 0 10px;font-size:26px;line-height:1.2;color:#0f172a;">${safeSubject}</h2>
-            <p style="margin:0;font-size:15px;line-height:1.6;color:#7c2d12;">Professional preview for step ${Number(stepNumber || 0) || 1}.</p>
-          </div>
-          ${greetingHtml}
-          ${sectionHtml}
-          <div style="margin:16px 0 0;padding:12px;border:1px solid #fcd34d;border-radius:12px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
-            <p style="margin:0;font-size:14px;color:#92400e;font-weight:700;">Reminder Block</p>
-            <p style="margin:6px 0 0;font-size:14px;color:#78350f;">Use warm highlight boxes sparingly for urgency or payment details only.</p>
-          </div>
-          ${buildLevelUpRewardsHtml()}
-          <div style="margin:12px 0 0;padding:12px;border:1px solid #93c5fd;border-radius:12px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);">
-            <p style="margin:0;font-size:14px;color:#1d4ed8;font-weight:700;">Level Up App</p>
-            <p style="margin:6px 0 0;font-size:14px;color:#1e3a8a;">Download opens June 20 for lunch access, daily photos/videos, and instructor notes.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
 }
 
 function escapePdfText(input) {
@@ -169,11 +94,43 @@ export async function POST(request) {
       return Response.json({ error: 'Template subject/body is required.' }, { status: 400 })
     }
 
-    const sampleAmount = '$1,680.00'
-    const renderedBody = `ADMIN TEST EMAIL\n\n${content.replaceAll('{amount_due}', sampleAmount)}`
     const displaySubject = subject.startsWith('[TEST] ') ? subject : `[TEST] ${subject}`
     const logoUrl = await getEmailBranding()
-    const html = buildMarketingEmailHtml({ subject: displaySubject, content: renderedBody, stepNumber, logoUrl })
+    let bodyText = ''
+    let html = ''
+
+    if (flowKey === 'reservation') {
+      const renderedMessage = buildReservationJourneyMessage({
+        stepNumber,
+        logoUrl,
+      })
+      bodyText = renderedMessage.bodyText
+      html = renderedMessage.html
+    } else {
+      const renderedMessage = buildLeadJourneyMessage({
+        template,
+        tokens: {
+          first_name: 'Calvin',
+          parent_name: 'Calvin',
+          guardian_name: 'Calvin Chen',
+          recommended_plan:
+            'General Camp with progression options. If your camper wishes to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
+          registration_link: 'https://summer.newushu.com/register',
+          payment_methods: 'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd',
+          reservation_deadline: 'May 20, 5:00 PM EDT',
+          registration_summary:
+            'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
+          amount_due: '$1,680.00',
+          app_launch_date: 'June 20',
+        },
+        logoUrl,
+        landingCarouselImageUrls: [],
+        stepNumber,
+      })
+      bodyText = renderedMessage.bodyText
+      html = renderedMessage.html
+    }
+
     const attachments =
       flowKey === 'reservation'
         ? [
@@ -184,7 +141,7 @@ export async function POST(request) {
                 title: 'New England Wushu Payment Summary (Test)',
                 lines: [
                   `Step ${stepNumber} test email`,
-                  `Amount due: ${sampleAmount}`,
+                  'Amount due: $1,680.00',
                   '',
                   'Payment methods:',
                   'Zelle: wushu688@gmail.com',
@@ -198,7 +155,7 @@ export async function POST(request) {
     const sendResult = await sendWithSes({
       toEmail,
       subject: displaySubject,
-      bodyText: renderedBody,
+      bodyText,
       html,
       attachments,
     })

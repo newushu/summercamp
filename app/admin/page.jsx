@@ -10,6 +10,10 @@ import {
   saveAdminConfigToSupabase,
 } from '../../lib/campAdminApi'
 import {
+  buildLeadJourneyMessage,
+  buildReservationJourneyMessage,
+} from '../../lib/emailJourneyRenderer'
+import {
   getMediaBucketName,
   listMediaLibrary,
   uploadFilesToMediaBucket,
@@ -496,6 +500,7 @@ const premiumJourneyTemplates = [
     dayLabel: 'Immediately',
     title: 'Step 1 - Summer Camp Follow-Up',
     subject: 'Still Thinking About Summer Camp? Here Are the Highlights',
+    videoUrl: '',
     body:
       'Hi {parent_name},\n\nWe noticed you checked out New England Wushu Summer Camp and wanted to send a quick follow-up in case you did not get to finish.\n\nFamilies usually choose us for four big reasons: strong coaching, fun team energy, lunch convenience, and daily photo/video updates through the Level Up app.\n\nA strong fit based on what we saw so far:\n{recommended_plan}\n\nYou can pick back up here anytime:\n{registration_link}\n\nIf you want help choosing the best weeks, just reply and we will guide you.',
   },
@@ -503,6 +508,7 @@ const premiumJourneyTemplates = [
     dayLabel: 'Day 1',
     title: 'Step 2 - Best-Fit Plan Reminder',
     subject: 'Your Recommended Camp Plan + Next Steps',
+    videoUrl: '',
     body:
       'Hi {parent_name},\n\nQuick follow-up from our team. We can help you lock in the schedule that best matches your goals.\n\nRecommended fit:\n{recommended_plan}\n\nRegistration takes only a few minutes:\n{registration_link}\n\nIf you want help picking weeks, just reply and we will guide you.',
   },
@@ -510,6 +516,7 @@ const premiumJourneyTemplates = [
     dayLabel: 'Day 3',
     title: 'Step 3 - Social Proof + Confidence',
     subject: 'Why Families Choose New England Wushu Summer Camp',
+    videoUrl: '',
     body:
       'Hi {parent_name},\n\nFamilies tell us they value three things most: coaching quality, visible progress, and a positive team environment.\n\nYour camper can start with a plan matched to age and experience:\n{recommended_plan}\n\nStart registration when ready:\n{registration_link}\n\nWe are happy to answer any questions before you submit.',
   },
@@ -517,6 +524,7 @@ const premiumJourneyTemplates = [
     dayLabel: 'Day 5',
     title: 'Step 4 - Logistics + Readiness',
     subject: 'Camp Logistics Made Easy: Schedule, Lunch, and Daily Updates',
+    videoUrl: '',
     body:
       'Hi {parent_name},\n\nTo make camp easier for families, we provide clear weekly scheduling, lunch options, and ongoing updates.\n\nYou can complete registration here:\n{registration_link}\n\nRecommended fit from your survey:\n{recommended_plan}\n\nIf you prefer, reply and we can help you choose the best starting weeks.',
   },
@@ -524,6 +532,7 @@ const premiumJourneyTemplates = [
     dayLabel: 'Day 7',
     title: 'Step 5 - Final Invitation',
     subject: 'Final Invitation: Reserve Your Preferred Summer Camp Weeks',
+    videoUrl: '',
     body:
       'Hi {parent_name},\n\nFinal check-in from us. If you still want a summer camp plan tailored to your goals, we would love to welcome your family.\n\nRecommended plan:\n{recommended_plan}\n\nComplete registration:\n{registration_link}\n\nIf now is not the right time, no problem. You can always return when ready.',
   },
@@ -1173,6 +1182,7 @@ export default function AdminPage() {
   const [activeJourneyTab, setActiveJourneyTab] = useState(0)
   const [activeJourneyFlow, setActiveJourneyFlow] = useState('lead')
   const [activeReservationJourneyTab, setActiveReservationJourneyTab] = useState(0)
+  const [activeReservationTrackerView, setActiveReservationTrackerView] = useState('standard')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [loadingLibrary, setLoadingLibrary] = useState(false)
@@ -1667,6 +1677,9 @@ export default function AdminPage() {
         guardianName: registration?.guardian_name || '',
         createdAt: registration?.created_at || '',
         status: '',
+        registrationType: String(
+          (parseMaybeJson(registration?.medical_notes, {}) || {})?.registrationType || ''
+        ).trim(),
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -1707,6 +1720,7 @@ export default function AdminPage() {
         guardianName: '',
         createdAt: run?.created_at || '',
         status: run?.status || '',
+        registrationType: '',
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -1716,6 +1730,9 @@ export default function AdminPage() {
       if (matchingRegistration) {
         row.guardianName = matchingRegistration?.guardian_name || ''
         row.registrationId = Number(matchingRegistration.id)
+        row.registrationType = String(
+          (parseMaybeJson(matchingRegistration?.medical_notes, {}) || {})?.registrationType || ''
+        ).trim()
       }
       rows.push(row)
       rowByKey.set(key, row)
@@ -1740,6 +1757,18 @@ export default function AdminPage() {
       if (!row) continue
       const eventType = String(event?.event_type || '')
       const stepNumber = Number(event?.step_number || 0)
+      const eventPayload =
+        typeof event?.event_payload === 'object' && event?.event_payload ? event.event_payload : parseMaybeJson(event?.event_payload, {}) || {}
+      const summaryLines = Array.isArray(eventPayload?.summaryLines) ? eventPayload.summaryLines : []
+      if (!row.registrationType) {
+        if (String(eventPayload?.registrationType || '').trim()) {
+          row.registrationType = String(eventPayload.registrationType).trim()
+        } else if (summaryLines.some((line) => String(line || '').toLowerCase().includes('overnight camp registration'))) {
+          row.registrationType = 'overnight-only'
+        } else if (String(event?.subject || '').toLowerCase().includes('overnight')) {
+          row.registrationType = 'overnight-only'
+        }
+      }
       if ((eventType === 'reservation_email_sent' || eventType === 'test_sent_reservation') && stepNumber >= 1 && stepNumber <= 5) {
         row.steps[`step_${stepNumber}`] = buildTrackerCell('sent', event?.event_at)
       } else if ((eventType === 'reservation_email_preview' || eventType === 'test_preview_only_reservation') && stepNumber >= 1 && stepNumber <= 5) {
@@ -1783,6 +1812,21 @@ export default function AdminPage() {
       .map((row) => ({ ...row, criteria: buildReservationCriteria(row) }))
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   }, [emailEvents, emailJourneyRuns, registrationRecords])
+  const standardReservationJourneyTrackerRows = useMemo(
+    () => reservationJourneyTrackerRows.filter((row) => row.registrationType !== 'overnight-only'),
+    [reservationJourneyTrackerRows]
+  )
+  const overnightReservationJourneyTrackerRows = useMemo(
+    () => reservationJourneyTrackerRows.filter((row) => row.registrationType === 'overnight-only'),
+    [reservationJourneyTrackerRows]
+  )
+  const activeReservationJourneyTrackerRows = useMemo(
+    () =>
+      activeReservationTrackerView === 'overnight'
+        ? overnightReservationJourneyTrackerRows
+        : standardReservationJourneyTrackerRows,
+    [activeReservationTrackerView, overnightReservationJourneyTrackerRows, standardReservationJourneyTrackerRows]
+  )
   const reservationRunIdByRegistrationId = useMemo(() => {
     const map = {}
     for (const row of reservationJourneyTrackerRows) {
@@ -2422,6 +2466,20 @@ export default function AdminPage() {
     setErrorMessage('')
   }
 
+  function updateLeadJourneyTemplateField(index, field, value) {
+    setConfig((current) => ({
+      ...current,
+      emailJourney: current.emailJourney.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              [field]: value,
+            }
+          : item
+      ),
+    }))
+  }
+
   function renderJourneyTemplate(text) {
     const registrationLink = 'https://summer.newushu.com/register'
     return String(text || '')
@@ -2446,82 +2504,39 @@ export default function AdminPage() {
       .replaceAll('{app_launch_date}', 'June 20')
   }
 
-  function buildJourneyPreviewHtmlFromTemplate(stepIndex, template, flowKey = 'lead') {
-    const subject = renderJourneyTemplate(template?.subject || '')
-    const bodyGroups = renderJourneyTemplate(template?.body || '')
-      .split(/\n\s*\n/)
-      .map((group) =>
-        group
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
-      )
-      .filter((group) => group.length > 0)
-    const body = bodyGroups
-      .map(
-        (group, index) => `
-          <div style="margin:16px 0 0;padding:16px 18px;border:1px solid ${index === 0 ? '#bfdbfe' : '#dbe5f0'};border-radius:18px;background:${index === 0 ? 'linear-gradient(180deg,#ffffff 0%,#f8fbff 100%)' : '#ffffff'};box-shadow:0 10px 24px rgba(15,23,42,0.05);">
-            ${group
-              .map((line) => `<p style="margin:0 0 10px;font-size:16px;color:#334155;">${line}</p>`)
-              .join('')}
-          </div>
-        `
-      )
-      .join('')
-    const ctaLink = 'https://summer.newushu.com/register'
-    const isReservationFlow = flowKey === 'reservation'
-    const ctaLabel = isReservationFlow
-      ? 'Complete Payment & Confirm Weeks'
-      : 'View Programs & Start Registration'
-    const detailCard = isReservationFlow
-      ? `<div style="margin:16px 0;padding:12px;border:1px solid #f59e0b;border-radius:12px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
-          <p style="margin:0 0 8px;font-weight:700;color:#9a3412;">Payment Methods</p>
-          <p style="margin:0;white-space:pre-line;">Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd</p>
-        </div>`
-      : `<div style="margin:16px 0;padding:12px;border:1px solid #86efac;border-radius:12px;background:linear-gradient(180deg,#f0fdf4 0%,#dcfce7 100%);">
-          <p style="margin:0 0 8px;font-weight:700;color:#166534;">Recommended Fit</p>
-          <p style="margin:0;white-space:pre-line;color:#14532d;">General Camp + 2 Weeks Competition Team Boot Camp</p>
-        </div>`
-    const attachmentCard = isReservationFlow
-      ? `<div style="margin:12px 0 0;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#f8fafc;">
-          <p style="margin:0;font-weight:700;color:#334155;">Attachment on send: camp-payment-summary.pdf</p>
-        </div>`
-      : ''
+  function buildLeadPreviewTokens() {
+    return {
+      first_name: 'Calvin',
+      parent_name: 'Calvin',
+      guardian_name: 'Calvin Chen',
+      recommended_plan:
+        'General Camp with progression options. If your camper wishes to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
+      registration_link: 'https://summer.newushu.com/register',
+      payment_methods: 'Zelle: wushu688@gmail.com\nVenmo: @newushu\nCheck (payable to Newushu): 123 Muller Rd',
+      reservation_deadline: 'May 20, 5:00 PM EDT',
+      registration_summary:
+        'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
+      amount_due: '$1,680.00',
+      app_launch_date: 'June 20',
+    }
+  }
 
-    return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-  </head>
-  <body style="margin:0;padding:20px;background:#ecfeff;">
-    <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #bae6fd;border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(2,132,199,0.16);font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
-      <div style="padding:15px 20px;background:linear-gradient(135deg,#0ea5e9 0%,#2563eb 100%);color:#ffffff;">
-        ${config.media?.welcomeLogoUrl ? `<img src="${config.media.welcomeLogoUrl}" alt="New England Wushu Summer Camp" style="display:block;max-height:52px;margin:0 0 10px;" />` : ''}
-        <p style="margin:0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;font-weight:800;">New England Wushu Summer Camp</p>
-        <p style="margin:6px 0 0;font-size:13px;opacity:0.95;">${isReservationFlow ? 'Registration support and next steps' : 'Summer 2026 family update'}</p>
-      </div>
-      <div style="padding:22px 20px 14px;">
-        <div style="padding:16px 18px;border:1px solid #dbeafe;border-radius:20px;background:linear-gradient(180deg,#f8fbff 0%,#eef8ff 100%);">
-          <h2 style="margin:0 0 10px;font-size:27px;line-height:1.2;color:#0f172a;">${subject}</h2>
-          <p style="margin:0;font-size:15px;color:#475569;">${isReservationFlow ? 'Important registration details, next steps, and family support in one place.' : 'Summer camp recommendations, next steps, and family support.'}</p>
-        </div>
-        <div style="margin:0 0 14px;">${body}</div>
-        <div style="margin:16px 0 0;">
-          <a href="${ctaLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:linear-gradient(135deg,#0284c7 0%,#2563eb 100%);color:#ffffff;text-decoration:none;font-weight:800;">
-            ${ctaLabel}
-          </a>
-        </div>
-        ${detailCard}
-        ${attachmentCard}
-        <div style="margin:12px 0 0;padding:12px;border:1px solid #93c5fd;border-radius:12px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);">
-          <p style="margin:0 0 6px;font-weight:700;color:#1d4ed8;">New This Year: Level Up App</p>
-          <p style="margin:0;color:#1e3a8a;">Download opens on June 20 for lunch access, daily photos/videos, and instructor notes.</p>
-        </div>
-      </div>
-    </div>
-  </body>
-</html>`
+  function buildJourneyPreviewHtmlFromTemplate(stepIndex, template, flowKey = 'lead') {
+    if (flowKey === 'reservation') {
+      return buildReservationJourneyMessage({
+        stepNumber: stepIndex + 1,
+        logoUrl: config.media?.welcomeLogoUrl || '',
+        landingCarouselImageUrls: config.media?.landingCarouselImageUrls || [],
+      }).html
+    }
+
+    return buildLeadJourneyMessage({
+      template,
+      tokens: buildLeadPreviewTokens(),
+      logoUrl: config.media?.welcomeLogoUrl || '',
+      landingCarouselImageUrls: config.media?.landingCarouselImageUrls || [],
+      stepNumber: stepIndex + 1,
+    }).html
   }
 
   async function sendTestEmailForStep(stepIndex, template, flowKey = 'lead') {
@@ -2550,6 +2565,7 @@ export default function AdminPage() {
           template: {
             subject: renderJourneyTemplate(template.subject),
             body: renderJourneyTemplate(template.body),
+            videoUrl: template?.videoUrl || '',
           },
         }),
       })
@@ -6048,6 +6064,51 @@ export default function AdminPage() {
           <p className="subhead">
             Manual send checks all due journey thresholds and logs each email as it goes. If a step is overdue, it sends immediately on this run.
           </p>
+          {activeJourneyFlow === 'lead' ? (
+            <div className="adminGrid">
+              <label>
+                Day label
+                <input
+                  value={activeLeadJourneyTemplate?.dayLabel || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'dayLabel', event.target.value)}
+                  placeholder="Example: Day 3"
+                />
+              </label>
+              <label>
+                Title
+                <input
+                  value={activeLeadJourneyTemplate?.title || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'title', event.target.value)}
+                  placeholder="Step title"
+                />
+              </label>
+              <label className="full">
+                Subject
+                <input
+                  value={activeLeadJourneyTemplate?.subject || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'subject', event.target.value)}
+                  placeholder="Email subject"
+                />
+              </label>
+              <label className="full">
+                YouTube URL (optional)
+                <input
+                  value={activeLeadJourneyTemplate?.videoUrl || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'videoUrl', event.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                />
+              </label>
+              <label className="full">
+                Body
+                <textarea
+                  rows="10"
+                  value={activeLeadJourneyTemplate?.body || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'body', event.target.value)}
+                  placeholder="Email body"
+                />
+              </label>
+            </div>
+          ) : null}
           <div className="adminActions">
             <button
               type="button"
@@ -7088,9 +7149,31 @@ export default function AdminPage() {
 
           <article className="previewCard trackerCard">
             <h3>Registered Journey Tracker</h3>
-            <p className="subhead">Bottom table: families who submitted registration and their reminder or paid-prep sequence.</p>
-            {reservationJourneyTrackerRows.length === 0 ? (
-              <p className="subhead">No registered-family journeys yet.</p>
+            <p className="subhead">
+              Bottom table: families who submitted registration and their reminder or paid-prep sequence. Overnight autosends appear in their own sub-tab.
+            </p>
+            <div className="adminSubTabs">
+              <button
+                type="button"
+                className={`adminSubTabBtn ${activeReservationTrackerView === 'standard' ? 'active' : ''}`}
+                onClick={() => setActiveReservationTrackerView('standard')}
+              >
+                Submitted Registration 72h ({standardReservationJourneyTrackerRows.length})
+              </button>
+              <button
+                type="button"
+                className={`adminSubTabBtn ${activeReservationTrackerView === 'overnight' ? 'active' : ''}`}
+                onClick={() => setActiveReservationTrackerView('overnight')}
+              >
+                Overnight Registration 72h ({overnightReservationJourneyTrackerRows.length})
+              </button>
+            </div>
+            {activeReservationJourneyTrackerRows.length === 0 ? (
+              <p className="subhead">
+                {activeReservationTrackerView === 'overnight'
+                  ? 'No overnight registration journeys yet.'
+                  : 'No registered-family journeys yet.'}
+              </p>
             ) : (
               <div className="tuitionTableWrap trackerTableWrap">
                 <table className="tuitionTable trackerTable">
@@ -7117,7 +7200,7 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {reservationJourneyTrackerRows.map((row) => {
+                    {activeReservationJourneyTrackerRows.map((row) => {
                       const run = emailJourneyRuns.find((item) => Number(item?.id) === Number(row.runId))
                       return (
                         <tr key={`reservation-track-${row.key}`}>

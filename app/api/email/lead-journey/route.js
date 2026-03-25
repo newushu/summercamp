@@ -1,4 +1,5 @@
 import { defaultAdminConfig } from '../../../../lib/campAdmin'
+import { buildLeadJourneyMessage } from '../../../../lib/emailJourneyRenderer'
 import {
   createRequestSupabaseClient,
   supabaseServer,
@@ -40,15 +41,6 @@ function splitFirstName(fullName) {
   return safe.split(/\s+/)[0] || 'there'
 }
 
-function escapeHtml(input) {
-  return String(input || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
 function renderTemplate(template, tokens) {
   return Object.entries(tokens).reduce((output, [token, value]) => {
     return String(output || '').replaceAll(`{${token}}`, String(value || ''))
@@ -57,22 +49,6 @@ function renderTemplate(template, tokens) {
 
 function normalizeImageUrls(value) {
   return (Array.isArray(value) ? value : []).map((item) => String(item || '').trim()).filter(Boolean)
-}
-
-function pickJourneyImage(imageUrls, seedNumber = 0) {
-  const normalized = normalizeImageUrls(imageUrls)
-  if (normalized.length === 0) {
-    return ''
-  }
-  const index = Math.abs(Number(seedNumber || 0)) % normalized.length
-  return normalized[index] || normalized[0] || ''
-}
-
-function splitBodyIntoSections(bodyText) {
-  return String(bodyText || '')
-    .split(/\n\s*\n/g)
-    .map((block) => block.split('\n').map((line) => String(line || '').trim()).filter(Boolean))
-    .filter((group) => group.length > 0)
 }
 
 function parseDayOffset(dayLabel, fallbackDays) {
@@ -88,143 +64,6 @@ function parseDayOffset(dayLabel, fallbackDays) {
     return 0
   }
   return fallbackDays
-}
-
-function looksLikeUrl(line) {
-  return /^https?:\/\//i.test(String(line || '').trim())
-}
-
-function getToneColors(tone = 'neutral') {
-  const tones = {
-    neutral: { border: '#dbe5f0', background: '#ffffff', accent: '#334155', text: '#334155' },
-    summer: { border: '#fde68a', background: 'linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%)', accent: '#b45309', text: '#7c2d12' },
-    blue: { border: '#bfdbfe', background: 'linear-gradient(180deg,#f8fbff 0%,#e0f2fe 100%)', accent: '#1d4ed8', text: '#1e3a8a' },
-    green: { border: '#86efac', background: 'linear-gradient(180deg,#f7fff9 0%,#ecfdf5 100%)', accent: '#166534', text: '#14532d' },
-  }
-  return tones[tone] || tones.neutral
-}
-
-function renderCard({ title = '', tone = 'neutral', bodyHtml }) {
-  const colors = getToneColors(tone)
-  return `
-    <div style="margin:16px 0 0;padding:16px 18px;border:1px solid ${colors.border};border-radius:18px;background:${colors.background};box-shadow:0 10px 24px rgba(15,23,42,0.05);">
-      ${title ? `<p style="margin:0 0 10px;font-size:13px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;color:${colors.accent};">${escapeHtml(title)}</p>` : ''}
-      <div style="margin:0;color:${colors.text};font-size:15px;line-height:1.65;">${bodyHtml}</div>
-    </div>
-  `
-}
-
-function renderPills(items, tone = 'neutral') {
-  const colors = getToneColors(tone)
-  return `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      ${items.map((item) => `<span style="display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;border:1px solid ${colors.border};background:rgba(255,255,255,0.75);color:${colors.text};font-weight:700;">${escapeHtml(item)}</span>`).join('')}
-    </div>
-  `
-}
-
-function extractCommaList(line) {
-  const raw = String(line || '').trim()
-  const parts = raw.split(/:\s*/, 2)
-  if (parts.length < 2 || !parts[1] || !parts[1].includes(',')) {
-    return []
-  }
-  return parts[1]
-    .split(/,| and /i)
-    .map((item) => item.replace(/\.$/, '').trim())
-    .filter(Boolean)
-}
-
-function buildLevelUpRewardsBodyHtml() {
-  return `
-    <p style="margin:0 0 10px;"><strong>Earn New England Wushu Level Up points all summer:</strong> 2,500 for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.</p>
-    <p style="margin:0;">Points can be saved for prizes, equipment, and future discounts during the fall or spring season.</p>
-  `
-}
-
-function buildMarketingEmailHtml({ heading, preview, bodyText, ctaLink, recommendation = '', logoUrl = '', heroImageUrl = '' }) {
-  const sections = splitBodyIntoSections(bodyText)
-  let greetingHtml = ''
-  const sectionHtml = sections
-    .map((group, index) => {
-      const cleaned = group.map((line) => String(line || '').trim()).filter((line) => line && !looksLikeUrl(line))
-      if (cleaned.length === 0) return ''
-      if (!greetingHtml && /^(hi|hello)\b/i.test(cleaned[0] || '')) {
-        greetingHtml = `<p style="margin:16px 0 0;font-size:16px;color:#334155;">${escapeHtml(cleaned.shift())}</p>`
-      }
-      if (cleaned.length === 0) return ''
-      const commaItems = cleaned.length === 1 ? extractCommaList(cleaned[0]) : []
-      if (commaItems.length >= 2) {
-        const [title] = cleaned[0].split(':')
-        return renderCard({
-          title,
-          tone: /famil/i.test(title) ? 'green' : 'summer',
-          bodyHtml: renderPills(commaItems, /famil/i.test(title) ? 'green' : 'summer'),
-        })
-      }
-      return renderCard({
-        tone: index === 0 ? 'summer' : 'neutral',
-        bodyHtml: cleaned.map((line) => `<p style="margin:0 0 12px;font-size:16px;">${escapeHtml(line)}</p>`).join(''),
-      })
-    })
-    .filter(Boolean)
-    .join('')
-  return `
-    <div style="margin:0;padding:20px;background:linear-gradient(180deg,#fff7ed 0%,#eff6ff 100%);">
-      <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(194,65,12,0.12);font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
-        <div style="padding:15px 20px;background:linear-gradient(135deg,#f59e0b 0%,#f97316 36%,#0284c7 100%);color:#ffffff;">
-          ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;max-height:52px;margin:0 0 10px;" />` : ''}
-          <p style="margin:0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;font-weight:800;">${escapeHtml(
-            CAMP_NAME
-          )}</p>
-          <p style="margin:6px 0 0;font-size:13px;opacity:0.95;">${escapeHtml(preview)}</p>
-        </div>
-        <div style="padding:22px 20px 14px;">
-          <div style="padding:16px 18px;border:1px solid #fde68a;border-radius:20px;background:linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%);">
-            <h2 style="margin:0 0 10px;font-size:27px;line-height:1.2;color:#0f172a;">${escapeHtml(heading)}</h2>
-            <p style="margin:0;font-size:15px;color:#7c2d12;">Summer camp recommendations, next steps, and family support.</p>
-          </div>
-          ${
-            heroImageUrl
-              ? `<div style="margin:16px 0 0;border:1px solid #fde68a;border-radius:20px;overflow:hidden;background:#fff7ed;">
-                  <img src="${escapeHtml(heroImageUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;width:100%;max-height:260px;object-fit:cover;" />
-                </div>`
-              : ''
-          }
-          ${
-            recommendation
-              ? `<div style="margin:16px 0 0;padding:16px 18px;border:1px solid #86efac;border-radius:18px;background:linear-gradient(180deg,#f7fff9 0%,#ecfdf5 100%);box-shadow:0 10px 24px rgba(15,23,42,0.04);">
-                  <p style="margin:0 0 8px;font-size:14px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#166534;">Recommended Fit</p>
-                  <p style="margin:0;font-size:16px;color:#14532d;">${escapeHtml(recommendation)}</p>
-                </div>`
-              : ''
-          }
-          ${greetingHtml}
-          ${sectionHtml}
-          <div style="margin:16px 0 0;padding:16px 18px;border:1px solid #bfdbfe;border-radius:18px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);">
-            <a href="${escapeHtml(ctaLink)}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:linear-gradient(135deg,#0284c7 0%,#2563eb 100%);color:#ffffff;text-decoration:none;font-weight:800;">
-              Reserve Camp Weeks
-            </a>
-          </div>
-          ${renderCard({
-            title: 'New England Wushu Level Up Rewards',
-            tone: 'summer',
-            bodyHtml: buildLevelUpRewardsBodyHtml(),
-          })}
-          ${renderCard({
-            title: 'Camp Highlights',
-            tone: 'green',
-            bodyHtml: renderPills(['Top coaching', 'Safe team culture', 'Visible progress', 'Fun daily rhythm'], 'green'),
-          })}
-          ${renderCard({
-            title: 'Level Up App',
-            tone: 'blue',
-            bodyHtml: '<p style="margin:0;">Download opens June 20 for lunch access, daily photos and videos, progress updates, and instructor notes.</p>',
-          })}
-        </div>
-      </div>
-    </div>
-  `
 }
 
 async function getEmailBranding() {
@@ -290,6 +129,7 @@ async function getJourneyTemplates() {
       dayLabel: typeof item.dayLabel === 'string' ? item.dayLabel : fallback.dayLabel,
       title: typeof item.title === 'string' ? item.title : fallback.title,
       subject: typeof item.subject === 'string' ? item.subject : fallback.subject,
+      videoUrl: typeof item.videoUrl === 'string' ? item.videoUrl : fallback.videoUrl,
       body: typeof item.body === 'string' ? item.body : fallback.body,
     }
   })
@@ -367,17 +207,16 @@ async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNu
   }
 
   const subject = renderTemplate(template.subject, tokens)
-  const bodyText = renderTemplate(template.body, tokens)
   const branding = await getEmailBranding()
-  const html = buildMarketingEmailHtml({
-    heading: subject,
-    preview: 'Summer 2026 Family Update',
-    bodyText,
-    ctaLink,
-    recommendation,
+  const renderedMessage = buildLeadJourneyMessage({
+    template,
+    tokens,
     logoUrl: branding?.welcomeLogoUrl || '',
-    heroImageUrl: pickJourneyImage(branding?.landingCarouselImageUrls, stepNumber - 1),
+    landingCarouselImageUrls: branding?.landingCarouselImageUrls || [],
+    stepNumber,
   })
+  const bodyText = renderedMessage.bodyText
+  const html = renderedMessage.html
 
   const sendResult = await sendWithSes({
     toEmail: run.email,
