@@ -594,6 +594,10 @@ function normalizeAdminEmail(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function isValidAdminEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+}
+
 function buildTrackerCell(status = 'pending', at = '') {
   return { status, at }
 }
@@ -722,7 +726,11 @@ function buildReservationCriteria(row) {
     return lines
   }
   if (!row?.runId) {
-    lines.push('No active journey run attached, so this row will not autosend from the tracker')
+    if (!isValidAdminEmail(row?.email)) {
+      lines.push('Registration saved with an invalid email format, so no reservation journey run was created')
+    } else {
+      lines.push('Registration saved, but no active journey run was attached, so this row will not autosend from the tracker')
+    }
     return lines
   }
   const dueOffsetsHours = [0, 12, 36, 66, 72]
@@ -745,6 +753,75 @@ function buildReservationCriteria(row) {
   const dueNow = dueDate.getTime() <= Date.now()
   lines.push(`${dueNow ? 'Due now' : 'Next due'}: ${nextColumn.label} ${dueNow ? 'since' : 'at'} ${formatTrackerDateTime(dueAt)}`)
   return lines
+}
+
+function getReservationCriteriaState(row, reservationFirstWeekStartById = {}) {
+  if (!row?.createdAt || String(row?.status || '').startsWith('test_')) {
+    return ''
+  }
+  if (!row?.runId && String(row?.status || '') !== 'paid') {
+    return ''
+  }
+
+  const now = Date.now()
+  const upcomingBoundary = now + 24 * 60 * 60 * 1000
+
+  if (String(row?.status || '') === 'paid') {
+    const registrationId = Number(row?.registrationId || 0)
+    if (registrationId <= 0) {
+      return ''
+    }
+    const firstWeekStart = reservationFirstWeekStartById[registrationId] || ''
+    if (!firstWeekStart) {
+      return ''
+    }
+    const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
+    if (Number.isNaN(firstWeekStartDate.getTime())) {
+      return ''
+    }
+    const startBoundary = addDays(firstWeekStartDate, 1)
+    if (now > startBoundary.getTime()) {
+      return ''
+    }
+    const stageDefs = [
+      { key: 'paid_7d', daysBefore: 7 },
+      { key: 'paid_5d', daysBefore: 5 },
+      { key: 'paid_3d', daysBefore: 3 },
+      { key: 'paid_1d', daysBefore: 1 },
+    ]
+    const nextStage = stageDefs.find((stage) => !isPaidPrepHandled(row.steps?.[stage.key]?.status))
+    if (!nextStage) {
+      return ''
+    }
+    const scheduledAt = addDays(firstWeekStartDate, -nextStage.daysBefore).getTime()
+    if (scheduledAt <= now) {
+      return 'due'
+    }
+    if (scheduledAt <= upcomingBoundary) {
+      return 'upcoming'
+    }
+    return ''
+  }
+
+  const unpaidHourOffsets = [0, 12, 36, 66, 72]
+  const nextColumn = reservationTrackerColumns
+    .filter((column) => String(column.key || '').startsWith('step_'))
+    .find((column) => !isTrackerStepHandled(row?.steps?.[column.key]?.status))
+  if (!nextColumn) {
+    return ''
+  }
+  const dueAt = addHoursToIso(row.createdAt, unpaidHourOffsets[Math.max(0, (nextColumn.stepNumber || 1) - 1)] || 0)
+  const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+  if (Number.isNaN(dueTime)) {
+    return ''
+  }
+  if (dueTime <= now) {
+    return 'due'
+  }
+  if (dueTime <= upcomingBoundary) {
+    return 'upcoming'
+  }
+  return ''
 }
 
 function getTrackerCellLabel(cell) {
@@ -1008,7 +1085,7 @@ function formatAdminDateTime(value) {
 
 function buildCamperPricing({
   student,
-  studentIndex,
+  siblingDiscountEligible,
   tuition,
   discountActive,
   lunchPrice,
@@ -1200,7 +1277,7 @@ function buildCamperPricing({
   const tuitionSubtotal = totals.general + totals.bootcamp + totals.overnight
   const hasNonOvernightTuition = Number(totals.general || 0) > 0 || Number(totals.bootcamp || 0) > 0
   const siblingDiscountPct =
-    studentIndex >= 1 && hasNonOvernightTuition ? Number(tuition.siblingDiscountPct || 0) : 0
+    siblingDiscountEligible && hasNonOvernightTuition ? Number(tuition.siblingDiscountPct || 0) : 0
   const siblingAfterLimitedDiscount =
     siblingDiscountPct > 0 ? (Number(totals.general || 0) + Number(totals.bootcamp || 0)) * (siblingDiscountPct / 100) : 0
   const tuitionAfterSibling = Math.max(0, tuitionSubtotal - siblingAfterLimitedDiscount)
@@ -1276,7 +1353,13 @@ export default function AdminPage() {
   const [replyFilterEmail, setReplyFilterEmail] = useState('')
   const [updatingRunId, setUpdatingRunId] = useState(0)
   const [processingJourneyEmails, setProcessingJourneyEmails] = useState(false)
+  const [repairingReservationRuns, setRepairingReservationRuns] = useState(false)
+  const [assigningRunEmail, setAssigningRunEmail] = useState('')
+  const [assigningRunKey, setAssigningRunKey] = useState('')
+  const [settingTrackerVisibilityKey, setSettingTrackerVisibilityKey] = useState('')
+  const [selectedRunAssignmentByRow, setSelectedRunAssignmentByRow] = useState({})
   const [sendingJourneyCellKey, setSendingJourneyCellKey] = useState('')
+  const [expandedReservationDebugKey, setExpandedReservationDebugKey] = useState('')
   const [accountingOverlay, setAccountingOverlay] = useState({
     key: '',
     label: '',
@@ -1701,13 +1784,62 @@ export default function AdminPage() {
     const rowByKey = new Map()
     const rowByRunId = new Map()
     const unmatchedRunsByEmail = new Map()
+    const archivedRegistrationIds = new Set()
+    const archivedRegistrationEmails = new Set()
+    const hiddenStateByRegistrationId = {}
+    const hiddenStateByRunId = {}
     const nonLeadRuns = emailJourneyRuns
       .filter((run) => !String(run?.status || '').startsWith('lead_'))
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
     const liveNonLeadRuns = nonLeadRuns.filter((run) => !isTestJourneyStatus(run?.status))
     const testNonLeadRuns = nonLeadRuns.filter((run) => isTestJourneyStatus(run?.status))
+    const manualRunIdByRegistrationId = {}
 
     const getDistance = (left, right) => Math.abs(new Date(left || 0).getTime() - new Date(right || 0).getTime())
+
+    for (const event of emailEvents) {
+      const eventType = String(event?.event_type || '')
+      if (eventType !== 'reservation_run_attached') {
+        const isVisibilityEvent =
+          eventType === 'reservation_tracker_hidden' || eventType === 'reservation_tracker_unhidden'
+        if (!isVisibilityEvent) {
+          continue
+        }
+        const payload =
+          typeof event?.event_payload === 'object' && event?.event_payload
+            ? event.event_payload
+            : parseMaybeJson(event?.event_payload, {}) || {}
+        const registrationId = Number(payload?.registrationId || 0)
+        const runId = Number(payload?.runId || event?.run_id || 0)
+        const hidden = eventType === 'reservation_tracker_hidden'
+        const snapshot = {
+          hidden,
+          at: event?.event_at || '',
+        }
+        if (registrationId > 0) {
+          const current = hiddenStateByRegistrationId[registrationId]
+          if (!current || new Date(snapshot.at || 0).getTime() >= new Date(current.at || 0).getTime()) {
+            hiddenStateByRegistrationId[registrationId] = snapshot
+          }
+        }
+        if (runId > 0) {
+          const current = hiddenStateByRunId[runId]
+          if (!current || new Date(snapshot.at || 0).getTime() >= new Date(current.at || 0).getTime()) {
+            hiddenStateByRunId[runId] = snapshot
+          }
+        }
+        continue
+      }
+      const payload =
+        typeof event?.event_payload === 'object' && event?.event_payload
+          ? event.event_payload
+          : parseMaybeJson(event?.event_payload, {}) || {}
+      const registrationId = Number(payload?.registrationId || 0)
+      const runId = Number(payload?.runId || event?.run_id || 0)
+      if (registrationId > 0 && runId > 0) {
+        manualRunIdByRegistrationId[registrationId] = runId
+      }
+    }
 
     for (const run of liveNonLeadRuns) {
       const email = normalizeAdminEmail(run?.email)
@@ -1722,6 +1854,10 @@ export default function AdminPage() {
       const email = normalizeAdminEmail(registration?.guardian_email)
       if (!email) continue
       const registrationArchived = isArchivedRegistrationRecord(registration)
+      if (registrationArchived) {
+        archivedRegistrationIds.add(Number(registration.id))
+        archivedRegistrationEmails.add(email)
+      }
       const key = `registration-${registration.id}`
       const row = {
         key,
@@ -1734,27 +1870,46 @@ export default function AdminPage() {
         registrationType: String(
           (parseMaybeJson(registration?.medical_notes, {}) || {})?.registrationType || ''
         ).trim(),
+        hidden: Boolean(hiddenStateByRegistrationId[Number(registration.id)]?.hidden),
+        attachmentEventAt: '',
+        attachmentReason: '',
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
-      const candidates = unmatchedRunsByEmail.get(email) || []
-      if (candidates.length > 0) {
-        let bestIndex = 0
-        let bestDistance = getDistance(candidates[0]?.created_at, registration?.created_at)
-        for (let index = 1; index < candidates.length; index += 1) {
-          const distance = getDistance(candidates[index]?.created_at, registration?.created_at)
-          if (distance < bestDistance) {
-            bestDistance = distance
-            bestIndex = index
-          }
-        }
-        const [matchedRun] = candidates.splice(bestIndex, 1)
+      const manuallyAssignedRunId = manualRunIdByRegistrationId[row.registrationId]
+      if (manuallyAssignedRunId > 0) {
+        const matchedRun = liveNonLeadRuns.find((item) => Number(item?.id || 0) === manuallyAssignedRunId)
         if (matchedRun) {
           row.runId = Number(matchedRun.id)
           row.status = matchedRun?.status || ''
+          const assignedEmail = normalizeAdminEmail(matchedRun?.email)
+          const candidates = unmatchedRunsByEmail.get(assignedEmail) || []
+          const removeIndex = candidates.findIndex((item) => Number(item?.id || 0) === row.runId)
+          if (removeIndex >= 0) {
+            candidates.splice(removeIndex, 1)
+          }
         }
       }
-      if (registrationArchived && !row.runId) {
+      if (!row.runId) {
+        const candidates = unmatchedRunsByEmail.get(email) || []
+        if (candidates.length > 0) {
+          let bestIndex = 0
+          let bestDistance = getDistance(candidates[0]?.created_at, registration?.created_at)
+          for (let index = 1; index < candidates.length; index += 1) {
+            const distance = getDistance(candidates[index]?.created_at, registration?.created_at)
+            if (distance < bestDistance) {
+              bestDistance = distance
+              bestIndex = index
+            }
+          }
+          const [matchedRun] = candidates.splice(bestIndex, 1)
+          if (matchedRun) {
+            row.runId = Number(matchedRun.id)
+            row.status = matchedRun?.status || ''
+          }
+        }
+      }
+      if (registrationArchived) {
         continue
       }
       rows.push(row)
@@ -1768,6 +1923,7 @@ export default function AdminPage() {
       const runId = Number(run?.id || 0)
       if (!runId || rowByRunId.has(runId)) continue
       const email = normalizeAdminEmail(run?.email)
+      if (archivedRegistrationEmails.has(email)) continue
       const key = `run-${runId}`
       const row = {
         key,
@@ -1778,6 +1934,9 @@ export default function AdminPage() {
         createdAt: run?.created_at || '',
         status: run?.status || '',
         registrationType: '',
+        hidden: Boolean(hiddenStateByRunId[runId]?.hidden),
+        attachmentEventAt: '',
+        attachmentReason: '',
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -1785,6 +1944,9 @@ export default function AdminPage() {
         .filter((item) => normalizeAdminEmail(item?.guardian_email) === email)
         .sort((a, b) => getDistance(run?.created_at, a?.created_at) - getDistance(run?.created_at, b?.created_at))[0]
       if (matchingRegistration) {
+        if (archivedRegistrationIds.has(Number(matchingRegistration.id))) {
+          continue
+        }
         row.guardianName = matchingRegistration?.guardian_name || ''
         row.registrationId = Number(matchingRegistration.id)
         row.registrationType = String(
@@ -1810,6 +1972,9 @@ export default function AdminPage() {
         createdAt: run?.created_at || '',
         status: run?.status || '',
         registrationType: '',
+        hidden: Boolean(hiddenStateByRunId[runId]?.hidden),
+        attachmentEventAt: '',
+        attachmentReason: '',
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -1847,6 +2012,10 @@ export default function AdminPage() {
         } else if (String(event?.subject || '').toLowerCase().includes('overnight')) {
           row.registrationType = 'overnight-only'
         }
+      }
+      if (eventType === 'reservation_run_attached') {
+        row.attachmentEventAt = event?.event_at || row.attachmentEventAt
+        row.attachmentReason = String(eventPayload?.reason || '').trim() || row.attachmentReason
       }
       if ((eventType === 'reservation_email_sent' || eventType === 'test_sent_reservation') && stepNumber >= 1 && stepNumber <= 5) {
         row.steps[`step_${stepNumber}`] = buildTrackerCell('sent', event?.event_at)
@@ -1895,22 +2064,49 @@ export default function AdminPage() {
       .map((row) => ({ ...row, criteria: buildReservationCriteria(row) }))
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   }, [emailEvents, emailJourneyRuns, registrationRecords])
+  const availableReservationRunsByRowKey = useMemo(() => {
+    const attachedRunIds = new Set(
+      reservationJourneyTrackerRows
+        .map((row) => Number(row?.runId || 0))
+        .filter((runId) => runId > 0)
+    )
+    const liveReservationRuns = emailJourneyRuns
+      .filter((run) => !String(run?.status || '').startsWith('lead_') && !isTestJourneyStatus(run?.status))
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime())
+
+    return reservationJourneyTrackerRows.reduce((acc, row) => {
+      if (row.runId || !row.registrationId || !isValidAdminEmail(row.email)) {
+        acc[row.key] = []
+        return acc
+      }
+      const matchingEmailRuns = liveReservationRuns.filter(
+        (run) => normalizeAdminEmail(run?.email) === row.email && !attachedRunIds.has(Number(run?.id || 0))
+      )
+      const fallbackRuns = liveReservationRuns.filter((run) => !attachedRunIds.has(Number(run?.id || 0)))
+      acc[row.key] = matchingEmailRuns.length > 0 ? matchingEmailRuns : fallbackRuns
+      return acc
+    }, {})
+  }, [emailJourneyRuns, reservationJourneyTrackerRows])
   const standardReservationJourneyTrackerRows = useMemo(
     () =>
       reservationJourneyTrackerRows.filter(
-        (row) => row.registrationType !== 'overnight-only' && !isTestJourneyStatus(row.status)
+        (row) => row.registrationType !== 'overnight-only' && !isTestJourneyStatus(row.status) && !row.hidden
       ),
     [reservationJourneyTrackerRows]
   )
   const overnightReservationJourneyTrackerRows = useMemo(
     () =>
       reservationJourneyTrackerRows.filter(
-        (row) => row.registrationType === 'overnight-only' && !isTestJourneyStatus(row.status)
+        (row) => row.registrationType === 'overnight-only' && !isTestJourneyStatus(row.status) && !row.hidden
       ),
     [reservationJourneyTrackerRows]
   )
   const testReservationJourneyTrackerRows = useMemo(
-    () => reservationJourneyTrackerRows.filter((row) => isTestJourneyStatus(row.status)),
+    () => reservationJourneyTrackerRows.filter((row) => isTestJourneyStatus(row.status) && !row.hidden),
+    [reservationJourneyTrackerRows]
+  )
+  const hiddenReservationJourneyTrackerRows = useMemo(
+    () => reservationJourneyTrackerRows.filter((row) => row.hidden),
     [reservationJourneyTrackerRows]
   )
   const activeReservationJourneyTrackerRows = useMemo(
@@ -1919,9 +2115,12 @@ export default function AdminPage() {
         ? overnightReservationJourneyTrackerRows
         : activeReservationTrackerView === 'tests'
           ? testReservationJourneyTrackerRows
+          : activeReservationTrackerView === 'hidden'
+            ? hiddenReservationJourneyTrackerRows
           : standardReservationJourneyTrackerRows,
     [
       activeReservationTrackerView,
+      hiddenReservationJourneyTrackerRows,
       overnightReservationJourneyTrackerRows,
       standardReservationJourneyTrackerRows,
       testReservationJourneyTrackerRows,
@@ -1970,12 +2169,37 @@ export default function AdminPage() {
       const discountActive = isLimitedDiscountActiveForDate(config.tuition.discountEndDate, record.created_at)
       const accountingEntries = Array.isArray(record.accounting_entries) ? record.accounting_entries : []
       const normalizedStudents = students.length > 0 ? students : [{ fullName: record.guardian_name || 'Camper', schedule: {}, lunch: {} }]
+      const siblingEligibleIds = new Set(
+        normalizedStudents
+          .map((student, index) => ({
+            studentId: String(student?.id || `fallback-${index}`),
+            studentIndex: index,
+            tuitionSubtotal: buildCamperPricing({
+              student,
+              studentIndex: index,
+              siblingDiscountEligible: false,
+              tuition: config.tuition,
+              discountActive,
+              lunchPrice: config.tuition.lunchPrice,
+              weekById,
+            }).tuitionSubtotal,
+          }))
+          .sort((a, b) => {
+            if (a.tuitionSubtotal !== b.tuitionSubtotal) {
+              return a.tuitionSubtotal - b.tuitionSubtotal
+            }
+            return a.studentIndex - b.studentIndex
+          })
+          .slice(0, Math.max(0, normalizedStudents.length - 1))
+          .map((item) => item.studentId)
+      )
 
       normalizedStudents.forEach((student, index) => {
         const camperName = String(student?.fullName || '').trim() || `Camper ${index + 1}`
         const pricing = buildCamperPricing({
           student,
           studentIndex: index,
+          siblingDiscountEligible: siblingEligibleIds.has(String(student?.id || `fallback-${index}`)),
           tuition: config.tuition,
           discountActive,
           lunchPrice: config.tuition.lunchPrice,
@@ -2175,7 +2399,7 @@ export default function AdminPage() {
     const now = Date.now()
     for (const row of reservationJourneyTrackerRows) {
       const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
+      if (row.hidden || registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
         const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
@@ -2225,7 +2449,7 @@ export default function AdminPage() {
     const upcomingBoundary = now + 24 * 60 * 60 * 1000
     for (const row of reservationJourneyTrackerRows) {
       const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
+      if (row.hidden || registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
         const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
@@ -2536,6 +2760,19 @@ export default function AdminPage() {
       media: {
         ...current.media,
         [field]: value,
+      },
+    }))
+  }
+
+  function updateLocationAddress(locationKey, field, value) {
+    setConfig((current) => ({
+      ...current,
+      locations: {
+        ...current.locations,
+        [locationKey]: {
+          ...current.locations?.[locationKey],
+          [field]: value,
+        },
       },
     }))
   }
@@ -2922,6 +3159,218 @@ export default function AdminPage() {
     }
 
     setProcessingJourneyEmails(false)
+  }
+
+  async function repairMissingReservationRunsFromAdmin() {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for reservation run repair.')
+      return
+    }
+
+    setRepairingReservationRuns(true)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setRepairingReservationRuns(false)
+      return
+    }
+
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ action: 'repair_missing_runs' }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Reservation run repair failed.')
+      }
+      setSavedMessage(
+        result?.repaired > 0
+          ? `Repaired ${result.repaired} missing registration run${result.repaired === 1 ? '' : 's'}.`
+          : 'No missing registration runs needed repair.'
+      )
+      refreshEmailTracking()
+    } catch (error) {
+      setErrorMessage(error?.message || 'Reservation run repair failed.')
+    }
+
+    setRepairingReservationRuns(false)
+  }
+
+  async function assignRunForEmail(email) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured.')
+      return
+    }
+
+    setAssigningRunEmail(email)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setAssigningRunEmail('')
+      return
+    }
+
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ action: 'create_run_for_email', email }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Run assignment failed.')
+      }
+      if (result?.warning) {
+        setSavedMessage(result.warning)
+      } else {
+        setSavedMessage(`Run assigned for ${email} (run id: ${result?.runId}).`)
+        refreshEmailTracking()
+      }
+    } catch (error) {
+      setErrorMessage(error?.message || 'Run assignment failed.')
+    }
+
+    setAssigningRunEmail('')
+  }
+
+  async function attachExistingRunToRegistration(row) {
+    const selectedRunId = Number(selectedRunAssignmentByRow[row.key] || 0)
+    if (!selectedRunId) {
+      setErrorMessage('Choose a run first.')
+      return
+    }
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured.')
+      return
+    }
+
+    setAssigningRunKey(row.key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setAssigningRunKey('')
+      return
+    }
+
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          action: 'attach_run_to_registration',
+          registrationId: row.registrationId,
+          runId: selectedRunId,
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Run attachment failed.')
+      }
+      if (result?.warning) {
+        setSavedMessage(result.warning)
+      } else {
+        setSavedMessage(`Attached run ${selectedRunId} to ${row.email}.`)
+        setSelectedRunAssignmentByRow((current) => {
+          if (!current[row.key]) {
+            return current
+          }
+          const next = { ...current }
+          delete next[row.key]
+          return next
+        })
+        refreshEmailTracking()
+      }
+    } catch (error) {
+      setErrorMessage(error?.message || 'Run attachment failed.')
+    }
+
+    setAssigningRunKey('')
+  }
+
+  async function setTrackerRowVisibility(row, hidden) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured.')
+      return
+    }
+
+    setSettingTrackerVisibilityKey(row.key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setSettingTrackerVisibilityKey('')
+      return
+    }
+
+    try {
+      const response = await fetch('/api/email/reservation-journey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          action: 'set_tracker_visibility',
+          registrationId: row.registrationId,
+          runId: row.runId,
+          email: row.email,
+          hidden,
+          reason: hidden ? 'admin_hide_row' : 'admin_unhide_row',
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Tracker row update failed.')
+      }
+      setSavedMessage(hidden ? `Hid ${row.email} from the active tracker.` : `Restored ${row.email} to the active tracker.`)
+      refreshEmailTracking()
+    } catch (error) {
+      setErrorMessage(error?.message || 'Tracker row update failed.')
+    }
+
+    setSettingTrackerVisibilityKey('')
   }
 
   function renderAccountingDetailChip(detailKey, label, items = [], displayCount = null) {
@@ -5257,6 +5706,11 @@ export default function AdminPage() {
               label: 'Acton facility photos',
               locationCode: 'acton',
             },
+            {
+              key: 'wellesleyFacilityImageUrls',
+              label: 'Wellesley facility photos',
+              locationCode: 'wellesley',
+            },
           ].map((group) => (
             <div key={group.key} className="subCard" style={{ marginTop: '1rem' }}>
               <h4>{group.label}</h4>
@@ -5342,6 +5796,72 @@ export default function AdminPage() {
               </div>
             </div>
           ))}
+        </section>
+
+        <section className="subCard">
+          <h3>Location addresses</h3>
+          <p className="subhead">
+            Physical addresses for each camp location. Shown to families in the registration form, on the landing page, and in confirmation emails. Formatted for future Google Maps / geolocation use.
+          </p>
+          <div className="locationAddressGrid">
+            {[
+              { key: 'burlington', label: 'Burlington' },
+              { key: 'acton', label: 'Acton' },
+              { key: 'wellesley', label: 'Wellesley' },
+            ].map((loc) => {
+              const addr = config.locations?.[loc.key] || {}
+              return (
+                <div key={loc.key} className="locationAddressCard">
+                  <p className="locationAddressCardLabel">{loc.label}</p>
+                  <label>
+                    Street address
+                    <input
+                      type="text"
+                      value={addr.street || ''}
+                      onChange={(e) => updateLocationAddress(loc.key, 'street', e.target.value)}
+                      placeholder="123 Main St"
+                    />
+                  </label>
+                  <div className="locationAddressRow">
+                    <label>
+                      City
+                      <input
+                        type="text"
+                        value={addr.city || ''}
+                        onChange={(e) => updateLocationAddress(loc.key, 'city', e.target.value)}
+                        placeholder="Burlington"
+                      />
+                    </label>
+                    <label className="locationAddressStateField">
+                      State
+                      <input
+                        type="text"
+                        value={addr.state || 'MA'}
+                        onChange={(e) => updateLocationAddress(loc.key, 'state', e.target.value)}
+                        placeholder="MA"
+                        maxLength={2}
+                      />
+                    </label>
+                    <label>
+                      ZIP
+                      <input
+                        type="text"
+                        value={addr.zip || ''}
+                        onChange={(e) => updateLocationAddress(loc.key, 'zip', e.target.value)}
+                        placeholder="01803"
+                        maxLength={10}
+                      />
+                    </label>
+                  </div>
+                  {addr.street && addr.city ? (
+                    <p className="locationAddressPreview">
+                      📍 {addr.street}, {addr.city}, {addr.state || 'MA'} {addr.zip}
+                    </p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
         </section>
 
         <section className="subCard">
@@ -6045,6 +6565,7 @@ export default function AdminPage() {
         const options = weekOptions[programKey]
         const selectedCount = program.selectedWeeks.length
         const actonSelectedCount = Array.isArray(program.actonSelectedWeeks) ? program.actonSelectedWeeks.length : 0
+        const wellesleySelectedCount = Array.isArray(program.wellesleySelectedWeeks) ? program.wellesleySelectedWeeks.length : 0
 
         return (
           <section key={programKey} className="card section">
@@ -6085,6 +6606,7 @@ export default function AdminPage() {
               <p className="subhead">Set a valid start and end date to generate options.</p>
             ) : (
               <>
+                <p className="adminWeekListLabel">All locations — {selectedCount} of {options.length} selected</p>
                 <div className="adminWeekList">
                   {options.map((week) => (
                     <label key={week.id} className="weekRow">
@@ -6098,33 +6620,62 @@ export default function AdminPage() {
                   ))}
                 </div>
                 {programKey === 'general' ? (
-                  <div className="subCard">
-                    <h3>Acton General Camp Weeks</h3>
-                    <p className="subhead">
-                      Acton can have a different General Camp schedule. Families selecting Acton only see weeks checked here.
-                    </p>
-                    <div className="adminActions">
-                      <button type="button" className="button secondary" onClick={() => selectAllWeeks('general', 'actonSelectedWeeks')}>
-                        Select all Acton weeks
-                      </button>
-                      <button type="button" className="button secondary" onClick={() => clearWeeks('general', 'actonSelectedWeeks')}>
-                        Clear Acton weeks
-                      </button>
-                      <span>{actonSelectedCount} selected for Acton</span>
+                  <>
+                    <div className="subCard">
+                      <h3>Acton General Camp Weeks</h3>
+                      <p className="subhead">
+                        Acton can have a different General Camp schedule. Families selecting Acton only see weeks checked here.
+                      </p>
+                      <div className="adminActions">
+                        <button type="button" className="button secondary" onClick={() => selectAllWeeks('general', 'actonSelectedWeeks')}>
+                          Select all Acton weeks
+                        </button>
+                        <button type="button" className="button secondary" onClick={() => clearWeeks('general', 'actonSelectedWeeks')}>
+                          Clear Acton weeks
+                        </button>
+                        <span>{actonSelectedCount} selected for Acton</span>
+                      </div>
+                      <div className="adminWeekList">
+                        {options.map((week) => (
+                          <label key={`acton-${week.id}`} className="weekRow">
+                            <input
+                              type="checkbox"
+                              checked={program.actonSelectedWeeks.includes(week.id)}
+                              onChange={() => toggleWeek('general', week.id, 'actonSelectedWeeks')}
+                            />
+                            <span>{formatWeekLabel(week)}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                    <div className="adminWeekList">
-                      {options.map((week) => (
-                        <label key={`acton-${week.id}`} className="weekRow">
-                          <input
-                            type="checkbox"
-                            checked={program.actonSelectedWeeks.includes(week.id)}
-                            onChange={() => toggleWeek('general', week.id, 'actonSelectedWeeks')}
-                          />
-                          <span>{formatWeekLabel(week)}</span>
-                        </label>
-                      ))}
+                    <div className="subCard">
+                      <h3>Wellesley General Camp Weeks</h3>
+                      <p className="subhead">
+                        Wellesley can have a different General Camp schedule. Families selecting Wellesley only see weeks checked here.
+                      </p>
+                      <div className="adminActions">
+                        <button type="button" className="button secondary" onClick={() => selectAllWeeks('general', 'wellesleySelectedWeeks')}>
+                          Select all Wellesley weeks
+                        </button>
+                        <button type="button" className="button secondary" onClick={() => clearWeeks('general', 'wellesleySelectedWeeks')}>
+                          Clear Wellesley weeks
+                        </button>
+                        <span>{wellesleySelectedCount} selected for Wellesley</span>
+                      </div>
+                      <div className="adminWeekList">
+                        {options.map((week) => (
+                          <label key={`wellesley-${week.id}`} className="weekRow">
+                            <input
+                              type="checkbox"
+                              checked={Array.isArray(program.wellesleySelectedWeeks) && program.wellesleySelectedWeeks.includes(week.id)}
+                              onChange={() => toggleWeek('general', week.id, 'wellesleySelectedWeeks')}
+                            />
+                            <span>{formatWeekLabel(week)}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  </>
                 ) : null}
               </>
             )}
@@ -7214,6 +7765,14 @@ export default function AdminPage() {
           <button
             type="button"
             className="button secondary"
+            onClick={repairMissingReservationRunsFromAdmin}
+            disabled={repairingReservationRuns}
+          >
+            {repairingReservationRuns ? 'Repairing missing runs...' : 'Repair Missing Registration Runs'}
+          </button>
+          <button
+            type="button"
+            className="button secondary"
             onClick={refreshEmailTracking}
             disabled={loadingEmailTracking}
           >
@@ -7358,6 +7917,13 @@ export default function AdminPage() {
               >
                 Test Runs ({testReservationJourneyTrackerRows.length})
               </button>
+              <button
+                type="button"
+                className={`adminSubTabBtn ${activeReservationTrackerView === 'hidden' ? 'active' : ''}`}
+                onClick={() => setActiveReservationTrackerView('hidden')}
+              >
+                Hidden ({hiddenReservationJourneyTrackerRows.length})
+              </button>
             </div>
             {activeReservationJourneyTrackerRows.length === 0 ? (
               <p className="subhead">
@@ -7365,6 +7931,8 @@ export default function AdminPage() {
                   ? 'No overnight registration journeys yet.'
                   : activeReservationTrackerView === 'tests'
                     ? 'No test reservation runs yet.'
+                    : activeReservationTrackerView === 'hidden'
+                      ? 'No hidden reservation rows.'
                     : 'No registered-family journeys yet.'}
               </p>
             ) : (
@@ -7395,36 +7963,99 @@ export default function AdminPage() {
                   <tbody>
                     {activeReservationJourneyTrackerRows.map((row) => {
                       const run = emailJourneyRuns.find((item) => Number(item?.id) === Number(row.runId))
-                      return (
+                      const availableRuns = availableReservationRunsByRowKey[row.key] || []
+                      const selectedRunId = selectedRunAssignmentByRow[row.key] || ''
+                      const isAssigningThisRow = assigningRunKey === row.key
+                      const criteriaState = getReservationCriteriaState(row, registrationFirstWeekStartById)
+                      const isUpdatingVisibility = settingTrackerVisibilityKey === row.key
+                      const isDebugOpen = expandedReservationDebugKey === row.key
+                      return [
                         <tr key={`reservation-track-${row.key}`}>
                           <td>
-                            {row.runId && run ? (
-                              run.status === 'paid' ? (
+                            <div className="trackerActionStack">
+                              {row.runId && run ? (
+                                run.status === 'paid' ? (
+                                  <button
+                                    type="button"
+                                    className="button secondary"
+                                    onClick={() => updateReservationRunPaymentStatus(run, false)}
+                                    disabled={updatingRunId === run.id}
+                                  >
+                                    {updatingRunId === run.id ? 'Updating...' : 'Mark Unpaid'}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="button secondary"
+                                    onClick={() => updateReservationRunPaymentStatus(run, true)}
+                                    disabled={updatingRunId === run.id}
+                                  >
+                                    {updatingRunId === run.id ? 'Updating...' : 'Mark Paid'}
+                                  </button>
+                                )
+                              ) : availableRuns.length > 0 ? (
                                 <button
                                   type="button"
                                   className="button secondary"
-                                  onClick={() => updateReservationRunPaymentStatus(run, false)}
-                                  disabled={updatingRunId === run.id}
+                                  onClick={() => attachExistingRunToRegistration(row)}
+                                  disabled={isAssigningThisRow || !selectedRunId}
                                 >
-                                  {updatingRunId === run.id ? 'Updating...' : 'Mark Unpaid'}
+                                  {isAssigningThisRow ? 'Attaching...' : 'Attach Run'}
                                 </button>
                               ) : (
                                 <button
                                   type="button"
                                   className="button secondary"
-                                  onClick={() => updateReservationRunPaymentStatus(run, true)}
-                                  disabled={updatingRunId === run.id}
+                                  onClick={() => assignRunForEmail(row.email)}
+                                  disabled={assigningRunEmail === row.email}
                                 >
-                                  {updatingRunId === run.id ? 'Updating...' : 'Mark Paid'}
+                                  {assigningRunEmail === row.email ? 'Assigning...' : 'Create Run'}
                                 </button>
-                              )
+                              )}
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => setTrackerRowVisibility(row, !row.hidden)}
+                                disabled={isUpdatingVisibility}
+                              >
+                                {isUpdatingVisibility ? 'Updating...' : row.hidden ? 'Unhide' : 'Hide'}
+                              </button>
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => setExpandedReservationDebugKey((current) => (current === row.key ? '' : row.key))}
+                              >
+                                {isDebugOpen ? 'Hide Debug' : 'Debug'}
+                              </button>
+                            </div>
+                          </td>
+                          <td>{row.email}</td>
+                          <td>
+                            {row.runId ? (
+                              row.status || '-'
+                            ) : availableRuns.length > 0 ? (
+                              <select
+                                value={selectedRunId}
+                                onChange={(event) =>
+                                  setSelectedRunAssignmentByRow((current) => ({
+                                    ...current,
+                                    [row.key]: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Select run</option>
+                                {availableRuns.map((option) => (
+                                  <option key={`assign-run-${row.key}-${option.id}`} value={option.id}>
+                                    #{option.id} · {normalizeAdminEmail(option.email) || 'no email'} · {option.status || 'active'} ·{' '}
+                                    {formatTrackerDateTime(option.created_at) || option.created_at || 'unknown time'}
+                                  </option>
+                                ))}
+                              </select>
                             ) : (
                               '-'
                             )}
                           </td>
-                          <td>{row.email}</td>
-                          <td>{row.status || '-'}</td>
-                          <td className="trackerCriteriaCell">
+                          <td className={`trackerCriteriaCell ${criteriaState ? `trackerCriteriaCell-${criteriaState}` : ''}`}>
                             {row.criteria?.map((line) => (
                               <div key={`${row.key}-${line}`}>{line}</div>
                             ))}
@@ -7459,8 +8090,26 @@ export default function AdminPage() {
                               </td>
                             )
                           })}
-                        </tr>
-                      )
+                        </tr>,
+                        isDebugOpen ? (
+                          <tr key={`reservation-track-debug-${row.key}`} className="trackerDebugRow">
+                            <td colSpan={4 + reservationTrackerColumns.length}>
+                              <div className="trackerDebugPanel">
+                                <div><strong>Row key:</strong> {row.key}</div>
+                                <div><strong>Registration ID:</strong> {row.registrationId || '-'}</div>
+                                <div><strong>Run ID:</strong> {row.runId || '-'}</div>
+                                <div><strong>Email:</strong> {row.email || '-'}</div>
+                                <div><strong>Status:</strong> {row.status || '-'}</div>
+                                <div><strong>Registration type:</strong> {row.registrationType || 'standard'}</div>
+                                <div><strong>Submitted:</strong> {formatTrackerDateTime(row.createdAt) || row.createdAt || '-'}</div>
+                                <div><strong>Attachment event:</strong> {formatTrackerDateTime(row.attachmentEventAt) || row.attachmentEventAt || '-'}</div>
+                                <div><strong>Attachment reason:</strong> {row.attachmentReason || '-'}</div>
+                                <div><strong>Hidden in tracker:</strong> {row.hidden ? 'yes' : 'no'}</div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null,
+                      ]
                     })}
                   </tbody>
                 </table>

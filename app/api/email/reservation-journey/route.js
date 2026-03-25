@@ -2,6 +2,8 @@ import { supabaseServer, supabaseServerEnabled } from '../../../../lib/supabaseS
 import { sendWithSes } from '../../../../lib/emailProvider'
 import { buildPaymentPageHref } from '../../../../lib/paymentPageLink'
 import { buildPaymentSummaryPdfBase64 } from '../../../../lib/paymentSummaryPdf'
+import { buildProgramWeekOptions, defaultAdminConfig, mergeAdminConfig } from '../../../../lib/campAdmin'
+import { buildRegistrationSummarySnapshot } from '../../../../lib/registrationSummaryDocument'
 
 const CAMP_NAME = 'New England Wushu Summer Camp'
 const PAYMENT_METHODS_TEXT = [
@@ -16,6 +18,49 @@ const SHOULD_ATTACH_RESERVATION_PDF =
 
 function isValidEmail(value) {
   return /^\S+@\S+\.\S+$/.test(String(value || '').trim())
+}
+
+function isTestJourneyStatus(status = '') {
+  return String(status || '').startsWith('test_')
+}
+
+function parseMaybeJson(value, fallback = {}) {
+  if (!value) {
+    return fallback
+  }
+  if (typeof value === 'object') {
+    return value
+  }
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeDateKey(value) {
+  const raw = String(value || '').trim()
+  if (!raw) {
+    return ''
+  }
+  const sliced = raw.slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(sliced)) {
+    return sliced
+  }
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toISOString().slice(0, 10)
+}
+
+function isLimitedDiscountActiveForDate(discountEndDate, createdAt) {
+  const endRaw = normalizeDateKey(discountEndDate)
+  const createdRaw = normalizeDateKey(createdAt)
+  if (!endRaw || !createdRaw) {
+    return false
+  }
+  return createdRaw <= endRaw
 }
 
 function splitFirstName(fullName) {
@@ -178,6 +223,17 @@ function renderNarrativeSections(lines) {
 function formatCurrency(value) {
   const amount = Number(value || 0)
   return `$${amount.toFixed(2)}`
+}
+
+function formatWeekRangeLabel(start, end) {
+  const startDate = parseDateOnly(start)
+  const endDate = parseDateOnly(end)
+  if (!startDate || !endDate) {
+    return String(start || '').trim() || String(end || '').trim() || 'Week selected'
+  }
+  const startLabel = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const endLabel = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${startLabel} - ${endLabel}`
 }
 
 function calculateVenmoGoodsServicesTotal(amount) {
@@ -713,6 +769,75 @@ function getReservationDeadlineLabel(submittedAtIso) {
   })
 }
 
+function buildCurrentReservationDetails(payload, config) {
+  const fallbackSummaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
+  const fallbackAmountDue = Number(payload?.amountDue || 0)
+  const fallbackCamperNames = Array.isArray(payload?.camperNames) ? payload.camperNames : []
+  const safeConfig = config || defaultAdminConfig
+
+  if (payload?.registrationType === 'overnight-only') {
+    const discountActive = isLimitedDiscountActiveForDate(
+      safeConfig.tuition?.discountEndDate,
+      new Date().toISOString()
+    )
+    const regularWeek = Number(safeConfig.tuition?.regular?.overnightWeek || 0)
+    const discountedWeek = Number(safeConfig.tuition?.discount?.overnightWeek || 0)
+    const regularDay = Number(safeConfig.tuition?.regular?.overnightDay || 0)
+    const discountedDay = Number(safeConfig.tuition?.discount?.overnightDay || 0)
+    const effectiveWeek =
+      discountActive && discountedWeek > 0 ? Math.min(regularWeek || discountedWeek, discountedWeek) : regularWeek
+    const effectiveDay =
+      discountActive && discountedDay > 0 ? Math.min(regularDay || discountedDay, discountedDay) : regularDay
+    const requestedWeeks = Math.max(
+      Number(payload?.overnightSelection?.requestedWeeks || 0),
+      Array.isArray(payload?.campWeeks) ? payload.campWeeks.length : 0
+    )
+    const requestOption = String(payload?.overnightSelection?.requestOption || 'fullWeek').trim()
+    const weeklyRate = requestOption === 'fullDay' ? effectiveDay : effectiveWeek
+    const selectedWeekLabel = (Array.isArray(payload?.campWeeks) ? payload.campWeeks : [])
+      .map((week) => formatWeekRangeLabel(week?.start, week?.end))
+      .join(', ')
+    const summaryLines = [
+      `Parent/Guardian: ${payload?.guardianName || 'not provided'}`,
+      `Contact: ${payload?.contactEmail || 'not provided'} | ${payload?.contactPhone || 'not provided'}`,
+      `Payment method: ${payload?.paymentMethod || 'not selected'}`,
+      `Program: ${requestOption === 'fullDay' ? 'Overnight Full Day' : 'Overnight Full Week'}`,
+      `Selected weeks (${requestedWeeks}): ${selectedWeekLabel || 'none'}`,
+      `Current weekly rate: ${formatCurrency(weeklyRate)}`,
+      'Includes lodging and food only. Outing costs are billed separately.',
+      `Activity picks: ${Array.isArray(payload?.overnightSelection?.activitySelections) ? payload.overnightSelection.activitySelections.length : 0}`,
+      payload?.overnightSelection?.activityCustom
+        ? `Other requests: ${payload.overnightSelection.activityCustom}`
+        : 'Other requests: none',
+    ]
+    return {
+      summaryLines,
+      amountDue: requestedWeeks * weeklyRate,
+      camperNames: fallbackCamperNames.length ? fallbackCamperNames : ['Overnight Camper'],
+    }
+  }
+
+  if (payload?.registration && Array.isArray(payload.registration.students)) {
+    const snapshot = buildRegistrationSummarySnapshot({
+      registration: payload.registration,
+      tuition: safeConfig.tuition,
+      weeksById: buildWeeksByIdForJourneys(safeConfig),
+      applyLimitedDiscount: Boolean(payload?.applyLimitedDiscount),
+    })
+    return {
+      summaryLines: snapshot.summaryLines,
+      amountDue: snapshot.amountDue,
+      camperNames: snapshot.camperNames,
+    }
+  }
+
+  return {
+    summaryLines: fallbackSummaryLines,
+    amountDue: fallbackAmountDue,
+    camperNames: fallbackCamperNames,
+  }
+}
+
 function getDueStep(submittedAtIso, currentStep, status) {
   if (status === 'paid' || status === 'canceled_unpaid') {
     return null
@@ -984,33 +1109,44 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
   if (!recipientEmail) {
     throw new Error('Recipient email is required.')
   }
+  const config = await getMergedAdminConfigForJourneys()
+  const currentDetails = buildCurrentReservationDetails(payload, config)
+  const effectivePayload = {
+    ...payload,
+    summaryLines: currentDetails.summaryLines,
+    amountDue: currentDetails.amountDue,
+    camperNames:
+      Array.isArray(payload?.camperNames) && payload.camperNames.length > 0
+        ? payload.camperNames
+        : currentDetails.camperNames,
+  }
   const firstName = splitFirstName(
-    payload?.guardianName || payload?.primaryCamperName || payload?.camperNames?.[0] || ''
+    effectivePayload?.guardianName || effectivePayload?.primaryCamperName || effectivePayload?.camperNames?.[0] || ''
   )
-  const summaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
-  const submittedAtIso = payload?.submittedAt || run?.created_at || new Date().toISOString()
+  const summaryLines = Array.isArray(effectivePayload?.summaryLines) ? effectivePayload.summaryLines : []
+  const submittedAtIso = effectivePayload?.submittedAt || run?.created_at || new Date().toISOString()
   const reservationDeadlineLabel = getReservationDeadlineLabel(submittedAtIso)
-  const amountDue = Number(payload?.amountDue || 0)
+  const amountDue = Number(effectivePayload?.amountDue || 0)
   const content = buildStepContent({
     firstName,
     stepNumber,
     reservationDeadlineLabel,
     summaryLines,
     amountDue,
-    payload,
+    payload: effectivePayload,
   })
   const branding = await getEmailBranding()
   const paymentPageHref =
-    String(payload?.paymentPageLink || '').trim() ||
+    String(effectivePayload?.paymentPageLink || '').trim() ||
     buildPaymentPageHref({
-      registrationType: payload?.registrationType || '',
-      guardianName: payload?.guardianName || firstName,
+      registrationType: effectivePayload?.registrationType || '',
+      guardianName: effectivePayload?.guardianName || firstName,
       contactEmail: recipientEmail,
-      location: payload?.location || '',
-      paymentMethod: payload?.paymentMethod || '',
+      location: effectivePayload?.location || '',
+      paymentMethod: effectivePayload?.paymentMethod || '',
       summaryLines,
       amountDue,
-      camperNames: Array.isArray(payload?.camperNames) ? payload.camperNames : [],
+      camperNames: Array.isArray(effectivePayload?.camperNames) ? effectivePayload.camperNames : [],
     })
   const html = buildEmailHtml({
     heading: content.heading,
@@ -1018,7 +1154,7 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
     bodyLines: content.bodyLines,
     summaryLines,
     amountDue,
-    payload,
+    payload: effectivePayload,
     ctaLabel: 'Review Payment Options & Summary',
     ctaHref: paymentPageHref,
     showPaymentMethods: true,
@@ -1037,7 +1173,7 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
           contentBase64: buildPaymentSummaryPdfBase64({
             title: `${CAMP_NAME} Payment Summary`,
             campName: CAMP_NAME,
-            guardianName: payload?.guardianName || firstName,
+            guardianName: effectivePayload?.guardianName || firstName,
             recipientEmail,
             submittedLabel: new Date(submittedAtIso).toLocaleString('en-US'),
             reservationDeadlineLabel,
@@ -1105,6 +1241,329 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
 
 async function sendJourneyEmail({ run, payload, stepNumber }) {
   return sendReservationStepEmail({ run, payload, stepNumber })
+}
+
+function isRunNearSubmission(createdAt, submittedAt, maxMinutes = 20) {
+  const createdMs = new Date(createdAt || 0).getTime()
+  const submittedMs = new Date(submittedAt || 0).getTime()
+  if (!Number.isFinite(createdMs) || !Number.isFinite(submittedMs)) {
+    return false
+  }
+  return Math.abs(createdMs - submittedMs) <= maxMinutes * 60 * 1000
+}
+
+async function findRecoverableReservationRun(email, submittedAt) {
+  const { data, error } = await supabaseServer
+    .from('email_journey_runs')
+    .select('id, email, status, current_step, profile_id, created_at')
+    .eq('email', email)
+    .not('status', 'like', 'lead_%')
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return (data || []).find((run) => isRunNearSubmission(run?.created_at, submittedAt)) || null
+}
+
+async function findAttachedReservationRun(registrationId, email = '') {
+  const normalizedRegistrationId = Number(registrationId || 0)
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (normalizedRegistrationId <= 0) {
+    return null
+  }
+
+  const attachmentQuery = supabaseServer
+    .from('email_journey_events')
+    .select('run_id, email, event_payload, event_at')
+    .eq('event_type', 'reservation_run_attached')
+    .order('event_at', { ascending: false })
+    .limit(50)
+
+  const { data: attachmentEvents, error: attachmentError } = normalizedEmail
+    ? await attachmentQuery.eq('email', normalizedEmail)
+    : await attachmentQuery
+
+  if (attachmentError) {
+    throw new Error(attachmentError.message)
+  }
+
+  const matchedEvent = (attachmentEvents || []).find((event) => {
+    const payload =
+      typeof event?.event_payload === 'object' && event?.event_payload
+        ? event.event_payload
+        : parseMaybeJson(event?.event_payload, {}) || {}
+    return Number(payload?.registrationId || 0) === normalizedRegistrationId && Number(event?.run_id || 0) > 0
+  })
+
+  if (!matchedEvent?.run_id) {
+    return null
+  }
+
+  const { data: run, error: runError } = await supabaseServer
+    .from('email_journey_runs')
+    .select('id, email, status, current_step, profile_id, created_at')
+    .eq('id', Number(matchedEvent.run_id))
+    .maybeSingle()
+
+  if (runError) {
+    throw new Error(runError.message)
+  }
+
+  return run || null
+}
+
+async function createOrRecoverReservationRun(email, submittedAt) {
+  const insertPayload = {
+    email,
+    status: 'active',
+    current_step: 0,
+    next_send_at: new Date().toISOString(),
+  }
+
+  const tryInsert = async () =>
+    supabaseServer
+      .from('email_journey_runs')
+      .insert(insertPayload)
+      .select('id, email, status, current_step, profile_id, created_at')
+      .single()
+
+  let { data: createdRun, error: runError } = await tryInsert()
+  if (!runError && createdRun) {
+    return { run: createdRun, recovered: false, warning: '' }
+  }
+
+  const recoveredRun = await findRecoverableReservationRun(email, submittedAt)
+  if (recoveredRun) {
+    return {
+      run: recoveredRun,
+      recovered: true,
+      warning: runError?.message || 'Recovered an existing reservation run after the initial insert failed.',
+    }
+  }
+
+  ;({ data: createdRun, error: runError } = await tryInsert())
+  if (!runError && createdRun) {
+    return {
+      run: createdRun,
+      recovered: false,
+      warning: 'Reservation run insert succeeded on retry.',
+    }
+  }
+
+  return {
+    run: null,
+    recovered: false,
+    warning: runError?.message || 'Unable to create reservation run.',
+  }
+}
+
+async function ensureReservationSubmittedEvent({ runId, email, summaryLines, submissionPayload, eventAt = '' }) {
+  const { error: insertError } = await supabaseServer.from('email_journey_events').insert({
+    run_id: runId,
+    profile_id: null,
+    email,
+    step_number: 0,
+    event_type: 'reservation_submitted',
+    subject: 'Registration submitted',
+    body_preview: summaryLines.join(' | ').slice(0, 350),
+    event_payload: submissionPayload,
+    event_at: eventAt || submissionPayload?.submittedAt || new Date().toISOString(),
+  })
+
+  if (!insertError) {
+    return { warning: '' }
+  }
+
+  const { data: existingEvent, error: lookupError } = await supabaseServer
+    .from('email_journey_events')
+    .select('id')
+    .eq('run_id', runId)
+    .eq('event_type', 'reservation_submitted')
+    .order('event_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (lookupError) {
+    throw new Error(lookupError.message)
+  }
+
+  if (existingEvent?.id) {
+    return {
+      warning: insertError.message || 'Reservation submitted event already existed for this run.',
+    }
+  }
+
+  throw new Error(insertError.message || 'Unable to store reservation submission payload.')
+}
+
+async function getMergedAdminConfigForJourneys() {
+  const [settingsResponse, windowsResponse, weeksResponse] = await Promise.all([
+    supabaseServer.from('camp_admin_settings').select('*').eq('id', true).maybeSingle(),
+    supabaseServer.from('camp_program_windows').select('program_key, start_date, end_date'),
+    supabaseServer.from('camp_program_selected_weeks').select('program_key, week_start, week_end'),
+  ])
+
+  const firstError = settingsResponse.error || windowsResponse.error || weeksResponse.error
+  if (firstError) {
+    throw new Error(firstError.message)
+  }
+
+  const raw = {
+    tuition: {
+      regular: {
+        fullWeek: settingsResponse.data?.tuition_full_week || 0,
+        fullDay: settingsResponse.data?.tuition_full_day || 0,
+        amHalf: settingsResponse.data?.tuition_am_half || 0,
+        pmHalf: settingsResponse.data?.tuition_pm_half || 0,
+        overnightWeek: settingsResponse.data?.tuition_overnight_week || 0,
+        overnightDay: settingsResponse.data?.tuition_overnight_day || 0,
+      },
+      discount: {
+        fullWeek: settingsResponse.data?.discount_full_week || 0,
+        fullDay: settingsResponse.data?.discount_full_day || 0,
+        amHalf: settingsResponse.data?.discount_am_half || 0,
+        pmHalf: settingsResponse.data?.discount_pm_half || 0,
+        overnightWeek: settingsResponse.data?.discount_overnight_week || 0,
+        overnightDay: settingsResponse.data?.discount_overnight_day || 0,
+      },
+      discountEndDate: settingsResponse.data?.discount_end_date || '',
+      discountDisplayValue: settingsResponse.data?.discount_display_value || '',
+      discountCode: settingsResponse.data?.discount_code || '',
+      lunchPrice: settingsResponse.data?.lunch_price || 14,
+      bootcampPremiumPct: settingsResponse.data?.bootcamp_premium_pct ?? 25,
+      siblingDiscountPct: settingsResponse.data?.sibling_discount_pct ?? 10,
+      businessName: settingsResponse.data?.invoice_business_name || 'New England Wushu',
+      businessAddress: settingsResponse.data?.invoice_business_address || '',
+    },
+    programs: {
+      general: { startDate: '', endDate: '', selectedWeeks: [], actonSelectedWeeks: [], wellesleySelectedWeeks: [] },
+      bootcamp: { startDate: '', endDate: '', selectedWeeks: [] },
+      overnight: { startDate: '', endDate: '', selectedWeeks: [] },
+    },
+  }
+
+  raw.programs.general.actonSelectedWeeks = Array.isArray(settingsResponse.data?.general_acton_selected_weeks)
+    ? settingsResponse.data.general_acton_selected_weeks
+    : []
+  raw.programs.general.wellesleySelectedWeeks = Array.isArray(settingsResponse.data?.general_wellesley_selected_weeks)
+    ? settingsResponse.data.general_wellesley_selected_weeks
+    : []
+
+  for (const row of windowsResponse.data || []) {
+    if (!['general', 'bootcamp', 'overnight'].includes(row.program_key)) continue
+    raw.programs[row.program_key] = {
+      ...raw.programs[row.program_key],
+      startDate: normalizeDateKey(row.start_date) || '',
+      endDate: normalizeDateKey(row.end_date) || '',
+    }
+  }
+
+  for (const row of weeksResponse.data || []) {
+    if (!['general', 'bootcamp', 'overnight'].includes(row.program_key) || !row.week_start) continue
+    const weekStart = normalizeDateKey(row.week_start)
+    if (!weekStart) continue
+    raw.programs[row.program_key].selectedWeeks.push(`${row.program_key}:${weekStart}`)
+  }
+
+  return mergeAdminConfig({
+    ...defaultAdminConfig,
+    tuition: raw.tuition,
+    programs: raw.programs,
+  })
+}
+
+function buildWeeksByIdForJourneys(config) {
+  const generalSelections = [
+    ...(Array.isArray(config?.programs?.general?.selectedWeeks) ? config.programs.general.selectedWeeks : []),
+    ...(Array.isArray(config?.programs?.general?.actonSelectedWeeks) ? config.programs.general.actonSelectedWeeks : []),
+    ...(Array.isArray(config?.programs?.general?.wellesleySelectedWeeks) ? config.programs.general.wellesleySelectedWeeks : []),
+  ]
+  const generalProgram = {
+    ...config.programs.general,
+    selectedWeeks: Array.from(new Set(generalSelections)),
+  }
+  const generalWeeks = buildProgramWeekOptions('general', generalProgram.startDate, generalProgram.endDate).filter((week) =>
+    generalProgram.selectedWeeks.includes(week.id)
+  )
+  const bootcampWeeks = buildProgramWeekOptions(
+    'bootcamp',
+    config.programs.bootcamp.startDate,
+    config.programs.bootcamp.endDate
+  ).filter((week) => (config.programs.bootcamp.selectedWeeks || []).includes(week.id))
+  const overnightWeeks = buildProgramWeekOptions(
+    'overnight',
+    config.programs.overnight.startDate,
+    config.programs.overnight.endDate
+  ).filter((week) => (config.programs.overnight.selectedWeeks || []).includes(week.id))
+
+  return [...generalWeeks, ...bootcampWeeks, ...overnightWeeks].reduce((acc, week) => {
+    acc[week.id] = week
+    return acc
+  }, {})
+}
+
+function buildRepairPayloadFromRegistration(record, config, weeksById) {
+  const rawMeta = parseMaybeJson(record?.medical_notes, {}) || {}
+  const sourceRegistration = rawMeta?.registration || {}
+  const students = Array.isArray(sourceRegistration.students) && sourceRegistration.students.length > 0
+    ? sourceRegistration.students
+    : [
+        {
+          fullName:
+            [record?.camper_first_name, record?.camper_last_name].filter(Boolean).join(' ').trim() ||
+            record?.guardian_name ||
+            'Camper',
+          schedule: {},
+          lunch: {},
+        },
+      ]
+  const registration = {
+    location: sourceRegistration.location || rawMeta?.locationLabel || '',
+    parentName: sourceRegistration.parentName || record?.guardian_name || 'Parent/Guardian',
+    contactEmail: sourceRegistration.contactEmail || record?.guardian_email || '',
+    contactPhone: sourceRegistration.contactPhone || record?.guardian_phone || '',
+    paymentMethod: sourceRegistration.paymentMethod || rawMeta?.paymentMethodLabel || '',
+    students,
+  }
+  const applyLimitedDiscount = isLimitedDiscountActiveForDate(config?.tuition?.discountEndDate, record?.created_at)
+  const snapshot = buildRegistrationSummarySnapshot({
+    registration,
+    tuition: config.tuition,
+    weeksById,
+    applyLimitedDiscount,
+  })
+  const selectedWeekIds = Array.from(new Set(students.flatMap((student) => Object.keys(student?.schedule || {}).filter(Boolean))))
+  const campWeeks = selectedWeekIds
+    .map((weekId) => weeksById[weekId])
+    .filter(Boolean)
+    .map((week) => ({ start: week.start, end: week.end }))
+
+  return {
+    submittedAt: record?.created_at || new Date().toISOString(),
+    contactPhone: registration.contactPhone || '',
+    guardianName: registration.parentName || '',
+    primaryCamperName: snapshot.camperNames[0] || '',
+    camperNames: snapshot.camperNames,
+    summaryLines: snapshot.summaryLines,
+    amountDue: snapshot.amountDue,
+    campWeeks,
+    paymentPageLink: buildPaymentPageHref({
+      registrationType: String(rawMeta?.registrationType || '').trim(),
+      guardianName: registration.parentName || '',
+      contactEmail: registration.contactEmail || '',
+      location: registration.location || '',
+      paymentMethod: registration.paymentMethod || '',
+      summaryLines: snapshot.summaryLines,
+      amountDue: snapshot.amountDue,
+      camperNames: snapshot.camperNames,
+    }),
+    registrationType: String(rawMeta?.registrationType || '').trim(),
+    location: registration.location || '',
+    paymentMethod: registration.paymentMethod || '',
+  }
 }
 
 async function sendPaidPrepEmail({ run, payload, stage }) {
@@ -1179,47 +1638,39 @@ async function enqueueReservationJourney(payload) {
   const submissionPayload = {
     submittedAt,
     contactPhone: payload?.contactPhone || '',
+    contactEmail: email,
     guardianName: payload?.guardianName || '',
+    paymentMethod: payload?.paymentMethod || '',
+    location: payload?.location || '',
     primaryCamperName: payload?.primaryCamperName || camperNames[0] || '',
     camperNames,
     summaryLines,
     amountDue,
     campWeeks: normalizeCampWeeks(payload),
+    registrationType: payload?.registrationType || '',
+    registration: payload?.registration || null,
+    applyLimitedDiscount: Boolean(payload?.applyLimitedDiscount),
+    overnightSelection: payload?.overnightSelection || null,
   }
-  const { data: createdRun, error: runError } = await supabaseServer
-    .from('email_journey_runs')
-    .insert({
-      email,
-      status: 'active',
-      current_step: 0,
-      next_send_at: new Date().toISOString(),
-    })
-    .select('id, email, status, current_step, profile_id, created_at')
-    .single()
-
-  if (runError) {
-    const immediateEmail = await sendReservationStepEmail({
-      email,
-      payload: submissionPayload,
-      stepNumber: 1,
-    })
+  const runResult = await createOrRecoverReservationRun(email, submittedAt)
+  const createdRun = runResult.run
+  if (!createdRun?.id) {
+    // Run creation failed — return a soft warning instead of throwing so the
+    // registration success path is not blocked. Admin can repair via tracking tab.
     return {
       runId: null,
-      immediateEmail,
+      immediateEmail: null,
       journeyStored: false,
-      warning: runError.message,
+      warning: runResult.warning || 'Unable to create reservation journey run. Use "Repair Missing Registration Runs" in the tracking tab.',
     }
   }
 
-  const { error: submittedEventError } = await supabaseServer.from('email_journey_events').insert({
-    run_id: createdRun.id,
-    profile_id: null,
+  const submittedEventResult = await ensureReservationSubmittedEvent({
+    runId: createdRun.id,
     email,
-    step_number: 0,
-    event_type: 'reservation_submitted',
-    subject: 'Registration submitted',
-    body_preview: summaryLines.join(' | ').slice(0, 350),
-    event_payload: submissionPayload,
+    summaryLines,
+    submissionPayload,
+    eventAt: submittedAt,
   })
 
   const initialEmailResult = await sendJourneyEmail({
@@ -1227,15 +1678,6 @@ async function enqueueReservationJourney(payload) {
     payload: submissionPayload,
     stepNumber: 1,
   })
-
-  if (submittedEventError) {
-    return {
-      runId: createdRun.id,
-      immediateEmail: initialEmailResult,
-      journeyStored: false,
-      warning: submittedEventError.message,
-    }
-  }
 
   const nextSendAt = nextSendAtIso(submittedAt, 1, 'active')
   await supabaseServer
@@ -1252,6 +1694,7 @@ async function enqueueReservationJourney(payload) {
     runId: createdRun.id,
     immediateEmail: initialEmailResult,
     journeyStored: true,
+    warning: runResult.warning || submittedEventResult.warning || '',
   }
 }
 
@@ -1478,6 +1921,362 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
   }
 }
 
+async function repairMissingReservationRuns() {
+  const config = await getMergedAdminConfigForJourneys()
+  const weeksById = buildWeeksByIdForJourneys(config)
+  const { data: registrations, error: registrationsError } = await supabaseServer
+    .from('registrations')
+    .select('id, camper_first_name, camper_last_name, guardian_name, guardian_email, guardian_phone, created_at, medical_notes')
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  if (registrationsError) {
+    throw new Error(registrationsError.message)
+  }
+
+  let repaired = 0
+  let skipped = 0
+
+  for (const record of registrations || []) {
+    const email = String(record?.guardian_email || '').trim().toLowerCase()
+    if (!isValidEmail(email)) {
+      skipped += 1
+      continue
+    }
+
+    const attachedRun = await findAttachedReservationRun(record?.id, email)
+    if (attachedRun?.id) {
+      skipped += 1
+      continue
+    }
+
+    const existingRun = await findRecoverableReservationRun(email, record?.created_at)
+    if (existingRun?.id) {
+      skipped += 1
+      continue
+    }
+
+    const payload = buildRepairPayloadFromRegistration(record, config, weeksById)
+    const runResult = await createOrRecoverReservationRun(email, payload.submittedAt)
+    const createdRun = runResult.run
+    if (!createdRun?.id) {
+      skipped += 1
+      continue
+    }
+
+    await ensureReservationSubmittedEvent({
+      runId: createdRun.id,
+      email,
+      summaryLines: payload.summaryLines,
+      submissionPayload: payload,
+      eventAt: payload.submittedAt,
+    })
+
+    await recordReservationRunAttachment({
+      registrationId: Number(record?.id || 0),
+      runId: createdRun.id,
+      runEmail: email,
+      registrationEmail: email,
+      reason: 'missing_run_backfill',
+      eventAt: payload.submittedAt,
+    })
+
+    const { data: existingStepOneEvent, error: existingStepOneError } = await supabaseServer
+      .from('email_journey_events')
+      .select('id')
+      .eq('run_id', createdRun.id)
+      .eq('event_type', 'reservation_email_sent')
+      .eq('step_number', 1)
+      .limit(1)
+      .maybeSingle()
+
+    if (existingStepOneError) {
+      throw new Error(existingStepOneError.message)
+    }
+
+    if (!existingStepOneEvent?.id) {
+      await supabaseServer.from('email_journey_events').insert({
+        run_id: createdRun.id,
+        profile_id: null,
+        email,
+        step_number: 1,
+        event_type: 'reservation_email_sent',
+        subject: 'Recovered step 1 reservation email',
+        body_preview: 'Backfilled tracker state for an already-sent step 1 reservation email.',
+        event_payload: {
+          repaired: true,
+          reason: 'missing_run_backfill',
+        },
+        event_at: payload.submittedAt,
+      })
+    }
+
+    await supabaseServer
+      .from('email_journey_runs')
+      .update({
+        status: 'active',
+        current_step: 1,
+        last_sent_at: payload.submittedAt,
+        next_send_at: nextSendAtIso(payload.submittedAt, 1, 'active'),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', createdRun.id)
+
+    repaired += 1
+  }
+
+  return {
+    repaired,
+    skipped,
+  }
+}
+
+async function createRunForEmail(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!isValidEmail(normalizedEmail)) {
+    return { created: false, warning: 'Invalid email address.' }
+  }
+
+  const { data: registration, error: registrationError } = await supabaseServer
+    .from('registrations')
+    .select('id, camper_first_name, camper_last_name, guardian_name, guardian_email, guardian_phone, created_at, medical_notes')
+    .ilike('guardian_email', normalizedEmail)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (registrationError) {
+    throw new Error(registrationError.message)
+  }
+
+  if (!registration) {
+    return { created: false, warning: `No registration found for ${normalizedEmail}.` }
+  }
+
+  const attachedRun = await findAttachedReservationRun(registration?.id, normalizedEmail)
+  if (attachedRun?.id) {
+    return { created: false, warning: `A journey run is already attached for ${normalizedEmail} (run id: ${attachedRun.id}).` }
+  }
+
+  const existingRun = await findRecoverableReservationRun(normalizedEmail, registration?.created_at)
+  if (existingRun?.id) {
+    return { created: false, warning: `A journey run already exists for ${normalizedEmail} (run id: ${existingRun.id}).` }
+  }
+
+  const config = await getMergedAdminConfigForJourneys()
+  const weeksById = buildWeeksByIdForJourneys(config)
+  const payload = buildRepairPayloadFromRegistration(registration, config, weeksById)
+  const runResult = await createOrRecoverReservationRun(normalizedEmail, payload.submittedAt)
+  const createdRun = runResult.run
+  if (!createdRun?.id) {
+    return { created: false, warning: 'Failed to create journey run.' }
+  }
+
+  await ensureReservationSubmittedEvent({
+    runId: createdRun.id,
+    email: normalizedEmail,
+    summaryLines: payload.summaryLines,
+    submissionPayload: payload,
+    eventAt: payload.submittedAt,
+  })
+
+  await recordReservationRunAttachment({
+    registrationId: Number(registration?.id || 0),
+    runId: createdRun.id,
+    runEmail: normalizedEmail,
+    registrationEmail: normalizedEmail,
+    reason: 'manual_assign',
+    eventAt: payload.submittedAt,
+  })
+
+  const { data: existingStepOneEvent } = await supabaseServer
+    .from('email_journey_events')
+    .select('id')
+    .eq('run_id', createdRun.id)
+    .eq('event_type', 'reservation_email_sent')
+    .eq('step_number', 1)
+    .limit(1)
+    .maybeSingle()
+
+  if (!existingStepOneEvent?.id) {
+    await supabaseServer.from('email_journey_events').insert({
+      run_id: createdRun.id,
+      profile_id: null,
+      email: normalizedEmail,
+      step_number: 1,
+      event_type: 'reservation_email_sent',
+      subject: 'Recovered step 1 reservation email',
+      body_preview: 'Backfilled tracker state for an already-sent step 1 reservation email.',
+      event_payload: { repaired: true, reason: 'manual_assign' },
+      event_at: payload.submittedAt,
+    })
+  }
+
+  await supabaseServer
+    .from('email_journey_runs')
+    .update({
+      status: 'active',
+      current_step: 1,
+      last_sent_at: payload.submittedAt,
+      next_send_at: nextSendAtIso(payload.submittedAt, 1, 'active'),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', createdRun.id)
+
+  return { created: true, runId: createdRun.id, email: normalizedEmail }
+}
+
+async function recordReservationRunAttachment({
+  registrationId,
+  runId,
+  runEmail = '',
+  registrationEmail = '',
+  reason = 'manual_attach',
+  eventAt = '',
+}) {
+  const normalizedRegistrationId = Number(registrationId || 0)
+  const normalizedRunId = Number(runId || 0)
+  if (normalizedRegistrationId <= 0 || normalizedRunId <= 0) {
+    return
+  }
+
+  await supabaseServer.from('email_journey_events').insert({
+    run_id: normalizedRunId,
+    profile_id: null,
+    email: String(runEmail || registrationEmail || '').trim().toLowerCase(),
+    step_number: null,
+    event_type: 'reservation_run_attached',
+    subject: 'Manual run attachment',
+    body_preview: 'Admin attached a reservation journey run to a registration row.',
+    event_payload: {
+      registrationId: normalizedRegistrationId,
+      runId: normalizedRunId,
+      attached: true,
+      reason,
+      registrationEmail: String(registrationEmail || '').trim().toLowerCase(),
+    },
+    event_at: eventAt || new Date().toISOString(),
+  })
+}
+
+async function setReservationTrackerVisibility({
+  registrationId,
+  runId,
+  email = '',
+  hidden = true,
+  reason = 'manual_hide',
+}) {
+  const normalizedRegistrationId = Number(registrationId || 0)
+  const normalizedRunId = Number(runId || 0)
+  if (normalizedRegistrationId <= 0 && normalizedRunId <= 0) {
+    return { updated: false, warning: 'A registration or run is required.' }
+  }
+
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  await supabaseServer.from('email_journey_events').insert({
+    run_id: normalizedRunId > 0 ? normalizedRunId : null,
+    profile_id: null,
+    email: normalizedEmail,
+    step_number: null,
+    event_type: hidden ? 'reservation_tracker_hidden' : 'reservation_tracker_unhidden',
+    subject: hidden ? 'Tracker row hidden' : 'Tracker row restored',
+    body_preview: hidden
+      ? 'Admin hid this reservation row from the tracker.'
+      : 'Admin restored this reservation row to the tracker.',
+    event_payload: {
+      registrationId: normalizedRegistrationId > 0 ? normalizedRegistrationId : null,
+      runId: normalizedRunId > 0 ? normalizedRunId : null,
+      hidden,
+      reason,
+    },
+    event_at: new Date().toISOString(),
+  })
+
+  return {
+    updated: true,
+    hidden,
+    registrationId: normalizedRegistrationId > 0 ? normalizedRegistrationId : null,
+    runId: normalizedRunId > 0 ? normalizedRunId : null,
+  }
+}
+
+async function attachRunToRegistration(registrationId, runId) {
+  const normalizedRegistrationId = Number(registrationId || 0)
+  const normalizedRunId = Number(runId || 0)
+  if (normalizedRegistrationId <= 0 || normalizedRunId <= 0) {
+    return { attached: false, warning: 'A valid registration and run are required.' }
+  }
+
+  const { data: registration, error: registrationError } = await supabaseServer
+    .from('registrations')
+    .select('id, camper_first_name, camper_last_name, guardian_name, guardian_email, guardian_phone, created_at, medical_notes')
+    .eq('id', normalizedRegistrationId)
+    .maybeSingle()
+
+  if (registrationError) {
+    throw new Error(registrationError.message)
+  }
+  if (!registration?.id) {
+    return { attached: false, warning: 'Registration record not found.' }
+  }
+
+  const { data: run, error: runError } = await supabaseServer
+    .from('email_journey_runs')
+    .select('id, email, created_at, status')
+    .eq('id', normalizedRunId)
+    .maybeSingle()
+
+  if (runError) {
+    throw new Error(runError.message)
+  }
+  if (!run?.id) {
+    return { attached: false, warning: 'Journey run not found.' }
+  }
+
+  if (isTestJourneyStatus(run?.status) || String(run?.status || '').startsWith('lead_')) {
+    return { attached: false, warning: 'Only live reservation runs can be attached.' }
+  }
+
+  const config = await getMergedAdminConfigForJourneys()
+  const weeksById = buildWeeksByIdForJourneys(config)
+  const payload = buildRepairPayloadFromRegistration(registration, config, weeksById)
+
+  await ensureReservationSubmittedEvent({
+    runId: normalizedRunId,
+    email: String(run?.email || registration?.guardian_email || '').trim().toLowerCase(),
+    summaryLines: payload.summaryLines,
+    submissionPayload: payload,
+    eventAt: payload.submittedAt,
+  })
+
+  await recordReservationRunAttachment({
+    registrationId: normalizedRegistrationId,
+    runId: normalizedRunId,
+    runEmail: String(run?.email || '').trim().toLowerCase(),
+    registrationEmail: String(registration?.guardian_email || '').trim().toLowerCase(),
+    reason: 'manual_attach',
+    eventAt: payload.submittedAt,
+  })
+
+  await supabaseServer
+    .from('email_journey_runs')
+    .update({
+      status: 'active',
+      current_step: 1,
+      last_sent_at: payload.submittedAt,
+      next_send_at: nextSendAtIso(payload.submittedAt, 1, 'active'),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', normalizedRunId)
+
+  return {
+    attached: true,
+    registrationId: normalizedRegistrationId,
+    runId: normalizedRunId,
+    email: String(run?.email || '').trim().toLowerCase(),
+  }
+}
+
 async function isAuthorizedAutomationRequest(request) {
   const secret = request.headers.get('x-cron-secret') || ''
   const expected = process.env.AUTOMATION_CRON_SECRET || ''
@@ -1534,7 +2333,49 @@ export async function POST(request) {
       return Response.json({ ok: true, action, ...result }, { status: 200 })
     }
 
-    return Response.json({ error: 'Invalid action. Use "enqueue", "process", or "manual_send".' }, { status: 400 })
+    if (action === 'repair_missing_runs') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await repairMissingReservationRuns()
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
+    if (action === 'create_run_for_email') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await createRunForEmail(body?.email || '')
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
+    if (action === 'attach_run_to_registration') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await attachRunToRegistration(body?.registrationId, body?.runId)
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
+    if (action === 'set_tracker_visibility') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await setReservationTrackerVisibility({
+        registrationId: body?.registrationId,
+        runId: body?.runId,
+        email: body?.email,
+        hidden: body?.hidden !== false,
+        reason: String(body?.reason || 'manual_hide'),
+      })
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
+    return Response.json({ error: 'Invalid action. Use "enqueue", "process", "manual_send", "repair_missing_runs", "create_run_for_email", "attach_run_to_registration", or "set_tracker_visibility".' }, { status: 400 })
   } catch (error) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
   }

@@ -721,16 +721,16 @@ h3 {
 .goSummerDock .button,
 .button.goSummerChip,
 .button.secondary.goSummerChip {
-  color: #0f172a;
-  border-color: #0f766e;
-  background:
-    radial-gradient(120% 180% at 8% 12%, rgba(255, 245, 157, 0.66), transparent 58%),
-    linear-gradient(140deg, #fef08a 0%, #fbbf24 40%, #2dd4bf 100%);
-  box-shadow: 0 16px 30px rgba(13, 148, 136, 0.28);
-  font-weight: 800;
-  font-size: 1rem;
-  min-height: 3.2rem;
-  padding: 0.78rem 1.25rem;
+  color: #ffffff;
+  border: 1px solid rgba(30, 64, 175, 0.3);
+  background: linear-gradient(140deg, #1d4ed8 0%, #2563eb 50%, #1e40af 100%);
+  box-shadow:
+    0 2px 6px rgba(15, 23, 42, 0.08),
+    0 10px 24px rgba(29, 78, 216, 0.3);
+  font-weight: 700;
+  font-size: 0.95rem;
+  min-height: 2.8rem;
+  padding: 0.65rem 1.25rem;
   transition: transform 0.16s ease, box-shadow 0.2s ease;
 }
 
@@ -751,7 +751,9 @@ h3 {
 .button.goSummerChip:hover,
 .button.secondary.goSummerChip:hover {
   transform: translateY(-1px);
-  box-shadow: 0 20px 34px rgba(13, 148, 136, 0.32);
+  box-shadow:
+    0 4px 8px rgba(15, 23, 42, 0.08),
+    0 16px 32px rgba(29, 78, 216, 0.36);
 }
 
 .desktopSurveyTopActions {
@@ -2592,6 +2594,11 @@ h3 {
   margin-bottom: 0.28rem;
 }
 
+.registrationStepText .brandMiniLogo.inline {
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .pageHeroLogoBar {
   display: flex;
   justify-content: center;
@@ -3804,15 +3811,16 @@ h3 {
   position: sticky;
   top: 0.35rem;
   z-index: 12;
-  margin: 0 0 0.75rem;
-  border: 1px solid #bfdbfe;
+  margin: 0 0 0.65rem;
+  border: 1px solid rgba(191, 219, 254, 0.8);
   border-radius: 14px;
-  background:
-    radial-gradient(circle at 12% 12%, rgba(255, 255, 255, 0.95), transparent 34%),
-    linear-gradient(145deg, rgba(239, 246, 255, 0.98) 0%, rgba(255, 255, 255, 0.98) 52%, rgba(236, 254, 255, 0.96) 100%);
-  padding: 0.45rem 0.48rem;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.78) inset;
-  backdrop-filter: blur(6px);
+  background: rgba(255, 255, 255, 0.97);
+  padding: 0.35rem 0.4rem;
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 6px 18px rgba(37, 99, 235, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .regSummaryTopRow {
@@ -3824,11 +3832,11 @@ h3 {
 }
 
 .regSummaryStatusBar {
-  margin: 0 0 0.32rem;
+  margin: 0 0 0.22rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.45rem;
+  gap: 0.35rem;
 }
 
 .regSummaryAddCamper {
@@ -3839,24 +3847,24 @@ h3 {
 }
 
 .regSummaryAddCamperSmall {
-  min-height: 28px;
-  padding: 0.22rem 0.52rem;
-  font-size: 0.7rem;
+  min-height: 24px;
+  padding: 0.16rem 0.44rem;
+  font-size: 0.68rem;
 }
 
 .regSummaryToggle {
   width: 100%;
-  border: 1px solid #bfdbfe;
-  border-radius: 11px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid rgba(191, 219, 254, 0.7);
+  border-radius: 10px;
+  background: #f8fbff;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.45rem;
-  padding: 0.38rem 0.48rem;
+  gap: 0.35rem;
+  padding: 0.28rem 0.4rem;
   cursor: pointer;
   text-align: left;
-  box-shadow: 0 8px 18px rgba(14, 116, 144, 0.07);
+  box-shadow: none;
 }
 
 .regSummaryToggleAction {
@@ -3872,15 +3880,15 @@ h3 {
 .regSummaryToggle strong {
   display: block;
   color: #0f172a;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
 }
 
 .regSummaryToggle em {
   display: block;
-  margin-top: 0.08rem;
-  color: #334155;
+  margin-top: 0.04rem;
+  color: #475569;
   font-style: normal;
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   line-height: 1.25;
 }
 
@@ -3916,12 +3924,13 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 30px;
-  padding: 0.26rem 0.48rem;
-  font-size: 0.72rem;
+  min-height: 26px;
+  padding: 0.18rem 0.38rem;
+  font-size: 0.68rem;
 }
 
 .regSummaryCamperMainBtn {
+  position: relative;
   flex: 1;
   min-width: 0;
   border: none;
@@ -3935,6 +3944,12 @@ h3 {
   gap: 0.28rem;
   padding: 0;
   cursor: pointer;
+}
+
+.lunchPendingDot {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
 }
 
 .regSummaryCamperRemoveBtn {
@@ -4105,6 +4120,13 @@ h3 {
 .summaryLunch {
   font-size: 0.82rem;
   font-weight: 700;
+}
+
+.summaryLunchPending {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #b91c1c;
 }
 
 .regSummaryButton {
@@ -4380,6 +4402,52 @@ h3 {
   gap: 0.5rem;
 }
 
+.registrationStepFourActions {
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.registrationCompactAction {
+  width: min(100%, 250px);
+  min-height: 2.35rem;
+  justify-content: center;
+  margin: 0 auto;
+  padding: 0.48rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.registrationInlineChipRow {
+  margin-top: 0.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.registrationInlineChipLabel {
+  color: #475569;
+  font-size: 0.96rem;
+}
+
+.button.secondary.registrationMiniChip {
+  min-height: 2.1rem;
+  padding: 0.42rem 0.82rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.16);
+}
+
+.registrationStepFourActions .inlineSummaryPoints {
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, 520px);
+  margin: 0 auto 0.15rem;
+  text-align: center;
+}
+
 .paymentOptionCard {
   border: 1px solid #dbe5f0;
   border-radius: 16px;
@@ -4496,6 +4564,14 @@ h3 {
   gap: 0.45rem;
 }
 
+.lunchDecisionCard {
+  text-align: center;
+}
+
+.lunchDecisionCard .requiredFieldLabel {
+  justify-content: center;
+}
+
 .lunchRequiredTag {
   display: inline-flex;
   align-items: center;
@@ -4505,14 +4581,37 @@ h3 {
   font-weight: 800;
 }
 
+.lunchDecisionSummary {
+  text-align: center;
+  margin-top: 0.6rem;
+}
+
 .lunchConfirmNoneRow {
-  margin-top: 0.45rem;
-  display: inline-flex;
+  margin: 0.75rem auto 0;
+  display: flex;
   align-items: center;
-  gap: 0.45rem;
+  justify-content: center;
+  gap: 0.65rem;
   color: #0f172a;
-  font-size: 0.86rem;
+  font-size: 0.92rem;
   font-weight: 700;
+  width: fit-content;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  box-shadow: 0 10px 18px rgba(148, 163, 184, 0.12);
+}
+
+.lunchConfirmNoneRow input[type='checkbox'] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: #0284c7;
+  flex: 0 0 auto;
+}
+
+.lunchConfirmNoneRow span {
+  line-height: 1.25;
 }
 
 .weekCard {
@@ -4533,11 +4632,36 @@ h3 {
   padding: 0.7rem 0.8rem;
   background: #f8fbff;
   cursor: pointer;
+  transition: background 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 
 .weekHead.selected {
   background: #e8f1ff;
   box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
+.weekHead.hasSelection {
+  background: linear-gradient(180deg, #f4fff7 0%, #e8f8ee 100%);
+  box-shadow: inset 0 0 0 1px #86efac;
+}
+
+.weekHead.empty {
+  background: #f8fbff;
+}
+
+.weekHead.visited {
+  background: linear-gradient(180deg, #fffaf0 0%, #fef3c7 100%);
+  box-shadow: inset 0 0 0 1px #fcd34d;
+}
+
+.weekHead.needsAttention {
+  background: linear-gradient(180deg, #fff8f8 0%, #fff1f2 100%);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.18);
+}
+
+.weekHead.lunchSelected {
+  background: linear-gradient(180deg, #f4fff7 0%, #dcfce7 100%);
+  box-shadow: inset 0 0 0 1px #4ade80;
 }
 
 .weekHead span {
@@ -4627,6 +4751,52 @@ h3 {
   background: #fff;
 }
 
+.paymentOptionsOverlayPanel {
+  width: min(460px, 100%);
+  border-radius: 18px;
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 28px 52px rgba(15, 23, 42, 0.32);
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.paymentOptionsOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.paymentOptionsOverlayAmount {
+  margin: 0;
+  text-align: center;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.paymentOptionsOverlayCopy {
+  margin: 0;
+  text-align: center;
+  color: #475569;
+}
+
+.paymentOptionsOverlayMethods {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.paymentOptionsOverlayMethodCard {
+  border: 1px solid #dbe5f0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 0.78rem 0.85rem;
+  text-align: center;
+  color: #1e293b;
+}
+
 .weekStatusChip {
   display: inline-flex;
   width: fit-content;
@@ -4637,6 +4807,47 @@ h3 {
   padding: 0.15rem 0.55rem;
   font-size: 0.74rem;
   font-weight: 800;
+}
+
+.weekSelectionStateChip {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.weekSelectionStateChip.selected,
+.weekSelectionStateChip.lunchSelected {
+  border: 1px solid #16a34a;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.weekSelectionStateChip.empty {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.weekSelectionStateChip.visited {
+  border: 1px solid #f59e0b;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.weekSelectionStateChip.needsAttention {
+  border: 1px solid #fca5a5;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.lunchDecisionReminder {
+  margin-top: 0.35rem;
+  text-align: center;
+  color: #475569;
+  font-weight: 700;
 }
 
 .activeStudentName {
@@ -4798,6 +5009,26 @@ h3 {
   margin-top: 0.7rem;
 }
 
+.discountedUnitPrice {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.08rem;
+  line-height: 1.1;
+}
+
+.discountedUnitPriceRegular {
+  color: #94a3b8;
+  font-size: 0.83rem;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
+.discountedUnitPriceNew {
+  color: #b45309;
+  font-weight: 800;
+}
+
 .stepFourDiscountClaim {
   margin-top: 0.8rem;
   border: 1px solid #f5b342;
@@ -4834,16 +5065,23 @@ h3 {
 }
 
 .stepFourDiscountClaim.claimed {
-  border-color: #16a34a;
+  border-color: #f5b342;
   background:
-    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.68), transparent 42%),
-    linear-gradient(135deg, #cff7ce 0%, #95e6a0 56%, #4cc56c 100%);
-  box-shadow: 0 12px 24px rgba(34, 197, 94, 0.22);
+    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.8), transparent 40%),
+    linear-gradient(135deg, #ffd76b 0%, #ffbc3a 56%, #f5a300 100%);
+  box-shadow: 0 14px 28px rgba(245, 158, 11, 0.28);
 }
 
 .stepFourDiscountClaim.claimed strong,
 .stepFourDiscountClaim.claimed p {
-  color: #14532d;
+  color: #7a2d00;
+}
+
+.stepFourDiscountClaim.claimed .stepFourClaimBtn {
+  background: linear-gradient(135deg, #fff7cc 0%, #ffe59a 48%, #ffc94d 100%);
+  color: #8a3b03;
+  border: 1px solid rgba(180, 83, 9, 0.18);
+  box-shadow: 0 10px 18px rgba(245, 158, 11, 0.18);
 }
 
 .registrationEmailStatus {
@@ -5237,7 +5475,7 @@ h3 {
 .locationGrid {
   margin-top: 0.9rem;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.8rem;
 }
 
@@ -5285,6 +5523,145 @@ h3 {
   font-weight: 700;
 }
 
+/* Location address — landing page card */
+.locationAddressLink {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #2563eb;
+  text-decoration: none;
+  line-height: 1.4;
+}
+
+.locationAddressLink:hover {
+  text-decoration: underline;
+}
+
+/* Facility carousel — registration form */
+.locationFacilityBlock {
+  grid-column: 1 / -1;
+  padding: 1rem 1.05rem;
+  border: 1px solid #c7d2fe;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef9ff 100%);
+  box-shadow: 0 16px 30px rgba(14, 165, 233, 0.08);
+}
+
+.locationFacilityMeta {
+  margin-bottom: 0.8rem;
+}
+
+.locationFacilityMeta h4 {
+  margin: 0.18rem 0 0;
+  color: #0f172a;
+  font-size: 1.05rem;
+}
+
+.locationAddressLine {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+.facilityCarousel {
+  display: flex;
+  flex-direction: row;
+  gap: 0.65rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: #bfdbfe transparent;
+}
+
+.facilityCarousel::-webkit-scrollbar {
+  height: 4px;
+}
+
+.facilityCarousel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.facilityCarousel::-webkit-scrollbar-thumb {
+  background: #bfdbfe;
+  border-radius: 999px;
+}
+
+.facilityCarouselItem {
+  appearance: none;
+  border: 1px solid #bfdbfe;
+  background: #fff;
+  border-radius: 14px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+  width: 200px;
+  height: 134px;
+  scroll-snap-align: start;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.07);
+}
+
+.facilityCarouselItem:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.13);
+}
+
+.facilityCarouselItem img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* Admin — location address fields */
+.locationAddressGrid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.locationAddressCard {
+  border: 1px solid #dbe5f0;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 1rem 1.1rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.locationAddressCardLabel {
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1d4ed8;
+  margin: 0;
+}
+
+.locationAddressRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.5rem 5rem;
+  gap: 0.5rem;
+}
+
+.locationAddressStateField input {
+  text-transform: uppercase;
+}
+
+.locationAddressPreview {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+}
+
 .registrationStatusRow {
   margin-bottom: 0.45rem;
   margin-top: 0.45rem;
@@ -5302,8 +5679,9 @@ h3 {
 }
 
 .regSummarySticky .registrationStatusChip {
-  padding: 0.22rem 0.56rem;
-  font-size: 0.68rem;
+  padding: 0.14rem 0.44rem;
+  font-size: 0.64rem;
+  font-weight: 700;
 }
 
 .registrationStatusChip.pending {
@@ -5334,6 +5712,18 @@ h3 {
 
 .registrationSubmittedCard p {
   margin-top: 0.22rem;
+}
+
+.registrationSubmittedCard--complete {
+  padding: 1rem 1.05rem;
+  text-align: center;
+}
+
+.registrationSubmittedActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
 }
 
 .registrationTabs {
@@ -5494,15 +5884,24 @@ h3 {
 
 .registrationStepHero {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(150px, 0.95fr);
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
   gap: 0.72rem;
-  margin-bottom: 0.85rem;
+  margin: 0 auto 0.85rem;
+  max-width: 760px;
 }
 
 .registrationStepCard.stepOneLayout .registrationStepHero {
-  max-width: 980px;
+  max-width: 760px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.registrationStepText {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.3rem;
 }
 
 .registrationStepOneGrid {
@@ -5513,6 +5912,7 @@ h3 {
 
 .registrationStepText h3 {
   margin: 0.2rem 0 0;
+  max-width: 16ch;
 }
 
 .registrationStepVisual {
@@ -5521,7 +5921,8 @@ h3 {
   overflow: hidden;
   background: #f8fafc;
   aspect-ratio: 16 / 10;
-  max-height: 130px;
+  width: min(100%, 290px);
+  max-height: 160px;
   display: grid;
   place-items: center;
 }
@@ -5627,6 +6028,25 @@ textarea:focus {
   gap: 0.75rem;
 }
 
+.actionsCentered {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionsCentered > .button,
+.actionsCentered > span {
+  width: 100%;
+  max-width: 320px;
+}
+
+.actionsCentered > .button.secondary {
+  max-width: 250px;
+  min-height: 2.35rem;
+  padding: 0.48rem 0.9rem;
+  font-size: 0.84rem;
+}
+
 .submitActionGroup {
   display: flex;
   align-items: center;
@@ -5636,22 +6056,65 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
-.submitDiscountNudge {
-  display: inline-flex;
+.submitActionGroupCentered {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  justify-content: center;
+  flex-direction: column;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.6rem 0.8rem;
-  border-radius: 999px;
-  border: 1px solid #f5b342;
-  background: linear-gradient(135deg, #fff7cc 0%, #ffe59a 100%);
-  color: #7a2d00;
+}
+
+.submitActionGroupCentered .button {
+  width: 100%;
+}
+
+.submitPrimaryWrap {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+}
+
+.submitDiscountInlineNote {
+  margin: 0;
+  font-size: 0.82rem;
   font-weight: 700;
-  box-shadow: 0 10px 24px rgba(245, 158, 11, 0.16);
+  color: #b45309;
+  text-align: center;
+}
+
+.submitDiscountNudge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border-radius: 22px;
+  border: 1px solid #f5b342;
+  background:
+    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.82), transparent 42%),
+    linear-gradient(135deg, #fff3b8 0%, #ffe27a 48%, #ffc94d 100%);
+  color: #7a2d00;
+  font-weight: 800;
+  box-shadow:
+    0 10px 24px rgba(245, 158, 11, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  text-align: center;
 }
 
 .submitDiscountClaimBtn {
-  padding: 0.55rem 0.95rem;
+  padding: 0.62rem 1rem;
   white-space: nowrap;
+  border: 1px solid rgba(180, 83, 9, 0.22);
+  background: linear-gradient(135deg, #fff8d6 0%, #ffffff 20%, #fff0b3 100%);
+  color: #8a3b03;
+  box-shadow: 0 10px 20px rgba(245, 158, 11, 0.22);
+}
+
+.submitDiscountClaimBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 24px rgba(245, 158, 11, 0.24);
 }
 
 .button,
@@ -5759,6 +6222,7 @@ textarea:focus {
 }
 
 .adminGrid {
+  margin-top: 1rem;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
@@ -5846,11 +6310,17 @@ textarea:focus {
 }
 
 .adminActions {
-  margin-top: 0.8rem;
+  margin-top: 1rem;
   display: flex;
   gap: 0.6rem;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.adminActions span {
+  font-size: 0.82rem;
+  color: #64748b;
+  font-weight: 500;
 }
 
 .accountingDashboardGrid {
@@ -5993,15 +6463,37 @@ textarea:focus {
 }
 
 .accountingTableSection {
-  margin-top: 1rem;
+  margin-top: 1.4rem;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.accountingTableSection .tuitionTableWrap {
+  margin-top: 0;
+  overflow-x: auto;
 }
 
 .accountingSectionHeader {
-  margin-bottom: 0.25rem;
+  padding: 0.9rem 1rem 0.6rem;
+  background: linear-gradient(180deg, #f3f7fd 0%, #eff6ff 100%);
+  border-bottom: 1px solid #dbeafe;
 }
 
 .accountingSectionHeader h3 {
   margin: 0;
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.accountingSectionHeader .subhead {
+  margin: 0.18rem 0 0;
+  font-size: 0.78rem;
+  color: #64748b;
 }
 
 .accountingEmptyCell {
@@ -6133,20 +6625,37 @@ textarea:focus {
 }
 
 .adminWeekList {
-  margin-top: 0.8rem;
+  margin-top: 1rem;
   display: grid;
-  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
 }
 
 .weekRow {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.6rem;
   border: 1px solid #dbe5f0;
   border-radius: 10px;
   background: #ffffff;
-  padding: 0.55rem 0.7rem;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.875rem;
+  color: #334155;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.weekRow:hover {
+  border-color: #93c5fd;
+  background: #f0f7ff;
+}
+
+.weekRow input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  accent-color: #2563eb;
 }
 
 .adminFooter {
@@ -6196,15 +6705,66 @@ textarea:focus {
   border: 1px solid #dbe5f0;
   border-radius: 14px;
   background: #f8fbff;
-  padding: 0.8rem;
+  padding: 0.9rem 1rem;
+}
+
+.previewCard > h3 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.previewCard > h3 + .subhead {
+  margin-top: 0;
+  font-size: 0.8rem;
+  color: #64748b;
 }
 
 .subCard {
-  margin-top: 0.8rem;
+  margin-top: 1.2rem;
   border: 1px solid #dbe5f0;
-  border-radius: 14px;
+  border-radius: 16px;
   background: #f8fbff;
-  padding: 0.8rem;
+  padding: 1.2rem 1.4rem;
+}
+
+.subCard h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.subCard .subhead {
+  font-size: 0.875rem;
+  margin-top: 0.3rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.adminPage .card.section h2 {
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.adminPage .card.section > .subhead {
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+  line-height: 1.5;
+}
+
+.adminWeekListLabel {
+  margin-top: 1.2rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
 }
 
 .subCard .adminGrid label .button {
@@ -6523,12 +7083,34 @@ textarea:focus {
   border-collapse: collapse;
 }
 
-.tuitionTable th,
+.tuitionTable th {
+  border: 1px solid #dbe5f0;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: bottom;
+  background: #f3f7fd;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #334155;
+  white-space: nowrap;
+}
+
 .tuitionTable td {
   border: 1px solid #dbe5f0;
-  padding: 0.45rem;
+  padding: 0.5rem 0.6rem;
   text-align: left;
   vertical-align: top;
+  font-size: 0.83rem;
+}
+
+.tuitionTable tbody tr:nth-child(even) td {
+  background: #f8fbff;
+}
+
+.tuitionTable tbody tr:hover td {
+  background: #eff6ff;
 }
 
 .selectedReplyRow {
@@ -6550,6 +7132,15 @@ textarea:focus {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(244, 248, 255, 0.96) 100%);
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+.trackerCard > h3 {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: #0f172a;
+  margin: 0 0 0.25rem;
 }
 
 .trackerTableWrap {
@@ -6569,6 +7160,14 @@ textarea:focus {
 
 .trackerTable td {
   background: rgba(255, 255, 255, 0.9);
+}
+
+.trackerTable tbody tr:nth-child(even) td {
+  background: rgba(248, 251, 255, 0.9);
+}
+
+.trackerTable tbody tr:hover td {
+  background: rgba(239, 246, 255, 0.95);
 }
 
 .trackerMetaCol {
@@ -6640,16 +7239,48 @@ textarea:focus {
   font-size: 0.76rem;
   line-height: 1.45;
   color: #475569;
+  border-radius: 16px;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .trackerCriteriaCell div + div {
   margin-top: 0.22rem;
 }
 
+.trackerCriteriaCell-due {
+  background: linear-gradient(180deg, rgba(255, 247, 237, 0.95) 0%, rgba(255, 237, 213, 0.92) 100%);
+  box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.38);
+  color: #9a3412;
+}
+
+.trackerCriteriaCell-upcoming {
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.96) 0%, rgba(220, 252, 231, 0.92) 100%);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.34);
+  color: #166534;
+}
+
 .trackerCellActions {
   display: grid;
   gap: 0.42rem;
   justify-items: center;
+}
+
+.trackerActionStack {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.trackerDebugRow td {
+  background: #f8fbff;
+}
+
+.trackerDebugPanel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem 1rem;
+  padding: 0.5rem 0.15rem;
+  font-size: 0.88rem;
+  color: #334155;
 }
 
 .trackerCellDot {
@@ -7626,17 +8257,27 @@ textarea:focus {
 }
 
 .learnAssistDock {
-  left: 50%;
-  right: auto;
-  bottom: 7.05rem;
+    left: 50%;
+    right: auto;
+    bottom: 8rem;
     transform: translateX(-50%);
     width: min(calc(100vw - 1.3rem), 360px);
     justify-content: center;
     border-radius: 12px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.42rem 0.6rem;
+  }
+
+  .learnAssistHead {
+    display: none;
   }
 
   .learnAssistLink {
     font-size: 0.74rem;
+    flex: 1;
   }
 
   .assistExpandDock {
@@ -7723,6 +8364,9 @@ textarea:focus {
     padding: 0.2rem 0.28rem;
     gap: 0.08rem;
     border-color: rgba(180, 83, 9, 0.2);
+    flex: 1;
+    align-items: center;
+    text-align: center;
   }
 
   .discountCountdownDock span {
@@ -7741,7 +8385,7 @@ textarea:focus {
   }
 
   .discountCountdownDock.mobileStrip.registrationOffset {
-    bottom: calc(7.1rem + env(safe-area-inset-bottom));
+    bottom: calc(5.8rem + env(safe-area-inset-bottom));
   }
 
   .overnightDiscountCountdownDock {
@@ -7751,6 +8395,7 @@ textarea:focus {
   .discountCountdownDock.mobileStrip .discountCountdownBoxes {
     margin-top: 0;
     gap: 0.16rem;
+    justify-content: center;
   }
 
   .discountCountdownDock.mobileStrip .discountTimeBox {
@@ -7770,22 +8415,65 @@ textarea:focus {
     letter-spacing: 0;
   }
 
+  .discountCountdownDock.mobileStrip {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .discountMobileLangToggle {
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 0.2rem 0.28rem;
+    border-radius: 8px;
+    border: 1px solid rgba(180, 83, 9, 0.24);
+    background: rgba(255, 251, 235, 0.5);
+  }
+
+  .discountLangBtn {
+    border: none;
+    background: transparent;
+    color: #7c2d12;
+    font-size: 0.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+    padding: 0.06rem 0.1rem;
+    text-align: center;
+    border-radius: 4px;
+  }
+
+  .discountLangBtn.active {
+    background: rgba(180, 83, 9, 0.15);
+  }
+
+  .langToggleDock {
+    display: none;
+  }
+
   .mobileRegistrationStepBar {
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
     bottom: calc(0.6rem + env(safe-area-inset-bottom));
     z-index: 92;
-    width: min(calc(100vw - 1rem), 460px);
+    width: min(calc(100vw - 1.5rem), 460px);
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.34rem;
-    padding: 1.08rem 0.34rem 0.34rem;
-    border-radius: 12px;
-    border: 1px solid #cbd5e1;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.2);
-    backdrop-filter: blur(8px);
+    gap: 0.28rem;
+    padding: 1rem 0.32rem 0.32rem;
+    border-radius: 16px;
+    border: 1px solid rgba(203, 213, 225, 0.8);
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow:
+      0 2px 8px rgba(15, 23, 42, 0.06),
+      0 16px 32px rgba(15, 23, 42, 0.15);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .mobileRegistrationFlowRibbon {
@@ -7823,11 +8511,11 @@ textarea:focus {
     position: relative;
     display: grid;
     justify-items: center;
-    gap: 0.14rem;
-    min-height: 2.6rem;
-    padding: 0.36rem 0.2rem;
+    gap: 0.12rem;
+    min-height: 2.4rem;
+    padding: 0.28rem 0.18rem;
     border-radius: 10px;
-    border: 1px solid #dbe5f0;
+    border: 1px solid rgba(219, 229, 240, 0.8);
     background: #f8fafc;
     color: #475569;
     cursor: pointer;
@@ -7854,12 +8542,12 @@ textarea:focus {
   .mobileRegistrationStepNumber {
     display: inline-grid;
     place-items: center;
-    width: 1.35rem;
-    height: 1.35rem;
+    width: 1.25rem;
+    height: 1.25rem;
     border-radius: 999px;
     background: #e2e8f0;
     color: #334155;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     font-weight: 800;
   }
 
@@ -7869,10 +8557,46 @@ textarea:focus {
   }
 
   .mobileRegistrationStepLabel {
-    font-size: 0.62rem;
-    font-weight: 800;
+    font-size: 0.58rem;
+    font-weight: 700;
     text-align: center;
     line-height: 1.15;
+  }
+
+  .mobileNavLangToggle {
+    display: grid;
+    gap: 0.14rem;
+    align-items: center;
+    justify-items: center;
+    border: 1px solid rgba(219, 229, 240, 0.8);
+    border-radius: 10px;
+    background: #f8fafc;
+    padding: 0.28rem 0.3rem;
+    cursor: pointer;
+    width: 2.6rem;
+  }
+
+  .mobileNavLangBtn {
+    border: none;
+    background: transparent;
+    font-size: 0.56rem;
+    font-weight: 700;
+    color: #64748b;
+    cursor: pointer;
+    padding: 0.06rem 0.12rem;
+    border-radius: 4px;
+    line-height: 1;
+  }
+
+  .mobileNavLangBtn.active {
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-radius: 4px;
+  }
+
+  .registrationRoute .langToggleDock,
+  .mobileRegistrationStepBar ~ .langToggleDock {
+    display: none;
   }
 
   .mobileRegistrationStepDot {

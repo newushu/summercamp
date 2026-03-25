@@ -31,7 +31,7 @@ const desktopCampNavItems = [
   { href: '#camp-info', label: 'Top' },
   { href: '#why-camp', label: 'Highlights' },
   { href: '#student-stories', label: 'Stories' },
-  { href: '#weekly-structure', label: 'Sample Week' },
+  { href: '#weekly-structure', label: 'Sample Day' },
 ]
 const MAX_CAMPERS = 6
 const REGISTRATION_DRAFT_KEY = 'new-england-wushu-registration-draft-v1'
@@ -58,6 +58,11 @@ const LOCATION_OPTIONS = [
     label: 'Acton',
     towns: ['Concord', 'Boxborough', 'Littleton', 'Westford', 'Maynard', 'Stow', 'Sudbury', 'Carlisle'],
   },
+  {
+    value: 'wellesley',
+    label: 'Wellesley',
+    towns: ['Wellesley', 'Natick', 'Needham', 'Newton', 'Weston', 'Framingham', 'Waltham', 'Brookline'],
+  },
 ]
 const DAY_CAMP_WEEKLY_POINTS = 2500
 const DAY_CAMP_FULL_DAY_POINTS = 500
@@ -71,42 +76,35 @@ function getLocationLabel(value) {
 }
 
 function getGeneralProgramForLocation(programConfig, locationValue) {
-  if (String(locationValue || '').trim() === 'acton') {
+  const loc = String(locationValue || '').trim()
+  if (loc === 'acton') {
     return {
       ...programConfig,
       selectedWeeks: Array.isArray(programConfig?.actonSelectedWeeks) ? programConfig.actonSelectedWeeks : [],
     }
   }
+  if (loc === 'wellesley') {
+    return {
+      ...programConfig,
+      selectedWeeks: Array.isArray(programConfig?.wellesleySelectedWeeks) ? programConfig.wellesleySelectedWeeks : [],
+    }
+  }
   return programConfig
 }
 
-function getDobYear(dob) {
-  const match = String(dob || '').trim().match(/^(\d{4})-\d{2}-\d{2}$/)
-  return match ? match[1] : ''
-}
-
-function setDobYear(dob, yearValue) {
-  const year = String(yearValue || '').trim()
-  if (!/^\d{4}$/.test(year)) {
-    return ''
-  }
-  const raw = String(dob || '').trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return `${year}${raw.slice(4)}`
-  }
-  return `${year}-01-01`
-}
-
 function getFacilityImageUrls(media, locationValue) {
-  if (String(locationValue || '').trim() === 'acton') {
-    return Array.isArray(media?.actonFacilityImageUrls) ? media.actonFacilityImageUrls.filter(Boolean) : []
-  }
-  if (String(locationValue || '').trim() === 'burlington') {
-    return Array.isArray(media?.burlingtonFacilityImageUrls)
-      ? media.burlingtonFacilityImageUrls.filter(Boolean)
-      : []
-  }
+  const loc = String(locationValue || '').trim()
+  if (loc === 'acton') return Array.isArray(media?.actonFacilityImageUrls) ? media.actonFacilityImageUrls.filter(Boolean) : []
+  if (loc === 'wellesley') return Array.isArray(media?.wellesleyFacilityImageUrls) ? media.wellesleyFacilityImageUrls.filter(Boolean) : []
+  if (loc === 'burlington') return Array.isArray(media?.burlingtonFacilityImageUrls) ? media.burlingtonFacilityImageUrls.filter(Boolean) : []
   return []
+}
+
+function getLocationAddress(locations, locationValue) {
+  const loc = String(locationValue || '').trim()
+  const addr = locations?.[loc]
+  if (!addr || !addr.street || !addr.city) return null
+  return `${addr.street}, ${addr.city}, ${addr.state || 'MA'} ${addr.zip}`.trim().replace(/,\s*$/, '')
 }
 
 function getSiteBaseUrl() {
@@ -142,6 +140,11 @@ function getPaymentMethodLabel(value) {
   const option = PAYMENT_METHOD_OPTIONS.find((item) => item.value === normalized)
   return option?.label || normalized || 'not selected'
 }
+
+function isValidEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+}
+
 const surveyGoals = [
   { value: 'fun', label: 'Fun', zhLabel: '趣味' },
   { value: 'exercise', label: 'Exercise', zhLabel: '锻炼' },
@@ -623,24 +626,54 @@ function getLunchWeeksForStudent(student, weeksById) {
   const rows = []
   for (const [weekId, entry] of Object.entries(student.schedule || {})) {
     const week = weeksById[weekId]
-    if (!week || week.programKey === 'overnight') {
+    const programKey = week?.programKey || entry?.programKey
+    if (programKey === 'overnight') {
       continue
     }
 
-    const selectedDays = []
-    for (const day of week.days) {
-      const mode = entry.days?.[day.key] || 'NONE'
-      if (mode === 'NONE') {
-        continue
-      }
-      selectedDays.push({ dayKey: day.key, date: day.date, mode, key: `${weekId}:${day.key}` })
-    }
+    const sourceDays =
+      Array.isArray(week?.days) && week.days.length > 0
+        ? week.days
+        : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((dayKey) => ({
+            key: dayKey,
+            date: '',
+          }))
+    const dayMetaByKey = sourceDays.reduce((acc, day) => {
+      acc[String(day?.key || '').trim()] = day
+      return acc
+    }, {})
+    const selectedDays = Object.entries(entry?.days || {})
+      .filter(([, mode]) => mode && mode !== 'NONE')
+      .map(([dayKey, mode]) => {
+        const dayMeta = dayMetaByKey[dayKey] || {}
+        return {
+          dayKey,
+          date: dayMeta.date || '',
+          mode,
+          key: `${weekId}:${dayKey}`,
+        }
+      })
+      .sort((a, b) => {
+        const order = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+        return order.indexOf(a.dayKey) - order.indexOf(b.dayKey)
+      })
 
     if (selectedDays.length > 0) {
-      rows.push({ weekId, week, selectedDays })
+      rows.push({
+        weekId,
+        week:
+          week || {
+            id: weekId,
+            start: '',
+            end: '',
+            programLabel: 'Camp Week',
+            days: sourceDays,
+          },
+        selectedDays,
+      })
     }
   }
-  return rows.sort((a, b) => a.week.start.localeCompare(b.week.start))
+  return rows.sort((a, b) => (a.week.start || a.weekId).localeCompare(b.week.start || b.weekId))
 }
 
 function getLunchDecisionStats(student, weeksById) {
@@ -931,6 +964,8 @@ export default function HomePage() {
   const [expandedStudentId, setExpandedStudentId] = useState('')
   const [expandedWeekKey, setExpandedWeekKey] = useState('')
   const [expandedLunchWeekKey, setExpandedLunchWeekKey] = useState('')
+  const [visitedLunchStudentIds, setVisitedLunchStudentIds] = useState({})
+  const [visitedLunchWeekKeys, setVisitedLunchWeekKeys] = useState({})
   const [scheduleCopySourceId, setScheduleCopySourceId] = useState('')
   const [lunchCopySourceId, setLunchCopySourceId] = useState('')
   const [levelUpSlideIndex, setLevelUpSlideIndex] = useState(0)
@@ -947,6 +982,7 @@ export default function HomePage() {
   const [summaryExpanded, setSummaryExpanded] = useState(false)
   const [summaryOverlayOpen, setSummaryOverlayOpen] = useState(false)
   const [summaryOverlayHtml, setSummaryOverlayHtml] = useState('')
+  const [paymentOptionsOverlayOpen, setPaymentOptionsOverlayOpen] = useState(false)
   const [locationAlbumOpen, setLocationAlbumOpen] = useState(false)
   const [locationAlbumIndex, setLocationAlbumIndex] = useState(0)
   const [submittedRegistrationSnapshot, setSubmittedRegistrationSnapshot] = useState(null)
@@ -954,6 +990,7 @@ export default function HomePage() {
   const [summaryEmailSending, setSummaryEmailSending] = useState(false)
   const [summaryEmailLocked, setSummaryEmailLocked] = useState(false)
   const [registrationDiscountClaimed, setRegistrationDiscountClaimed] = useState(false)
+  const [showSubmitDiscountReminder, setShowSubmitDiscountReminder] = useState(false)
   const [surveyStep, setSurveyStep] = useState(() => readSurveyStepDraft())
   const [surveyDirection, setSurveyDirection] = useState('next')
   const [surveyMessage, setSurveyMessage] = useState('')
@@ -975,6 +1012,20 @@ export default function HomePage() {
     paymentMethod: '',
     students: [createStudent('student-1')],
   })
+
+  function markLunchStudentVisited(studentId) {
+    if (!studentId) {
+      return
+    }
+    setVisitedLunchStudentIds((current) => (current[studentId] ? current : { ...current, [studentId]: true }))
+  }
+
+  function markLunchWeekVisited(panelKey) {
+    if (!panelKey) {
+      return
+    }
+    setVisitedLunchWeekKeys((current) => (current[panelKey] ? current : { ...current, [panelKey]: true }))
+  }
   const registrationRef = useRef(null)
   const surveyRef = useRef(null)
   const summaryIframeRef = useRef(null)
@@ -1065,17 +1116,8 @@ export default function HomePage() {
         existing.availableCampTypes = existing.availableCampTypes.includes('bootcamp')
           ? existing.availableCampTypes
           : [...existing.availableCampTypes, 'bootcamp']
-      } else {
-        dayCampMap.set(id, {
-          id,
-          start: week.start,
-          end: week.end,
-          programKey: 'daycamp',
-          programLabel: 'Camp Week',
-          days: getWeekDays(week.start),
-          availableCampTypes: ['bootcamp'],
-        })
       }
+      // If the week isn't in the location's general schedule, don't show it at all
     }
 
     const mappedDayCamp = Array.from(dayCampMap.values()).sort((a, b) => a.start.localeCompare(b.start))
@@ -2350,6 +2392,17 @@ export default function HomePage() {
     if (expandedStudentId === studentId) {
       setExpandedStudentId('')
     }
+    setVisitedLunchStudentIds((current) => {
+      if (!current[studentId]) {
+        return current
+      }
+      const next = { ...current }
+      delete next[studentId]
+      return next
+    })
+    setVisitedLunchWeekKeys((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${studentId}:`)))
+    )
   }
 
   function confirmAndRemoveStudent(studentId) {
@@ -2391,12 +2444,15 @@ export default function HomePage() {
     setExpandedStudentId('')
     setExpandedWeekKey('')
     setExpandedLunchWeekKey('')
+    setVisitedLunchStudentIds({})
+    setVisitedLunchWeekKeys({})
     setStep(1)
     setRegistrationDiscountClaimed(false)
     setRegistrationEmailResult(null)
     setSummaryEmailSending(false)
     setSummaryEmailLocked(false)
     setMessage('Form cleared.')
+    setShowSubmitDiscountReminder(false)
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(REGISTRATION_DRAFT_KEY)
     }
@@ -2405,6 +2461,10 @@ export default function HomePage() {
   function activateCamper(studentId) {
     setActiveStudentId(studentId)
     setExpandedStudentId(studentId)
+
+    if (step === 3) {
+      markLunchStudentVisited(studentId)
+    }
 
     if (step === 1 && typeof document !== 'undefined') {
       window.setTimeout(() => {
@@ -2540,6 +2600,8 @@ export default function HomePage() {
       return
     }
     const key = `${weekId}:${day}`
+    markLunchStudentVisited(studentId)
+    markLunchWeekVisited(`${studentId}:${weekId}`)
     markRegistrationPending()
     setRegistration((current) => ({
       ...current,
@@ -2564,6 +2626,7 @@ export default function HomePage() {
   }
 
   function setLunchConfirmedNone(studentId, confirmed) {
+    markLunchStudentVisited(studentId)
     markRegistrationPending()
     setRegistration((current) => ({
       ...current,
@@ -2610,6 +2673,9 @@ export default function HomePage() {
     }))
     setExpandedWeekKey('')
     setExpandedLunchWeekKey('')
+    setVisitedLunchWeekKeys((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
+    )
     setMessage('Cleared all selected weeks/times for active camper.')
   }
 
@@ -2648,6 +2714,9 @@ export default function HomePage() {
     }))
     setExpandedWeekKey('')
     setExpandedLunchWeekKey('')
+    setVisitedLunchWeekKeys((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
+    )
     setMessage('Copied weeks/times from selected camper.')
   }
 
@@ -2669,6 +2738,10 @@ export default function HomePage() {
       ),
     }))
     setExpandedLunchWeekKey('')
+    setVisitedLunchStudentIds((current) => ({ ...current, [activeStudent.id]: true }))
+    setVisitedLunchWeekKeys((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
+    )
     setMessage('Cleared all lunch selections for active camper.')
   }
 
@@ -2703,6 +2776,7 @@ export default function HomePage() {
       ),
     }))
     setExpandedLunchWeekKey('')
+    setVisitedLunchStudentIds((current) => ({ ...current, [activeStudent.id]: true }))
     setMessage('Copied lunch selections from selected camper.')
   }
 
@@ -2715,7 +2789,7 @@ export default function HomePage() {
   function isStepOneComplete() {
     const locationValid = registration.location.trim().length > 0
     const parentNameValid = registration.parentName.trim().length > 1
-    const emailValid = /\S+@\S+\.\S+/.test(registration.contactEmail)
+    const emailValid = isValidEmailAddress(registration.contactEmail)
     const phoneValid = registration.contactPhone.trim().length >= 7
     const paymentMethodValid = registration.paymentMethod.trim().length > 0
     const studentsValid = registration.students.every((student) => isStudentComplete(student))
@@ -2741,8 +2815,15 @@ export default function HomePage() {
     return registration.students.every((student) => hasValidLunchDecision(student))
   }
 
+  function isDiscountClaimComplete() {
+    if (!discountActive || Number(claimableDiscountTotal || 0) <= 0) {
+      return true
+    }
+    return Boolean(registrationDiscountClaimed)
+  }
+
   function isStepFourComplete() {
-    return isStepOneComplete() && isStepTwoComplete() && isStepThreeComplete()
+    return isStepOneComplete() && isStepTwoComplete() && isStepThreeComplete() && isDiscountClaimComplete()
   }
 
   function isRegistrationStepComplete(stepId) {
@@ -2827,7 +2908,7 @@ export default function HomePage() {
     }
     const rect = element.getBoundingClientRect()
     const absoluteTop = window.scrollY + rect.top
-    const targetTop = Math.max(0, absoluteTop - window.innerHeight * 0.6)
+    const targetTop = Math.max(0, absoluteTop - window.innerHeight * 0.4)
     window.scrollTo({ top: targetTop, behavior: 'smooth' })
     window.setTimeout(() => {
       element.focus?.({ preventScroll: true })
@@ -2845,7 +2926,7 @@ export default function HomePage() {
         scrollElementIntoFocusZone(parentNameInput)
         return
       }
-      if (!/\S+@\S+\.\S+/.test(registration.contactEmail || '')) {
+      if (!isValidEmailAddress(registration.contactEmail || '')) {
         const emailInput = document.querySelector('#reg-contact-email')
         scrollElementIntoFocusZone(emailInput)
         return
@@ -2950,10 +3031,14 @@ export default function HomePage() {
 
   function buildStudentPriceRows(summary, studentIndex, options = {}) {
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
+    const siblingDiscountEligible =
+      typeof options.siblingDiscountEligible === 'boolean'
+        ? options.siblingDiscountEligible
+        : studentIndex >= 1
     const regular = adminConfig.tuition.regular
     const discount = adminConfig.tuition.discount
     const premiumFactor = 1 + Number(adminConfig.tuition.bootcampPremiumPct || 0) / 100
-    const siblingDiscountPct = studentIndex >= 1 ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
+    const siblingDiscountPct = siblingDiscountEligible ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
 
     const bootcampRegular = {
       fullWeek: roundUpToFive(regular.fullWeek * premiumFactor),
@@ -3101,10 +3186,75 @@ export default function HomePage() {
     }
   }
 
+  function getSiblingDiscountEligibleIdsForStudents(students, options = {}) {
+    const studentList = Array.isArray(students) ? students : []
+    if (studentList.length <= 1) {
+      return new Set()
+    }
+
+    const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
+    const regular = adminConfig.tuition.regular
+    const discount = adminConfig.tuition.discount
+    const premiumFactor = 1 + Number(adminConfig.tuition.bootcampPremiumPct || 0) / 100
+    const bootcampRegular = {
+      fullWeek: roundUpToFive(regular.fullWeek * premiumFactor),
+      fullDay: roundUpToFive(regular.fullDay * premiumFactor),
+      amHalf: roundUpToFive(regular.amHalf * premiumFactor),
+      pmHalf: roundUpToFive(regular.pmHalf * premiumFactor),
+    }
+    const bootcampDiscounted = {
+      fullWeek: roundUpToFive(discount.fullWeek * premiumFactor),
+      fullDay: roundUpToFive(discount.fullDay * premiumFactor),
+      amHalf: roundUpToFive(discount.amHalf * premiumFactor),
+      pmHalf: roundUpToFive(discount.pmHalf * premiumFactor),
+    }
+
+    const ranked = studentList
+      .map((student, index) => {
+        const summary = getStudentSummary(student)
+        const tuitionSubtotal = [
+          ['general', 'fullWeek', summary.general.fullWeeks],
+          ['general', 'fullDay', summary.general.fullDays],
+          ['general', 'amHalf', summary.general.amDays],
+          ['general', 'pmHalf', summary.general.pmDays],
+          ['bootcamp', 'fullWeek', summary.bootcamp.fullWeeks],
+          ['bootcamp', 'fullDay', summary.bootcamp.fullDays],
+          ['bootcamp', 'amHalf', summary.bootcamp.amDays],
+          ['bootcamp', 'pmHalf', summary.bootcamp.pmDays],
+        ].reduce((sum, [rateType, key, qty]) => {
+          const regularPrice = rateType === 'bootcamp' ? bootcampRegular[key] || 0 : regular[key] || 0
+          const configuredDiscountedPrice = rateType === 'bootcamp' ? bootcampDiscounted[key] || 0 : discount[key] || 0
+          const normalizedDiscountedPrice =
+            Number(configuredDiscountedPrice) > 0 ? Number(configuredDiscountedPrice) : regularPrice
+          const effectivePrice = applyLimitedDiscount
+            ? Math.max(0, Math.min(regularPrice, normalizedDiscountedPrice))
+            : regularPrice
+          return sum + Number(qty || 0) * effectivePrice
+        }, 0)
+
+        return { studentId: student.id, studentIndex: index, tuitionSubtotal }
+      })
+      .sort((a, b) => {
+        if (a.tuitionSubtotal !== b.tuitionSubtotal) {
+          return a.tuitionSubtotal - b.tuitionSubtotal
+        }
+        return a.studentIndex - b.studentIndex
+      })
+
+    return new Set(ranked.slice(0, Math.max(0, ranked.length - 1)).map((item) => item.studentId))
+  }
+
   function getClaimableDiscountTotal() {
+    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(registration.students, { applyLimitedDiscount: true })
     return summaries.reduce((sum, item) => {
       const studentIndex = registration.students.findIndex((student) => student.id === item.student.id)
-      return sum + buildStudentPriceRows(item.summary, studentIndex, { applyLimitedDiscount: true }).limitedDiscountAmount
+      return (
+        sum +
+        buildStudentPriceRows(item.summary, studentIndex, {
+          applyLimitedDiscount: true,
+          siblingDiscountEligible: eligibleIds.has(item.student.id),
+        }).limitedDiscountAmount
+      )
     }, 0)
   }
 
@@ -3116,12 +3266,18 @@ export default function HomePage() {
     const todayLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
     const allCampEntries = []
+    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
+      applyLimitedDiscount: discountActive,
+    })
 
     const studentSections = targetRegistration.students
       .map((student, index) => {
         const camperName = student.fullName.trim() || `Camper ${index + 1}`
         const summary = getStudentSummary(student)
-        const invoice = buildStudentPriceRows(summary, index, { applyLimitedDiscount: discountActive })
+        const invoice = buildStudentPriceRows(summary, index, {
+          applyLimitedDiscount: discountActive,
+          siblingDiscountEligible: eligibleIds.has(student.id),
+        })
         const {
           lunchWeeks,
           registeredDays,
@@ -3149,7 +3305,7 @@ export default function HomePage() {
           .map((row, weekIndex) => {
             const dayLines = row.selectedDays
               .map((day) => {
-                const hasLunch = Boolean(student.lunch[day.key])
+                const hasLunch = Boolean(student.lunch?.[day.key])
                 const isIncludedLunch = isIncludedLunchDay(day.dayKey)
                 const notableText = getDayNotableText(day.dayKey)
                 allCampEntries.push({
@@ -3340,6 +3496,10 @@ export default function HomePage() {
     iframeWindow.print()
   }
 
+  function openPaymentOptionsOverlay() {
+    setPaymentOptionsOverlayOpen(true)
+  }
+
   function emailSummaryToSelf(targetRegistration = registration) {
     if (!targetRegistration?.students?.length || summaryEmailSending || summaryEmailLocked) {
       return
@@ -3409,17 +3569,22 @@ export default function HomePage() {
       return []
     }
 
+    const locationAddr = getLocationAddress(adminConfig.locations, targetRegistration.location)
     const lines = [
-      `Location: ${getLocationLabel(targetRegistration.location)}`,
+      `Location: ${getLocationLabel(targetRegistration.location)}${locationAddr ? ` — ${locationAddr}` : ''}`,
       `Parent/Guardian: ${targetRegistration.parentName?.trim() || 'not provided'}`,
       `Contact: ${targetRegistration.contactEmail || 'not provided'} | ${targetRegistration.contactPhone || 'not provided'}`,
       `Payment method: ${getPaymentMethodLabel(targetRegistration.paymentMethod)}`,
     ]
+    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
+      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+    })
     for (const [index, student] of targetRegistration.students.entries()) {
       const camperName = student.fullName.trim() || `Camper ${index + 1}`
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, index, {
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        siblingDiscountEligible: eligibleIds.has(student.id),
       })
       const { registeredDays, paidLunchDays, includedLunchDays, packLunchNeededDays } =
         getLunchDecisionStats(student, weeksById)
@@ -3441,6 +3606,7 @@ export default function HomePage() {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        siblingDiscountEligible: eligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
     }, 0)
@@ -3451,10 +3617,14 @@ export default function HomePage() {
 
   function buildPaymentPageLinkForRegistration(targetRegistration = registration) {
     const summaryLines = buildReservationSummaryLines(targetRegistration)
+    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
+      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+    })
     const amountDue = (targetRegistration?.students || []).reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        siblingDiscountEligible: eligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
     }, 0)
@@ -3477,8 +3647,46 @@ export default function HomePage() {
   async function submitRegistration(event) {
     event.preventDefault()
 
+    if (!isStepOneComplete()) {
+      setStep(1)
+      setMessage('Please complete required fields for this step.')
+      jumpToStepMissingField(1)
+      return
+    }
+
+    if (!isStepTwoComplete()) {
+      setStep(2)
+      setMessage('Select at least one camp day for each camper.')
+      jumpToStepMissingField(2)
+      return
+    }
+
+    if (!isStepThreeComplete()) {
+      setStep(3)
+      setMessage('Choose paid lunch days or confirm no paid lunch for each camper when applicable.')
+      jumpToStepMissingField(3)
+      return
+    }
+
+    if (!isDiscountClaimComplete()) {
+      setShowSubmitDiscountReminder(true)
+      setMessage('')
+      return
+    }
+
+    setShowSubmitDiscountReminder(false)
+
     if (!supabaseEnabled || !supabase) {
       setMessage('Add your Supabase URL and anon key to submit registrations.')
+      return
+    }
+
+    if (!isValidEmailAddress(registration.contactEmail)) {
+      setMessage('Please enter a valid contact email before submitting registration.')
+      setStep(1)
+      const emailInput =
+        typeof document !== 'undefined' ? document.querySelector('#reg-contact-email') : null
+      scrollElementIntoFocusZone(emailInput)
       return
     }
 
@@ -3518,10 +3726,14 @@ export default function HomePage() {
     const submittedSnapshot = JSON.parse(JSON.stringify(registration))
     setSubmittedRegistrationSnapshot(submittedSnapshot)
     const summaryLines = buildReservationSummaryLines(submittedSnapshot)
+    const submittedSiblingEligibleIds = getSiblingDiscountEligibleIdsForStudents(submittedSnapshot.students, {
+      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+    })
     const amountDue = submittedSnapshot.students.reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        siblingDiscountEligible: submittedSiblingEligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
     }, 0)
@@ -3552,6 +3764,7 @@ export default function HomePage() {
             contactEmail: submittedSnapshot.contactEmail,
             contactPhone: submittedSnapshot.contactPhone,
             location: submittedSnapshot.location,
+            paymentMethod: submittedSnapshot.paymentMethod,
             guardianName: submittedSnapshot.parentName || '',
             submittedAt: new Date().toISOString(),
             primaryCamperName,
@@ -3560,6 +3773,8 @@ export default function HomePage() {
             amountDue,
             campWeeks,
             paymentPageLink,
+            registration: submittedSnapshot,
+            applyLimitedDiscount: discountActive && registrationDiscountClaimed,
           },
         }),
       })
@@ -3624,15 +3839,53 @@ export default function HomePage() {
   const expandedStudent = registration.students.find((student) => student.id === expandedStudentId)
   const activeStudentDisplayName = activeStudent?.fullName?.trim() || 'this camper'
   const activeCamperLabel = activeStudent?.fullName?.trim() || `Camper ${activeStudentIndex + 1}`
+  const lunchStepStatusByStudentId = Object.fromEntries(
+    registration.students.map((student) => {
+      const lunchStats = getLunchDecisionStats(student, weeksById)
+      const hasSelectableLunchDay = getSelectableLunchDayKeysForStudent(student).size > 0
+      const visited = Boolean(visitedLunchStudentIds[student.id])
+      return [
+        student.id,
+        {
+          visited,
+          complete: hasValidLunchDecision(student),
+          needsVisit: hasSelectableLunchDay && !visited,
+          hasSelectableLunchDay,
+          paidLunchDays: lunchStats.paidLunchDays,
+          includedLunchDays: lunchStats.includedLunchDays,
+        },
+      ]
+    })
+  )
+  const siblingDiscountEligibleStudentIds = getSiblingDiscountEligibleIdsForStudents(registration.students, {
+    applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+  })
   const selectedLocationLabel = getLocationLabel(registration.location)
   const locationAlbumTitle = registration.location.trim()
     ? `${selectedLocationLabel} Facility Photos`
     : 'Facility Photos'
   const activeLocationAlbumPhoto = locationFacilityPhotos[locationAlbumIndex] || ''
   const registrationIsSubmitted = Boolean(submittedRegistrationSnapshot)
+  const submittedRegistrationRecord = registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration
+  const submittedCamperNames = (submittedRegistrationRecord?.students || [])
+    .map((student, index) => student.fullName.trim() || `Camper ${index + 1}`)
+    .filter(Boolean)
+  const submittedCamperNamesLabel = submittedCamperNames.join(', ')
+  const reviewGrandTotal = summaries.reduce((sum, item) => {
+    const studentIndex = registration.students.findIndex((student) => student.id === item.student.id)
+    return (
+      sum +
+      buildStudentPriceRows(item.summary, studentIndex, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
+      }).total
+    )
+  }, 0)
   const locationMissing = !registration.location.trim()
   const parentNameMissing = !registration.parentName.trim()
   const contactEmailMissing = !registration.contactEmail.trim()
+  const contactEmailInvalid =
+    registration.contactEmail.trim().length > 0 && !isValidEmailAddress(registration.contactEmail)
   const contactPhoneMissing = !registration.contactPhone.trim()
   const paymentMethodMissing = !registration.paymentMethod.trim()
   const expandedStudentFullNameMissing = expandedStudent ? !expandedStudent.fullName.trim() : false
@@ -3667,6 +3920,31 @@ export default function HomePage() {
         : step === 3
           ? `Step 3: Select lunch options for ${activeStudentDisplayName}`
           : 'Step 4: Review totals and submit registration'
+  useEffect(() => {
+    if (step === 3 && resolvedActiveStudentId) {
+      markLunchStudentVisited(resolvedActiveStudentId)
+    }
+  }, [resolvedActiveStudentId, step])
+
+  useEffect(() => {
+    setVisitedLunchStudentIds((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([studentId]) => registration.students.some((student) => student.id === studentId))
+      )
+    )
+    setVisitedLunchWeekKeys((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([panelKey]) => {
+          const rawKey = String(panelKey || '')
+          const dividerIndex = rawKey.indexOf(':')
+          const studentId = dividerIndex >= 0 ? rawKey.slice(0, dividerIndex) : rawKey
+          const weekId = dividerIndex >= 0 ? rawKey.slice(dividerIndex + 1) : ''
+          const student = registration.students.find((item) => item.id === studentId)
+          return Boolean(student?.schedule?.[weekId])
+        })
+      )
+    )
+  }, [registration.students])
   const activeRegistrationStepImage = adminConfig.media.registrationStepImageUrls?.[step - 1] || ''
   const fullWeekDiscountAmount = useMemo(() => {
     const regularFullWeek = Number(adminConfig.tuition.regular.fullWeek || 0)
@@ -3748,6 +4026,7 @@ export default function HomePage() {
             '很好。您仍可自带午餐，营员同样会获得完整的系统训练与营地体验。'
           )
         : ''
+
   const overnightFullWeekCurrentPrice =
     overnightPricingRows.find((row) => row.key === 'fullWeek')?.effective || 0
   const overnightFullDayCurrentPrice =
@@ -3787,7 +4066,7 @@ export default function HomePage() {
       setOvernightMessage('Please add a parent/guardian name for overnight registration.')
       return
     }
-    if (!/\S+@\S+\.\S+/.test(overnightContactEmail || '')) {
+    if (!isValidEmailAddress(overnightContactEmail || '')) {
       setOvernightMessage('Please add a valid contact email for overnight registration.')
       return
     }
@@ -3812,8 +4091,17 @@ export default function HomePage() {
       setOvernightEnrollmentStep(1)
       return
     }
-    if (overnightParentName.trim().length < 2 || !/\S+@\S+\.\S+/.test(overnightContactEmail || '') || overnightContactPhone.trim().length < 7 || !overnightPaymentMethod.trim()) {
-      setOvernightMessage('Please complete all required fields in Step 1 before submitting.')
+    if (
+      overnightParentName.trim().length < 2 ||
+      !isValidEmailAddress(overnightContactEmail || '') ||
+      overnightContactPhone.trim().length < 7 ||
+      !overnightPaymentMethod.trim()
+    ) {
+      setOvernightMessage(
+        !isValidEmailAddress(overnightContactEmail || '')
+          ? 'Please enter a valid contact email before submitting overnight registration.'
+          : 'Please complete all required fields in Step 1 before submitting.'
+      )
       setOvernightEnrollmentStep(1)
       return
     }
@@ -3852,6 +4140,8 @@ export default function HomePage() {
             contactEmail: overnightContactEmail.trim(),
             contactPhone: overnightContactPhone.trim(),
             guardianName: overnightParentName.trim(),
+            paymentMethod: overnightPaymentMethod,
+            location: 'Overnight Camp',
             submittedAt: new Date().toISOString(),
             primaryCamperName: 'Overnight Camper',
             camperNames: ['Overnight Camper'],
@@ -3859,6 +4149,12 @@ export default function HomePage() {
             amountDue,
             campWeeks,
             registrationType: 'overnight-only',
+            overnightSelection: {
+              requestOption: overnightRequestOption,
+              requestedWeeks: overnightRequestedWeeks,
+              activitySelections: overnightActivitySelections,
+              activityCustom: overnightActivityCustom.trim(),
+            },
           },
         }),
       })
@@ -5269,26 +5565,39 @@ export default function HomePage() {
         <h2>{text('Camp Locations', '营地地点')}</h2>
         <p className="subhead">
           {text(
-            'Families can choose Burlington or Acton during registration. We serve nearby families across these surrounding towns.',
-            '家庭可在报名时选择 Burlington 或 Acton。我们服务周边多个相邻城镇的家庭。'
+            'Families can choose Burlington, Acton, or Wellesley during registration. We serve nearby families across these surrounding towns.',
+            '家庭可在报名时选择 Burlington、Acton 或 Wellesley。我们服务周边多个相邻城镇的家庭。'
           )}
         </p>
         <div className="locationGrid">
-          {LOCATION_OPTIONS.map((location) => (
-            <article key={location.value} className="locationCard">
-              <div className="locationCardHead">
-                <span className="locationBadge">{location.label}</span>
-                <strong>{text('Nearby towns served', '服务周边城镇')}</strong>
-              </div>
-              <div className="locationTownList">
-                {location.towns.map((town) => (
-                  <span key={`${location.value}-${town}`} className="locationTownChip">
-                    {town}
-                  </span>
-                ))}
-              </div>
-            </article>
-          ))}
+          {LOCATION_OPTIONS.map((location) => {
+            const addr = getLocationAddress(adminConfig.locations, location.value)
+            return (
+              <article key={location.value} className="locationCard">
+                <div className="locationCardHead">
+                  <span className="locationBadge">{location.label}</span>
+                  {addr ? (
+                    <a
+                      className="locationAddressLink"
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      📍 {addr}
+                    </a>
+                  ) : null}
+                  <strong>{text('Nearby towns served', '服务周边城镇')}</strong>
+                </div>
+                <div className="locationTownList">
+                  {location.towns.map((town) => (
+                    <span key={`${location.value}-${town}`} className="locationTownChip">
+                      {town}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            )
+          })}
         </div>
       </section>
 
@@ -5447,6 +5756,7 @@ export default function HomePage() {
               const label = student.fullName.trim() || `Camper ${index + 1}`
               const active = resolvedActiveStudentId === student.id
               const missing = isCamperMissingAnyStep(student)
+              const lunchStatus = lunchStepStatusByStudentId[student.id] || {}
               return (
                 <div
                   key={`summary-camper-top-${student.id}`}
@@ -5460,6 +5770,7 @@ export default function HomePage() {
                   >
                     <span>{label}</span>
                     {missing ? <span className="registrationCamperAlertDot" aria-hidden="true" /> : null}
+                    {step === 3 && lunchStatus.needsVisit ? <span className="registrationCamperAlertDot lunchPendingDot" aria-hidden="true" /> : null}
                   </button>
                   {registration.students.length > 1 ? (
                     <button
@@ -5600,6 +5911,11 @@ export default function HomePage() {
                       {pluralize(text('Paid Lunch Day', '付费午餐日'), summary.lunchCount)} · {text('Thu included', '周四含午餐')}{' '}
                       {getLunchDecisionStats(student, weeksById).includedLunchDays}
                     </p>
+                    {step === 3 && lunchStepStatusByStudentId[student.id]?.needsVisit ? (
+                      <p className="summaryLunch summaryLunchPending">
+                        <span className="requiredDot" /> {text('Open lunch step for this camper', '请先打开这位营员的午餐步骤')}
+                      </p>
+                    ) : null}
 
                     {resolvedActiveStudentId === student.id ? (
                       <div className="regSummaryDetails">
@@ -5698,45 +6014,35 @@ export default function HomePage() {
               </label>
 
               {registration.location.trim() ? (
-                <div className="full locationAlbumCard">
-                  <div className="locationAlbumIntro">
+                <div className="full locationFacilityBlock">
+                  <div className="locationFacilityMeta">
                     <div>
-                      <p className="eyebrow">{text('Step 1 preview', '步骤 1 预览')}</p>
-                      <h4>{locationAlbumTitle}</h4>
-                      <p className="subhead">
-                        {text('Preview the training space before you continue. Click to open the small album.', '继续前可先查看训练场地。点击打开相册预览。')}
-                      </p>
+                      <p className="eyebrow">{text('Training facility', '训练场地')}</p>
+                      <h4>{selectedLocationLabel}</h4>
+                      {getLocationAddress(adminConfig.locations, registration.location) ? (
+                        <p className="locationAddressLine">📍 {getLocationAddress(adminConfig.locations, registration.location)}</p>
+                      ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => {
-                        setLocationAlbumIndex(0)
-                        setLocationAlbumOpen(true)
-                      }}
-                      disabled={locationFacilityPhotos.length === 0}
-                    >
-                      {locationFacilityPhotos.length > 0 ? text('Open photo album', '打开照片相册') : text('No facility photos added yet', '尚未添加场地照片')}
-                    </button>
                   </div>
                   {locationFacilityPhotos.length > 0 ? (
-                    <div className="locationAlbumPreviewStrip">
-                      {locationFacilityPhotos.slice(0, 4).map((url, index) => (
+                    <div className="facilityCarousel">
+                      {locationFacilityPhotos.map((url, index) => (
                         <button
-                          key={`location-preview-${registration.location}-${index}`}
+                          key={`facility-photo-${registration.location}-${index}`}
                           type="button"
-                          className="locationAlbumPreviewThumb"
+                          className="facilityCarouselItem"
                           onClick={() => {
                             setLocationAlbumIndex(index)
                             setLocationAlbumOpen(true)
                           }}
+                          aria-label={`${selectedLocationLabel} facility photo ${index + 1}`}
                         >
-                          <img src={url} alt={`${selectedLocationLabel} facility preview ${index + 1}`} loading="lazy" decoding="async" />
+                          <img src={url} alt={`${selectedLocationLabel} facility ${index + 1}`} loading="lazy" decoding="async" />
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <p className="subhead">{text('Admin can add Burlington and Acton facility photos in the media tab.', '管理员可在媒体标签中添加 Burlington 和 Acton 场地照片。')}</p>
+                    <p className="subhead" style={{ marginTop: '0.5rem' }}>{text('Facility photos coming soon.', '场地照片即将上线。')}</p>
                   )}
                 </div>
               ) : null}
@@ -5753,15 +6059,22 @@ export default function HomePage() {
               </label>
 
               <label>
-                <span className="requiredFieldLabel">{text('Contact email', '联系邮箱')} {contactEmailMissing ? <span className="requiredDot" /> : null}</span>
+                <span className="requiredFieldLabel">
+                  {text('Contact email', '联系邮箱')} {contactEmailMissing || contactEmailInvalid ? <span className="requiredDot" /> : null}
+                </span>
                 <input
                   id="reg-contact-email"
                   type="email"
-                  className={contactEmailMissing ? 'fieldIncomplete' : ''}
+                  className={contactEmailMissing || contactEmailInvalid ? 'fieldIncomplete' : ''}
                   value={registration.contactEmail}
                   onChange={(event) => updateContact('contactEmail', event.target.value)}
                   required
                 />
+                {contactEmailInvalid ? (
+                  <p className="surveyFieldError">
+                    {text('Please enter a valid email address before submitting.', '提交前请输入有效邮箱地址。')}
+                  </p>
+                ) : null}
                 <p className="marketingConsentNote">
                   {text('By continuing, you may receive camp updates and marketing emails related to this form.', '继续即表示您可能会收到与此表单相关的营地更新和营销邮件。')}
                 </p>
@@ -5876,30 +6189,15 @@ export default function HomePage() {
                     </label>
                     <label>
                       <span className="requiredFieldLabel">{text('Date of birth', '出生日期')} {expandedStudentDobMissing ? <span className="requiredDot" /> : null}</span>
-                      <div className="dobInputRow">
-                        <input
-                          id={`reg-student-dob-${expandedStudent.id}`}
-                          type="date"
-                          className={expandedStudentDobMissing ? 'fieldIncomplete' : ''}
-                          value={expandedStudent.dob}
-                          max={new Date().toISOString().slice(0, 10)}
-                          onChange={(event) => updateStudentField(expandedStudent.id, 'dob', event.target.value)}
-                          required
-                        />
-                        <select
-                          aria-label={text('Birth year', '出生年份')}
-                          className={expandedStudentDobMissing ? 'fieldIncomplete' : ''}
-                          value={getDobYear(expandedStudent.dob)}
-                          onChange={(event) => updateStudentField(expandedStudent.id, 'dob', setDobYear(expandedStudent.dob, event.target.value))}
-                        >
-                          <option value="">{text('Birth year', '出生年份')}</option>
-                          {DOB_YEAR_OPTIONS.map((year) => (
-                            <option key={`dob-year-${expandedStudent.id}-${year}`} value={year}>
-                              {year}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <input
+                        id={`reg-student-dob-${expandedStudent.id}`}
+                        type="date"
+                        className={expandedStudentDobMissing ? 'fieldIncomplete' : ''}
+                        value={expandedStudent.dob}
+                        max={new Date().toISOString().slice(0, 10)}
+                        onChange={(event) => updateStudentField(expandedStudent.id, 'dob', event.target.value)}
+                        required
+                      />
                     </label>
                     <label className="full">
                       <span className="requiredFieldLabel">{text('Allergies', '过敏信息')} {expandedStudentAllergiesMissing ? <span className="requiredDot" /> : null}</span>
@@ -6016,12 +6314,13 @@ export default function HomePage() {
                     const selectedCampType = entry?.campType || ''
                     const panelKey = `${activeStudent.id}:${week.id}`
                     const expanded = expandedWeekKey === panelKey
+                    const hasSelection = Object.values(entry?.days || {}).some((mode) => mode && mode !== 'NONE')
 
                     return (
                       <article key={week.id} className="weekCard">
                         <button
                           type="button"
-                          className={`weekHead ${expanded ? 'selected' : ''}`}
+                          className={`weekHead ${expanded ? 'selected' : ''} ${hasSelection ? 'hasSelection' : 'empty'}`}
                           data-week-head={panelKey}
                           onClick={() => setExpandedWeekKey(expanded ? '' : panelKey)}
                         >
@@ -6037,6 +6336,9 @@ export default function HomePage() {
                             {weekSelectionSummary ? (
                               <span className="weekStatusChip">{weekSelectionSummary}</span>
                             ) : null}
+                            <span className={`weekSelectionStateChip ${hasSelection ? 'selected' : 'empty'}`}>
+                              {hasSelection ? text('Registered', '已选择') : text('Not selected yet', '尚未选择')}
+                            </span>
                           </span>
                           <span className="weekHeadTapCta" aria-hidden="true">
                             <span className="weekHeadTapIcon">☝</span>
@@ -6136,9 +6438,14 @@ export default function HomePage() {
               <p className="subhead">
                 {text('Weekly reminders: Wednesday bring a change of clothes. Thursday BBQ lunch is included in tuition (packing lunch is optional). Friday is family performance day.', '每周提醒：周三请带备用衣物。周四烧烤午餐已包含在学费内（也可自带午餐）。周五为家庭展示日。')}
               </p>
-              <p className="subhead">
-                {text('Looking for overnight camp?', '想了解过夜营？')} <a href="/overnight">{text('Open overnight page.', '打开过夜营页面。')}</a>
-              </p>
+              <div className="registrationInlineChipRow">
+                <span className="registrationInlineChipLabel">
+                  {text('Looking for overnight camp?', '想了解过夜营？')}
+                </span>
+                <a className="button secondary registrationMiniChip" href="/overnight">
+                  {text('Open overnight page', '打开过夜营页面')}
+                </a>
+              </div>
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
                   <label>
@@ -6177,6 +6484,7 @@ export default function HomePage() {
                     getLunchWeeksForStudent(activeStudent, weeksById).map((row, weekIndex) => {
                       const panelKey = `${activeStudent.id}:${row.weekId}`
                       const expanded = expandedLunchWeekKey === panelKey
+                      const visited = Boolean(visitedLunchWeekKeys[panelKey])
                       const weekIncludedLunchDays = row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length
                       const weekPaidLunchDays = row.selectedDays.filter(
                         (day) => !isIncludedLunchDay(day.dayKey) && Boolean(activeStudent.lunch[day.key])
@@ -6188,8 +6496,14 @@ export default function HomePage() {
                         <article key={row.weekId} className="weekCard">
                           <button
                             type="button"
-                            className={`weekHead ${expanded ? 'selected' : ''}`}
-                            onClick={() => setExpandedLunchWeekKey(expanded ? '' : panelKey)}
+                            className={`weekHead ${expanded ? 'selected' : ''} ${weekPaidLunchDays > 0 ? 'lunchSelected' : visited ? 'visited' : 'needsAttention'}`}
+                            onClick={() => {
+                              if (!expanded) {
+                                markLunchStudentVisited(activeStudent.id)
+                                markLunchWeekVisited(panelKey)
+                              }
+                              setExpandedLunchWeekKey(expanded ? '' : panelKey)
+                            }}
                           >
                             <span className="weekHeadText">
                               <strong>
@@ -6202,6 +6516,15 @@ export default function HomePage() {
                               </em>
                               <span className="weekLunchSummaryLine">
                                 {text(`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Thu included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`, `已提供午餐 ${weekProvidedLunchDays}/${weekRegisteredDays} 天（付费 ${weekPaidLunchDays} 天，周四含餐 ${weekIncludedLunchDays} 天）· 需自带午餐 ${weekPackDays} 天`)}
+                              </span>
+                              <span className={`weekSelectionStateChip ${
+                                weekPaidLunchDays > 0 ? 'lunchSelected' : visited ? 'visited' : 'needsAttention'
+                              }`}>
+                                {weekPaidLunchDays > 0
+                                  ? text('Lunch selected', '已选午餐')
+                                  : visited
+                                    ? text('Opened', '已查看')
+                                    : text('Review lunch', '待查看')}
                               </span>
                             </span>
                           </button>
@@ -6243,10 +6566,16 @@ export default function HomePage() {
               {activeStudent ? (
                 <div className="lunchDecisionCard" data-lunch-decision={activeStudent.id}>
                   {(() => {
-                    const hasAnyPaidLunch = Object.entries(activeStudent.lunch || {}).some(
+                    const paidLunchDaysSelected = Object.entries(activeStudent.lunch || {}).filter(
                       ([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)
-                    )
+                    ).length
+                    const hasAnyPaidLunch = paidLunchDaysSelected > 0
                     const selectableLunchDays = getSelectableLunchDayKeysForStudent(activeStudent).size
+                    const lunchWeeks = getLunchWeeksForStudent(activeStudent, weeksById)
+                    const includedThursdayCount = lunchWeeks.reduce(
+                      (sum, row) => sum + row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length,
+                      0
+                    )
                     const needsDecision = selectableLunchDays > 0
                     return (
                       <>
@@ -6261,22 +6590,29 @@ export default function HomePage() {
                       </span>
                     ) : null}
                   </div>
-                  <p className="subhead">
+                  <p className="subhead lunchDecisionSummary">
                     {!needsDecision
-                      ? 'Only Thursday camp days selected for this camper. BBQ lunch is already included, so no paid lunch selection is needed.'
+                      ? `Only Thursday camp days are selected. BBQ lunch is already included for ${includedThursdayCount} day(s).`
                       : hasAnyPaidLunch
-                        ? `Paid lunch selected for ${Object.entries(activeStudent.lunch || {}).filter(([key, value]) => Boolean(value) && isPaidLunchSelectionKey(key)).length} day(s).`
+                        ? `Paid lunch selected for ${paidLunchDaysSelected} day(s). Thursday BBQ included for ${includedThursdayCount} day(s).`
                         : 'No paid lunch days selected yet. Confirm no paid lunch if this camper does not need paid lunch.'}
                   </p>
-                  <label className="lunchConfirmNoneRow">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(activeStudent.lunchConfirmedNone)}
-                      onChange={(event) => setLunchConfirmedNone(activeStudent.id, event.target.checked)}
-                      disabled={hasAnyPaidLunch || !needsDecision}
-                    />
-                    Confirm no paid lunch for this camper
-                  </label>
+                  {registration.students.length > 1 && step3HasMissing ? (
+                    <p className="subhead lunchDecisionReminder">
+                      {text('Before continuing, open lunch choices for each camper and either choose paid lunch or confirm none.', '继续前，请打开每位营员的午餐选项，并选择付费午餐或确认不需要。')}
+                    </p>
+                  ) : null}
+                  {!hasAnyPaidLunch && needsDecision ? (
+                    <label className="lunchConfirmNoneRow">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeStudent.lunchConfirmedNone)}
+                        onChange={(event) => setLunchConfirmedNone(activeStudent.id, event.target.checked)}
+                        disabled={!needsDecision}
+                      />
+                      <span>Confirm no paid lunch for this camper</span>
+                    </label>
+                  ) : null}
                       </>
                     )
                   })()}
@@ -6288,9 +6624,35 @@ export default function HomePage() {
           {step === 4 ? (
             <div className="full">
               {registrationIsSubmitted ? (
-                <div className="registrationSubmittedCard">
-                  <strong>Registration submitted.</strong>
-                  <p>Your registration was submitted successfully for <strong>{selectedLocationLabel}</strong>. Review the summary below.</p>
+                <div className="registrationSubmittedCard registrationSubmittedCard--complete">
+                  <strong>Registration for {submittedCamperNamesLabel || 'your camper'} submitted.</strong>
+                  <p>
+                    Your registration form has been submitted successfully for{' '}
+                    <strong>{getLocationLabel(submittedRegistrationRecord?.location)}</strong>.
+                  </p>
+                  <div className="registrationSubmittedActions">
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={summaryEmailSending || summaryEmailLocked}
+                      onClick={() => emailSummaryToSelf(submittedRegistrationRecord)}
+                    >
+                      {summaryEmailSending
+                        ? 'Sending Summary...'
+                        : summaryEmailLocked
+                          ? 'Summary Email Sent'
+                          : 'Email Summary to Myself'}
+                    </button>
+                    <button type="button" className="button secondary" onClick={clearRegistrationForm}>
+                      Start New Registration
+                    </button>
+                    <button type="button" className="button secondary" onClick={jumpToCampTop}>
+                      Return to Summer Day Camp Page
+                    </button>
+                    <a className="button secondary" href="/overnight">
+                      Looking for Overnight Camp?
+                    </a>
+                  </div>
                 </div>
               ) : null}
               {registrationEmailResult ? (
@@ -6313,11 +6675,13 @@ export default function HomePage() {
                       ? `${registrationEmailResult.detail} Set AWS_REGION and AWS_SES_FROM_EMAIL in this app environment to send live emails.`
                       : registrationEmailResult.status === 'failed'
                         ? `${registrationEmailResult.detail} You can still use Send Due Journey Emails Now from admin after email delivery is configured.`
-                        : registrationEmailResult.detail}
+                      : registrationEmailResult.detail}
                   </p>
                 </div>
               ) : null}
-              <p className="subhead">Location selected: <strong>{selectedLocationLabel}</strong></p>
+              {!registrationIsSubmitted ? (
+                <p className="subhead">Location selected: <strong>{selectedLocationLabel}</strong></p>
+              ) : null}
               {adminConfig.tuition.discountEndDate ? (
                 <p className="subhead">
                   Discount pricing applies through {discountEndDateSpokenLabel.en}.{' '}
@@ -6327,16 +6691,20 @@ export default function HomePage() {
               {discountActive && !registrationIsSubmitted ? (
                 <div className={`stepFourDiscountClaim ${registrationDiscountClaimed ? 'claimed' : ''}`}>
                   <div>
-                    <strong>Claim discount</strong>
+                    <strong>{registrationDiscountClaimed ? 'Discount claimed' : 'Claim discount'}</strong>
                     <p>
-                      You've earned {currency(claimableDiscountTotal)} in discount. Claim before{' '}
-                      {discountEndDateSpokenLabel.en}.
+                      {registrationDiscountClaimed
+                        ? `You've claimed ${currency(claimableDiscountTotal)} in discount pricing through ${discountEndDateSpokenLabel.en}.`
+                        : `You've earned ${currency(claimableDiscountTotal)} in discount. Claim before ${discountEndDateSpokenLabel.en}.`}
                     </p>
                   </div>
                   <button
                     type="button"
                     className="button stepFourClaimBtn"
-                    onClick={() => setRegistrationDiscountClaimed(true)}
+                    onClick={() => {
+                      setRegistrationDiscountClaimed(true)
+                      setShowSubmitDiscountReminder(false)
+                    }}
                     disabled={registrationDiscountClaimed}
                   >
                     {registrationDiscountClaimed
@@ -6345,63 +6713,76 @@ export default function HomePage() {
                   </button>
                 </div>
               ) : null}
-              {summaries.map(({ student, summary }) => {
-                const studentIndex = registration.students.findIndex((item) => item.id === student.id)
-                const invoice = buildStudentPriceRows(summary, studentIndex, {
-                  applyLimitedDiscount: discountActive && registrationDiscountClaimed,
-                })
-                return (
-                  <article
-                    key={student.id}
-                    className={`reviewPriceCard ${discountActive && registrationDiscountClaimed ? 'claimedDiscount' : ''}`}
-                  >
-                    <h3>{student.fullName || 'Unnamed camper'}</h3>
-                    <table className="priceTable">
-                      <thead>
-                        <tr>
-                          <th>Item</th>
-                          <th>Qty</th>
-                          <th>Unit Price</th>
-                          <th>Discount</th>
-                          <th>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {invoice.rows.map((row) => (
-                          <tr key={row.id}>
-                            <td>{row.label}</td>
-                            <td>{row.qty}</td>
-                            <td>{currency(row.effectivePrice)}</td>
-                            <td>{row.discountLineTotal > 0 ? `-${currency(row.discountLineTotal)}` : '-'}</td>
-                            <td>{currency(row.lineTotal)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {invoice.limitedDiscountAmount > 0 && discountActive && registrationDiscountClaimed ? (
-                      <>
-                        <p className="totalLine subtotalLine crossed">Subtotal: {currency(invoice.subtotalRegular)}</p>
-                        <p className="totalLine promoApplyLine">
-                          Total discount: -{currency(invoice.limitedDiscountAmount)}
-                        </p>
-                        <p className="totalLine">New subtotal: {currency(invoice.subtotal)}</p>
-                      </>
-                    ) : (
-                      <p className="totalLine">Subtotal: {currency(invoice.subtotalRegular)}</p>
-                    )}
-                    {invoice.siblingDiscountAmount > 0 ? (
-                      <p className="totalLine discountLine">
-                        Sibling discount ({invoice.siblingDiscountPct}%){' '}
-                        {invoice.siblingAppliedBeforeLimitedDiscount
-                          ? '(applied before camp discount)'
-                          : '(applied after camp discount)'}
-                        : -{currency(invoice.siblingDiscountAmount)}
-                      </p>
-                    ) : null}
-                    <p className="totalLine">{student.fullName || 'Camper'} total: {currency(invoice.total)}</p>
-                  </article>
-                )
-              })}
+              {!registrationIsSubmitted
+                ? summaries.map(({ student, summary }) => {
+                    const studentIndex = registration.students.findIndex((item) => item.id === student.id)
+                    const invoice = buildStudentPriceRows(summary, studentIndex, {
+                      applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+                      siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(student.id),
+                    })
+                    return (
+                      <article
+                        key={student.id}
+                        className={`reviewPriceCard ${discountActive && registrationDiscountClaimed ? 'claimedDiscount' : ''}`}
+                      >
+                        <h3>{student.fullName || 'Unnamed camper'}</h3>
+                        <table className="priceTable">
+                          <thead>
+                            <tr>
+                              <th>Item</th>
+                              <th>Qty</th>
+                              <th>Unit Price</th>
+                              <th>Discount</th>
+                              <th>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invoice.rows.map((row) => (
+                              <tr key={row.id}>
+                                <td>{row.label}</td>
+                                <td>{row.qty}</td>
+                                <td>
+                                  {row.discountAmount > 0 && discountActive && registrationDiscountClaimed ? (
+                                    <div className="discountedUnitPrice">
+                                      <span className="discountedUnitPriceRegular">{currency(row.regularPrice)}</span>
+                                      <span className="discountedUnitPriceNew">{currency(row.effectivePrice)}</span>
+                                    </div>
+                                  ) : (
+                                    currency(row.effectivePrice)
+                                  )}
+                                </td>
+                                <td>{row.discountLineTotal > 0 ? `-${currency(row.discountLineTotal)}` : '-'}</td>
+                                <td>{currency(row.lineTotal)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {invoice.limitedDiscountAmount > 0 && discountActive && registrationDiscountClaimed ? (
+                          <>
+                            <p className="totalLine subtotalLine crossed">Subtotal: {currency(invoice.subtotalRegular)}</p>
+                            <p className="totalLine promoApplyLine">
+                              Total discount: -{currency(invoice.limitedDiscountAmount)}
+                            </p>
+                            <p className="totalLine">New subtotal: {currency(invoice.subtotal)}</p>
+                          </>
+                        ) : (
+                          <p className="totalLine">Subtotal: {currency(invoice.subtotalRegular)}</p>
+                        )}
+                        {invoice.siblingDiscountAmount > 0 ? (
+                          <p className="totalLine discountLine">
+                            Sibling discount ({invoice.siblingDiscountPct}%){' '}
+                            {invoice.siblingAppliedBeforeLimitedDiscount
+                              ? '(applied before camp discount)'
+                              : '(applied after camp discount)'}
+                            : -{currency(invoice.siblingDiscountAmount)}
+                          </p>
+                        ) : null}
+                        <p className="totalLine">{student.fullName || 'Camper'} total: {currency(invoice.total)}</p>
+                      </article>
+                    )
+                  })
+                : null}
+              {!registrationIsSubmitted ? (
               <p className="totalLine grand">
                 Grand total:{' '}
                 {currency(
@@ -6409,11 +6790,14 @@ export default function HomePage() {
                     const studentIndex = registration.students.findIndex((student) => student.id === item.student.id)
                     return sum + buildStudentPriceRows(item.summary, studentIndex, {
                       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+                      siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
                     }).total
                   }, 0)
                 )}
               </p>
-              <div className="summaryActionRow">
+              ) : null}
+              {!registrationIsSubmitted ? (
+              <div className="summaryActionRow registrationStepFourActions">
                 <div className="pointsGlowBox compact inlineSummaryPoints">
                   <span className="pointsGlowBadge">Rewards at a glance</span>
                   <strong>
@@ -6423,24 +6807,25 @@ export default function HomePage() {
                   </strong>
                   <p>{dayCampPointsBreakdown} {dayCampPointsUseCopy}</p>
                 </div>
-                <a
-                  className="button"
-                  href={buildPaymentPageLinkForRegistration(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
-                >
-                  Open Payment Options
-                </a>
                 <button
                   type="button"
-                  className="button secondary"
+                  className="button registrationCompactAction primary"
+                  onClick={openPaymentOptionsOverlay}
+                >
+                  Open Payment Options
+                </button>
+                <button
+                  type="button"
+                  className="button secondary registrationCompactAction"
                   onClick={() => openSummaryOverlay(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
                 >
                   Open Summary PDF
                 </button>
                 <button
                   type="button"
-                  className="button secondary"
+                  className="button secondary registrationCompactAction"
                   disabled={summaryEmailSending || summaryEmailLocked}
-                  onClick={() => emailSummaryToSelf(registrationIsSubmitted ? submittedRegistrationSnapshot || registration : registration)}
+                  onClick={() => emailSummaryToSelf(submittedRegistrationRecord)}
                 >
                   {summaryEmailSending
                     ? 'Sending Summary...'
@@ -6449,19 +6834,13 @@ export default function HomePage() {
                       : 'Email Summary to Myself'}
                 </button>
               </div>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="actions">
+          <div className={`actions ${step === 4 ? 'actionsCentered' : ''}`}>
             {registrationIsSubmitted && step === registrationSteps.length ? (
-              <>
-                <button type="button" className="button secondary" onClick={jumpToCampTop}>
-                  Go to Summer Day Camp Page
-                </button>
-                <button type="button" className="button secondary" onClick={clearRegistrationForm}>
-                  Start New Registration
-                </button>
-              </>
+              <span />
             ) : step > 1 ? (
               <button type="button" className="button secondary" onClick={previousStep}>
                 Back
@@ -6475,22 +6854,30 @@ export default function HomePage() {
                 Continue
               </button>
               ) : (
-              <div className="submitActionGroup">
+              <div className="submitActionGroup submitActionGroupCentered">
                 {discountActive && !registrationDiscountClaimed ? (
                   <div className="submitDiscountNudge">
                     <span>Don't forget to claim discount before submitting.</span>
                     <button
                       type="button"
                       className="button secondary submitDiscountClaimBtn"
-                      onClick={() => setRegistrationDiscountClaimed(true)}
+                      onClick={() => {
+                        setRegistrationDiscountClaimed(true)
+                        setShowSubmitDiscountReminder(false)
+                      }}
                     >
                       Claim {currency(claimableDiscountTotal)}
                     </button>
                   </div>
                 ) : null}
-                <button className="button" type="submit" disabled={submitting}>
-                  {submitting ? 'Submitting...' : 'Submit registration'}
-                </button>
+                <div className="submitPrimaryWrap">
+                  <button className="button" type="submit" disabled={submitting}>
+                    {submitting ? 'Submitting...' : 'Submit registration'}
+                  </button>
+                  {showSubmitDiscountReminder ? (
+                    <p className="submitDiscountInlineNote">Don&apos;t forget to claim discount.</p>
+                  ) : null}
+                </div>
               </div>
               )
             ) : null}
@@ -6560,7 +6947,9 @@ export default function HomePage() {
       <section className="card section" id="overnight-registration">
         <h2>Overnight Camp Registration</h2>
         <p className="subhead">
-          Overnight Camp offers a weekly rate of $1180, or $980 through May 20. The second week receives an additional $100 off. Tuition covers 7 days of meals, 7 days of academy training, and 7 days of lodging. Outings and the Friday family & friends BBQ are billed separately.
+          Overnight Camp offers a weekly rate of {currency(adminConfig.tuition.regular.overnightWeek)}{discountActive && Number(overnightFullWeekCurrentPrice || 0) > 0 ? (
+            <> , currently {currency(overnightFullWeekCurrentPrice)} through {discountEndDateSpokenLabel.en}</>
+          ) : null}. Tuition covers 7 days of meals, 7 days of academy training, and 7 days of lodging. Outings and the Friday family & friends BBQ are billed separately.
         </p>
         <div className="campTypeFitBox">
           <strong>Enrollment Summary</strong>
@@ -6606,7 +6995,9 @@ export default function HomePage() {
         </div>
         {discountActive ? (
           <p className="campTypeDiscountNote">
-            Overnight early offer: <strong>$200 off week 1, plus an extra $100 off week 2</strong> through {discountEndDateSpokenLabel.en}.
+            Overnight early offer:{' '}
+            <strong>{adminConfig.tuition.discountDisplayValue || 'Discount pricing is currently active'}</strong>{' '}
+            through {discountEndDateSpokenLabel.en}.
           </p>
         ) : null}
         <div className="scheduleList overnightScheduleList">
@@ -6700,7 +7091,7 @@ export default function HomePage() {
           </label>
           <label>
             <span className="requiredFieldLabel">
-              Contact email {!/\S+@\S+\.\S+/.test(overnightContactEmail || '') ? <span className="requiredDot" /> : null}
+              Contact email {!isValidEmailAddress(overnightContactEmail || '') ? <span className="requiredDot" /> : null}
             </span>
             <input
               type="email"
@@ -6709,6 +7100,9 @@ export default function HomePage() {
               placeholder="parent@email.com"
               required
             />
+            {overnightContactEmail.trim() && !isValidEmailAddress(overnightContactEmail) ? (
+              <p className="surveyFieldError">Please enter a valid email address.</p>
+            ) : null}
           </label>
           <label>
             <span className="requiredFieldLabel">
@@ -6827,6 +7221,48 @@ export default function HomePage() {
         </div>
       ) : null}
 
+      {showRegistrationSections && paymentOptionsOverlayOpen ? (
+        <div
+          className="summaryOverlayBackdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Registration payment options"
+          onClick={() => setPaymentOptionsOverlayOpen(false)}
+        >
+          <div className="paymentOptionsOverlayPanel" onClick={(event) => event.stopPropagation()}>
+            <div className="paymentOptionsOverlayHeader">
+              <strong>Payment Options</strong>
+              <button
+                type="button"
+                className="button secondary registrationCompactAction"
+                onClick={() => setPaymentOptionsOverlayOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <p className="paymentOptionsOverlayAmount">Amount due: {currency(reviewGrandTotal)}</p>
+            <p className="paymentOptionsOverlayCopy">
+              Choose your preferred payment method below. You can also open the full payment page if you want the full invoice view.
+            </p>
+            <div className="paymentOptionsOverlayMethods">
+              {PAYMENT_METHOD_OPTIONS.map((option) => (
+                <div key={`payment-option-${option.value}`} className="paymentOptionsOverlayMethodCard">
+                  <strong>{option.label}</strong>
+                </div>
+              ))}
+            </div>
+            <a
+              className="button registrationCompactAction"
+              href={buildPaymentPageLinkForRegistration(submittedRegistrationRecord)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open Full Payment Page
+            </a>
+          </div>
+        </div>
+      ) : null}
+
       {showRegistrationSections && locationAlbumOpen && activeLocationAlbumPhoto ? (
         <div
           className="locationAlbumOverlay"
@@ -6898,7 +7334,7 @@ export default function HomePage() {
         <a href="#camp-info">{text('Top', '顶部')}</a>
         <a href="#why-camp">{text('Highlights', '亮点')}</a>
         <a href="#student-stories">{text('Stories', '口碑')}</a>
-        <a href="#weekly-structure">{text('Sample Week', '示例周安排')}</a>
+        <a href="#weekly-structure">{text('Sample Day', '示例日程')}</a>
         <button type="button" onClick={jumpToRegistration}>
           {text('Claim Offer & Register', '领取优惠并报名')}
         </button>
@@ -7012,6 +7448,20 @@ export default function HomePage() {
               </>
             ) : null}
           </div>
+          {isMobileViewport ? (
+            <div className="discountMobileLangToggle" aria-label="Language">
+              <button
+                type="button"
+                className={`discountLangBtn ${language === 'en' ? 'active' : ''}`}
+                onClick={() => setLanguage('en')}
+              >🇺🇸<br/>EN</button>
+              <button
+                type="button"
+                className={`discountLangBtn ${language === 'zh' ? 'active' : ''}`}
+                onClick={() => setLanguage('zh')}
+              >🇨🇳<br/>中文</button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {showRegistrationSections && isMobileViewport ? (
@@ -7031,6 +7481,9 @@ export default function HomePage() {
                 onClick={() => {
                   setStepDirection(item.id > step ? 'next' : 'prev')
                   setStep(item.id)
+                  if (isMissing) {
+                    window.setTimeout(() => jumpToStepMissingField(item.id), 200)
+                  }
                 }}
                 aria-current={isActive ? 'step' : undefined}
               >
