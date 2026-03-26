@@ -3,11 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
+  resolveBootcampTuition,
   defaultAdminConfig,
   formatDateLabel,
   formatWeekLabel,
   getSelectedWeeks,
 } from '../lib/campAdmin'
+import {
+  WEEK_TIER_PROMO,
+  getNextWeekTierPromoPrompt,
+  getWeekTierPromoDisplayLines,
+  getWeekTierPromoForStudent,
+} from '../lib/campPricing'
 import { fetchAdminConfigFromSupabase } from '../lib/campAdminApi'
 import { buildPaymentPageHref } from '../lib/paymentPageLink'
 import { buildRegistrationSummaryDocument } from '../lib/registrationSummaryDocument'
@@ -297,7 +304,7 @@ const dayAtCampTimeline = [
     zhNote: '建立自信、友谊与高能量乐趣。',
   },
   {
-    time: '4:00 PM',
+    time: '4:30 PM',
     title: 'Pickup',
     zhTitle: '接送',
     note: 'Families head home with a full, structured day completed.',
@@ -347,6 +354,37 @@ const overnightSchedule = [
     amTheme: 'Academy training recap',
     pmTheme: 'Outing + pickup',
     note: 'Final training recap, last outing, and pickup at 4:00 PM at the camp house.',
+  },
+]
+
+const weeklyFamilyRhythm = [
+  {
+    key: 'tuesday',
+    title: 'Tuesday Outdoor Time',
+    zhTitle: '周二户外活动',
+    body: 'Outdoor block day. Please send sunscreen and a change of outdoor shoes so campers stay comfortable coming back inside.',
+    zhBody: '周二有户外活动时段。请准备防晒用品和一双可更换的户外鞋，方便孩子回到室内后保持舒适。',
+  },
+  {
+    key: 'wednesday',
+    title: 'Wednesday Water Day',
+    zhTitle: '周三玩水日',
+    body: 'Bring a full change of clothes for Water Wednesday activities and easy cleanup after the fun.',
+    zhBody: '周三玩水活动请准备一整套备用衣物，方便活动后更换。',
+  },
+  {
+    key: 'thursday',
+    title: 'Thursday BBQ Lunch',
+    zhTitle: '周四烧烤午餐',
+    body: 'BBQ lunch is already included in tuition, so packing lunch is optional.',
+    zhBody: '周四烧烤午餐已包含在学费内，也可以自带午餐。',
+  },
+  {
+    key: 'friday',
+    title: 'Friday Family Showcase',
+    zhTitle: '周五家庭展示',
+    body: 'Families are invited to the Friday showcase so campers can finish the week proud, confident, and seen.',
+    zhBody: '欢迎家长参加周五展示，让孩子用充满自豪与自信的方式结束一周营地生活。',
   },
 ]
 
@@ -812,11 +850,6 @@ function getWeekSelectionSummary(entry, week) {
 
 function currency(amount) {
   return `$${Number(amount || 0).toFixed(2)}`
-}
-
-function roundUpToFive(value) {
-  const next = Math.round(Number(value || 0) / 5) * 5
-  return Number.isFinite(next) ? Math.max(0, next) : 0
 }
 
 function getYouTubeVideoId(url) {
@@ -3068,27 +3101,17 @@ export default function HomePage() {
 
   function buildStudentPriceRows(summary, studentIndex, options = {}) {
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
+    const student = options.student || null
     const siblingDiscountEligible =
       typeof options.siblingDiscountEligible === 'boolean'
         ? options.siblingDiscountEligible
         : studentIndex >= 1
     const regular = adminConfig.tuition.regular
     const discount = adminConfig.tuition.discount
-    const premiumFactor = 1 + Number(adminConfig.tuition.bootcampPremiumPct || 0) / 100
+    const bootcampTuition = resolveBootcampTuition(adminConfig.tuition)
     const siblingDiscountPct = siblingDiscountEligible ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
-
-    const bootcampRegular = {
-      fullWeek: roundUpToFive(regular.fullWeek * premiumFactor),
-      fullDay: roundUpToFive(regular.fullDay * premiumFactor),
-      amHalf: roundUpToFive(regular.amHalf * premiumFactor),
-      pmHalf: roundUpToFive(regular.pmHalf * premiumFactor),
-    }
-    const bootcampDiscounted = {
-      fullWeek: roundUpToFive(discount.fullWeek * premiumFactor),
-      fullDay: roundUpToFive(discount.fullDay * premiumFactor),
-      amHalf: roundUpToFive(discount.amHalf * premiumFactor),
-      pmHalf: roundUpToFive(discount.pmHalf * premiumFactor),
-    }
+    const bootcampRegular = bootcampTuition.regular
+    const bootcampDiscounted = bootcampTuition.discount
 
     const rows = [
       {
@@ -3191,21 +3214,35 @@ export default function HomePage() {
     const subtotalRegular = tuitionRows.reduce((acc, row) => acc + row.regularLineTotal, 0)
     const limitedDiscountAmount = tuitionRows.reduce((acc, row) => acc + row.discountLineTotal, 0)
     const subtotalAfterLimitedDiscount = tuitionRows.reduce((acc, row) => acc + row.lineTotal, 0)
+    const fourthWeekPromo = student
+      ? getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
+          applyLimitedDiscount,
+        })
+      : { eligible: false, amount: 0, label: WEEK_TIER_PROMO.shortLabel, weeksSelected: 0, breakdown: [] }
+    const fourthWeekPromoAmount = Math.max(0, Number(fourthWeekPromo.amount || 0))
+    const fourthWeekPromoLines = getWeekTierPromoDisplayLines(fourthWeekPromo)
+    const nextWeekTierPromoPrompt = student
+      ? getNextWeekTierPromoPrompt(student, weeksById, adminConfig.tuition, {
+          applyLimitedDiscount,
+        })
+      : { eligible: false }
+    const subtotalAfterCampDiscounts = Math.max(0, subtotalAfterLimitedDiscount - fourthWeekPromoAmount)
 
     const siblingAfterLimitedDiscount =
-      siblingDiscountPct > 0 ? subtotalAfterLimitedDiscount * (siblingDiscountPct / 100) : 0
-    const totalWithSiblingAfterLimited = Math.max(0, subtotalAfterLimitedDiscount - siblingAfterLimitedDiscount) + lunchTotal
+      siblingDiscountPct > 0 ? subtotalAfterCampDiscounts * (siblingDiscountPct / 100) : 0
+    const totalWithSiblingAfterLimited = Math.max(0, subtotalAfterCampDiscounts - siblingAfterLimitedDiscount) + lunchTotal
 
     const siblingBeforeLimitedDiscount =
       siblingDiscountPct > 0 ? subtotalRegular * (siblingDiscountPct / 100) : 0
     const baseAfterSiblingBeforeLimited = Math.max(0, subtotalRegular - siblingBeforeLimitedDiscount)
-    const totalWithSiblingBeforeLimited = Math.max(0, baseAfterSiblingBeforeLimited - limitedDiscountAmount) + lunchTotal
+    const totalWithSiblingBeforeLimited =
+      Math.max(0, baseAfterSiblingBeforeLimited - limitedDiscountAmount - fourthWeekPromoAmount) + lunchTotal
 
     const useSiblingBeforeLimited = totalWithSiblingBeforeLimited > totalWithSiblingAfterLimited
     const siblingDiscountAmount = useSiblingBeforeLimited
       ? siblingBeforeLimitedDiscount
       : siblingAfterLimitedDiscount
-    const subtotal = subtotalAfterLimitedDiscount + lunchTotal
+    const subtotal = subtotalAfterCampDiscounts + lunchTotal
     const total = useSiblingBeforeLimited ? totalWithSiblingBeforeLimited : totalWithSiblingAfterLimited
 
     return {
@@ -3213,9 +3250,15 @@ export default function HomePage() {
       subtotalRegular: subtotalRegular + lunchRegularTotal,
       tuitionSubtotalRegular: subtotalRegular,
       limitedDiscountAmount,
-      tuitionSubtotal: subtotalAfterLimitedDiscount,
+      fourthWeekPromoAmount,
+      fourthWeekPromoLabel: fourthWeekPromo.label,
+      fourthWeekPromoLines,
+      fourthWeekPromoEligible: fourthWeekPromo.eligible,
+      nextWeekTierPromoPrompt,
+      tuitionSubtotal: subtotalAfterCampDiscounts,
       lunchTotal,
       subtotal,
+      totalCampDiscountAmount: limitedDiscountAmount + fourthWeekPromoAmount,
       siblingDiscountPct,
       siblingDiscountAmount,
       siblingAppliedBeforeLimitedDiscount: useSiblingBeforeLimited,
@@ -3232,19 +3275,9 @@ export default function HomePage() {
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
     const regular = adminConfig.tuition.regular
     const discount = adminConfig.tuition.discount
-    const premiumFactor = 1 + Number(adminConfig.tuition.bootcampPremiumPct || 0) / 100
-    const bootcampRegular = {
-      fullWeek: roundUpToFive(regular.fullWeek * premiumFactor),
-      fullDay: roundUpToFive(regular.fullDay * premiumFactor),
-      amHalf: roundUpToFive(regular.amHalf * premiumFactor),
-      pmHalf: roundUpToFive(regular.pmHalf * premiumFactor),
-    }
-    const bootcampDiscounted = {
-      fullWeek: roundUpToFive(discount.fullWeek * premiumFactor),
-      fullDay: roundUpToFive(discount.fullDay * premiumFactor),
-      amHalf: roundUpToFive(discount.amHalf * premiumFactor),
-      pmHalf: roundUpToFive(discount.pmHalf * premiumFactor),
-    }
+    const bootcampTuition = resolveBootcampTuition(adminConfig.tuition)
+    const bootcampRegular = bootcampTuition.regular
+    const bootcampDiscounted = bootcampTuition.discount
 
     const ranked = studentList
       .map((student, index) => {
@@ -3268,8 +3301,15 @@ export default function HomePage() {
             : regularPrice
           return sum + Number(qty || 0) * effectivePrice
         }, 0)
+        const promo = getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
+          applyLimitedDiscount,
+        })
 
-        return { studentId: student.id, studentIndex: index, tuitionSubtotal }
+        return {
+          studentId: student.id,
+          studentIndex: index,
+          tuitionSubtotal: Math.max(0, tuitionSubtotal - Number(promo.amount || 0)),
+        }
       })
       .sort((a, b) => {
         if (a.tuitionSubtotal !== b.tuitionSubtotal) {
@@ -3288,6 +3328,7 @@ export default function HomePage() {
       return (
         sum +
         buildStudentPriceRows(item.summary, studentIndex, {
+          student: item.student,
           applyLimitedDiscount: true,
           siblingDiscountEligible: eligibleIds.has(item.student.id),
         }).limitedDiscountAmount
@@ -3312,6 +3353,7 @@ export default function HomePage() {
         const camperName = student.fullName.trim() || `Camper ${index + 1}`
         const summary = getStudentSummary(student)
         const invoice = buildStudentPriceRows(summary, index, {
+          student,
           applyLimitedDiscount: discountActive,
           siblingDiscountEligible: eligibleIds.has(student.id),
         })
@@ -3496,7 +3538,7 @@ export default function HomePage() {
           ${studentSections}
           <div class="pageBreak"></div>
           <h2>Family Camp & Lunch Calendar</h2>
-          <p class="note">Each camp day shows lunch plan and notable reminders (Wednesday: bring change of clothes, Thursday: BBQ included lunch, Friday: performance day).</p>
+          <p class="note">Each camp day shows lunch plan and notable reminders (Tuesday: sunscreen/outdoor shoes if needed, Wednesday: bring change of clothes, Thursday: BBQ included lunch, Friday: performance day).</p>
           ${familyCalendarHtml}
         </body>
       </html>
@@ -3620,6 +3662,7 @@ export default function HomePage() {
       const camperName = student.fullName.trim() || `Camper ${index + 1}`
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, index, {
+        student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
@@ -3637,18 +3680,25 @@ export default function HomePage() {
       lines.push(
         `${camperName}: ${selectedDayBlocks} selected camp day blocks, lunch provided ${paidLunchDays + includedLunchDays}/${registeredDays} days (paid ${paidLunchDays}, Thu included ${includedLunchDays}), pack lunch needed ${packLunchNeededDays}, total ${currency(invoice.total)}`
       )
+      ;(invoice.fourthWeekPromoLines || []).forEach((promoLine) => {
+        lines.push(`${camperName} offer applied: ${promoLine.label} (-${currency(promoLine.amount)})`)
+      })
     }
 
     const grandTotal = targetRegistration.students.reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
+        student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
     }, 0)
     lines.push(`Grand total: ${currency(grandTotal)}`)
-    lines.push('Weekly reminders: Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase.')
+    lines.push(`Offer reminder: ${WEEK_TIER_PROMO.headline}`)
+    lines.push(`Offer details: ${WEEK_TIER_PROMO.cap} ${WEEK_TIER_PROMO.tiers} ${WEEK_TIER_PROMO.detail}`)
+    lines.push(`Why families use it: ${WEEK_TIER_PROMO.growth}`)
+    lines.push('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase.')
     return lines
   }
 
@@ -3660,6 +3710,7 @@ export default function HomePage() {
     const amountDue = (targetRegistration?.students || []).reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
+        student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
@@ -3769,6 +3820,7 @@ export default function HomePage() {
     const amountDue = submittedSnapshot.students.reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
+        student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: submittedSiblingEligibleIds.has(student.id),
       })
@@ -3913,11 +3965,94 @@ export default function HomePage() {
     return (
       sum +
       buildStudentPriceRows(item.summary, studentIndex, {
+        student: item.student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
       }).total
     )
   }, 0)
+  const stepFourPromoPreview = registration.students.reduce(
+    (accumulator, student, index) => {
+      const promo = getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
+        applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      })
+      if (!promo.eligible) {
+        return accumulator
+      }
+      const camperName = student.fullName.trim() || `Camper ${index + 1}`
+      return {
+        eligible: true,
+        amount: accumulator.amount + Number(promo.amount || 0),
+        camperCount: accumulator.camperCount + 1,
+        labels: [...accumulator.labels, `${camperName}: ${promo.label}`],
+      }
+    },
+    { eligible: false, amount: 0, camperCount: 0, labels: [] }
+  )
+  const weekTierPromoPills = [
+    text('First 30 campers', '前30位营员'),
+    text('Weeks 4-6: 50% OFF', '第4至6周享半价'),
+    text('Weeks 7-9: 60% OFF', '第7至9周享6折'),
+    text('Week 10: FREE', '第10周免费'),
+  ]
+  const weekTierPromoLeadLine = text(
+    'Then weeks 7-9 jump to 60% OFF, and week 10 is FREE.',
+    '之后第7至9周升级为6折，第10周免费。'
+  )
+  const weekTierPromoRulesLine = text(
+    `${WEEK_TIER_PROMO.cap} ${WEEK_TIER_PROMO.detail}`,
+    '限前30位营员。仅适用于同一位营员的日营整周学费；午餐不打折，过夜营不参与此优惠。'
+  )
+  const weekTierPromoGrowthLine = text(
+    WEEK_TIER_PROMO.growth,
+    '更多整周报名也能帮助孩子建立更强的技能、自信、稳定性与可见成长。'
+  )
+  const renderWeekTierPromoCard = ({
+    className = '',
+    eyebrow = text('Train More, Save More', '多练多省'),
+    headline = text(WEEK_TIER_PROMO.headline, '同一位营员报名4个及以上日营整周，可享整周学费半价优惠。'),
+    lead = weekTierPromoLeadLine,
+    note = weekTierPromoRulesLine,
+    growth = weekTierPromoGrowthLine,
+    ctaLabel = '',
+    onCta = null,
+    appliedAmount = 0,
+    appliedLabel = '',
+    activatedLabel = '',
+  } = {}) => (
+    <div className={`specialOfferCard ${className}`.trim()}>
+      {activatedLabel ? <span className="specialOfferActivatedEdge">{activatedLabel}</span> : null}
+      <div className="specialOfferBurst" aria-hidden="true">
+        <span />
+        <span />
+      </div>
+      <p className="specialOfferEyebrow">{eyebrow}</p>
+      <h3>{headline}</h3>
+      <p className="specialOfferLead">{lead}</p>
+      <div className="specialOfferPillRow">
+        {weekTierPromoPills.map((pill) => (
+          <span key={pill} className="specialOfferPill">
+            {pill}
+          </span>
+        ))}
+      </div>
+      {appliedAmount > 0 ? (
+        <p className="specialOfferApplied">
+          <strong>{appliedLabel || WEEK_TIER_PROMO.shortLabel}</strong> {text('already applied:', '已自动应用：')}{' '}
+          <span className="promoGlowAmount">-{currency(appliedAmount)}</span>
+        </p>
+      ) : null}
+      {note ? <p className="specialOfferFinePrint">{note}</p> : null}
+      {growth ? <p className="specialOfferGrowth">{growth}</p> : null}
+      {ctaLabel && onCta ? (
+        <div className="specialOfferActions">
+          <button type="button" className="button specialOfferButton" onClick={onCta}>
+            {ctaLabel}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
   const locationMissing = !registration.location.trim()
   const parentNameMissing = !registration.parentName.trim()
   const contactEmailMissing = !registration.contactEmail.trim()
@@ -3949,11 +4084,48 @@ export default function HomePage() {
       label: student.fullName.trim() || `Camper ${index + 1}`,
     }))
     .filter((student) => student.id !== resolvedActiveStudentId)
+  const activePromoProgressPrompt = (() => {
+    const targetStudent =
+      registration.students.find((student) => student.id === resolvedActiveStudentId) || registration.students[0] || null
+    if (!targetStudent) {
+      return null
+    }
+    const summary = getStudentSummary(targetStudent)
+    const fullWeeksSelected = Number(summary.general.fullWeeks || 0) + Number(summary.bootcamp.fullWeeks || 0)
+    if (fullWeeksSelected < 4) {
+      const weeksNeeded = 4 - fullWeeksSelected
+      return {
+        weeksNeeded,
+        prefix: `Train More, Save More: Add ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'} for`,
+        savingsLabel: '50% OFF',
+        suffix: 'weeks 4-6.',
+      }
+    }
+    if (fullWeeksSelected < 9) {
+      const weeksNeeded = 9 - fullWeeksSelected
+      return {
+        weeksNeeded,
+        prefix: `Train More, Save More: Add ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'} for`,
+        savingsLabel: '60% OFF',
+        suffix: 'weeks 7-9.',
+      }
+    }
+    if (fullWeeksSelected < 10) {
+      const weeksNeeded = 10 - fullWeeksSelected
+      return {
+        weeksNeeded,
+        prefix: `Train More, Save More: Add ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'} and`,
+        savingsLabel: '10TH IS FREE',
+        suffix: '',
+      }
+    }
+    return null
+  })()
   const stepShortTitle =
     step === 1
       ? 'Step 1: Family & camper details'
       : step === 2
-        ? `Step 2: Choose weeks, camp type, and days for ${activeStudentDisplayName}`
+        ? `Step 2: Choose weeks and days for ${activeStudentDisplayName}`
         : step === 3
           ? `Step 3: Select lunch options for ${activeStudentDisplayName}`
           : 'Step 4: Review totals and submit registration'
@@ -5219,22 +5391,11 @@ export default function HomePage() {
           </article>
           <article className="heroAchievementCard">
             <p className="heroAchievementLabel">{text('Pricing Snapshot', '价格概览')}</p>
-            <h3>{text(
-              discountActive
-                ? `Discounted price from ${currency(dayCampPricing.fullWeek)}/week`
-                : `Regular price from ${currency(dayCampPricing.fullWeek)}/week`,
-              discountActive
-                ? `优惠价整周 ${currency(dayCampPricing.fullWeek)} 起`
-                : `常规价整周 ${currency(dayCampPricing.fullWeek)} 起`
-            )}</h3>
+            <h3>{text(`Starting at ${currency(dayCampPricing.fullWeek)}/week`, `${currency(dayCampPricing.fullWeek)}/周起`)}</h3>
             <p>
               {text(
-                discountActive
-                  ? `Discounted full day ${currency(dayCampPricing.fullDay)}/day through ${discountEndDateSpokenLabel.en}. Regular full week is ${currency(fullWeekRegularPrice)}/week.`
-                  : `Regular full day ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
-                discountActive
-                  ? `优惠全天 ${currency(dayCampPricing.fullDay)}/天，有效至 ${discountEndDateSpokenLabel.zh}。常规整周价格为 ${currency(fullWeekRegularPrice)}/周。`
-                  : `常规全天 ${currency(dayCampPricing.fullDay)}/天。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
+                `Full day from ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
+                `全天 ${currency(dayCampPricing.fullDay)}/天起。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
               )}
             </p>
           </article>
@@ -5253,6 +5414,21 @@ export default function HomePage() {
             <h3>{text('Daily structure, small groups, real coaching, and visible progress.', '日程清晰、小班教学、真实训练，并且成长可见。')}</h3>
           </article>
         </div>
+
+        {renderWeekTierPromoCard({
+          className: 'specialOfferCardHero',
+          eyebrow: text('Train More, Save More', '多练多省'),
+          headline: text(
+            'Earn 50% OFF full weeks when one camper enrolls in 4+ full weeks.',
+            '同一位营员报名4个及以上整周，可享整周学费半价优惠。'
+          ),
+          lead: text(
+            'Build a stronger summer plan early: weeks 7-9 jump to 60% OFF, and week 10 is FREE.',
+            '提早规划更完整的夏令营安排：第7至9周升级为6折，第10周免费。'
+          ),
+          ctaLabel: text('Claim Offer & Register', '领取优惠并报名'),
+          onCta: jumpToRegistration,
+        })}
 
         <div className="pointsGlowBox">
           <span className="pointsGlowBadge">Points by enrollment</span>
@@ -5369,6 +5545,18 @@ export default function HomePage() {
             </article>
           ))}
         </div>
+        {renderWeekTierPromoCard({
+          className: 'specialOfferCardSection specialOfferCardGrowth',
+          eyebrow: text('Train More, Save More', '多练多省'),
+          headline: text('50% OFF Full Weeks', '整周可享五折'),
+          lead: text(
+            'Enroll 4+ full weeks by June 30.',
+            '6月30日前报名4个及以上整周。'
+          ),
+          note: text('First 30 campers. Full weeks only. Great for one camper building a stronger summer plan.', '前30位营员。仅限整周。很适合为同一位营员规划更完整的夏令营安排。'),
+          ctaLabel: text('See Week Options', '查看周次选择'),
+          onCta: jumpToRegistration,
+        })}
         <div className="heroActions">
           <button type="button" className="button" onClick={jumpToRegistration}>
             {text('Register Now', '立即报名')}
@@ -5409,7 +5597,7 @@ export default function HomePage() {
             <span>
               {discountActive
                 ? text(`Discounted price until ${discountEndDateSpokenLabel.en}`, `优惠价截止至 ${discountEndDateSpokenLabel.zh}`)
-                : text('9:00 AM - 4:00 PM', '上午9点至下午4点')}
+                : text('9:00 AM - 4:30 PM', '上午9点至下午4点30分')}
             </span>
           </article>
           <article className="pricingCard">
@@ -5445,6 +5633,16 @@ export default function HomePage() {
             <p>{text('Reserve now to lock in the current offer.', '现在报名即可锁定当前优惠。')}</p>
           </div>
         ) : null}
+        {renderWeekTierPromoCard({
+          className: 'specialOfferCardSection',
+          eyebrow: text('Train More, Save More', '多练多省'),
+          headline: text('50% OFF Full Weeks', '整周可享五折'),
+          lead: text(
+            'Enroll 4+ full weeks by June 30.',
+            '6月30日前报名4个及以上整周。'
+          ),
+          note: text('First 30 campers. Full weeks only. Great for one camper building a stronger summer plan.', '前30位营员。仅限整周。很适合为同一位营员规划更完整的夏令营安排。'),
+        })}
         <div className="heroActions">
           <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
             {text('Register Now', '立即报名')}
@@ -5625,6 +5823,24 @@ export default function HomePage() {
             <p>{text('Families get daily updates, photos, and coach notes through the app.', '家庭可通过应用查看每日日志、照片与教练反馈。')}</p>
           </article>
         </div>
+        <div className="weeklyRhythmBlock">
+          <p className="eyebrow">{text('Weekly Rhythm', '每周节奏')}</p>
+          <h3>{text('A few family reminders make the week easier', '几条家庭提醒，让每周安排更轻松')}</h3>
+          <p className="subhead">
+            {text(
+              'These are worth highlighting on the landing page because families ask about them often, and they help set expectations before registration.',
+              '这些信息适合直接放在落地页上，因为家长经常会问到，也能在报名之前先建立清晰预期。'
+            )}
+          </p>
+          <div className="daySupportGrid weeklyRhythmGrid">
+            {weeklyFamilyRhythm.map((item) => (
+              <article key={item.key} className="daySupportCard weeklyRhythmCard">
+                <strong>{text(item.title, item.zhTitle)}</strong>
+                <p>{text(item.body, item.zhBody)}</p>
+              </article>
+            ))}
+          </div>
+        </div>
         <div className="heroActions">
           <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
             {text('Register Now', '立即报名')}
@@ -5761,6 +5977,17 @@ export default function HomePage() {
               '家庭报名可为每位营员分别安排每周日程。今年新增：可通过 Level Up 应用预订午餐并查看每日照片/视频成长记录。'
             )}
           </p>
+          {renderWeekTierPromoCard({
+            className: 'specialOfferCardInline specialOfferCardRegistration',
+            eyebrow: text('Train More, Save More', '多练多省'),
+            headline: text('50% OFF Full Weeks', '整周可享五折'),
+            lead: text(
+              'Enroll 4+ full weeks by June 30.',
+              '6月30日前报名4个及以上整周。'
+            ),
+            note: text('Weeks 7-9: 60% OFF. Week 10: FREE.', '第7至9周享6折，第10周免费。'),
+            growth: '',
+          })}
           <div className="pointsGlowBox compact">
             <span className="pointsGlowBadge">New England Wushu Level Up points</span>
             <strong>{dayCampPointsBreakdown}</strong>
@@ -5875,8 +6102,8 @@ export default function HomePage() {
                   : text('Tap to expand summary', '点击展开摘要')}
               </em>
             </span>
-            <span className="regSummaryToggleAction">
-              {summaryExpanded ? text('Minimize', '最小化') : text('Expand', '展开')}
+            <span className={`regSummaryToggleAction ${summaryExpanded ? 'open' : ''}`}>
+              {summaryExpanded ? text('Tap to Minimize', '点按最小化') : text('Expand', '展开')}
               <span className={`regSummaryChevron ${summaryExpanded ? 'open' : ''}`}>⌄</span>
             </span>
           </button>
@@ -6028,6 +6255,15 @@ export default function HomePage() {
               ))}
               </div>
             </>
+          ) : null}
+          {activePromoProgressPrompt ? (
+            <div className="regSummaryPromoNudge">
+              <span>
+                {activePromoProgressPrompt.prefix}{' '}
+                <strong className="regSummaryPromoHighlight">{activePromoProgressPrompt.savingsLabel}</strong>{' '}
+                {activePromoProgressPrompt.suffix}
+              </span>
+            </div>
           ) : null}
           <p className="regStepHint">
             <strong>{stepShortTitle}</strong>
@@ -6346,6 +6582,32 @@ export default function HomePage() {
                   {text('Looking for Overnight Camp?', '想报名过夜营？')}
                 </a>
               </div>
+              {!registrationIsSubmitted
+                ? renderWeekTierPromoCard({
+                    className: 'specialOfferCardInline',
+                    eyebrow: text('Train More, Save More', '多练多省'),
+                    headline:
+                      registration.students.length === 1
+                        ? text(
+                            `Choose 4+ full weeks for ${activeCamperLabel} to unlock 50% OFF on weeks 4-6.`,
+                            `为 ${activeCamperLabel} 选择4个及以上整周，即可解锁第4至6周半价。`
+                          )
+                        : text(
+                            'Each camper unlocks this offer separately with their own 4+ full weeks.',
+                            '每位营员都需要用自己的4个及以上整周单独解锁此优惠。'
+                          ),
+                    lead:
+                      registration.students.length === 1
+                        ? text(
+                            'Use full-week selections below to stack toward the 50% OFF, 60% OFF, and free-week tiers automatically.',
+                            '在下方选择整周，即可自动累计半价、6折和免费周优惠档位。'
+                          )
+                        : text(
+                            'Pick full weeks below and the next savings tier will apply automatically when it unlocks.',
+                            '在下方选择整周，达到下一档优惠时系统会自动应用。'
+                          ),
+                  })
+                : null}
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
                   <div className="copyWeeksPicker">
@@ -6366,17 +6628,23 @@ export default function HomePage() {
                       ))}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="button copyWeeksButton"
-                    onClick={() => copyScheduleFromCamper(scheduleCopySourceId)}
-                    disabled={!scheduleCopySourceId}
-                  >
-                    {text(`Copy to ${activeCamperLabel}`, `复制到 ${activeCamperLabel}`)}
-                  </button>
-                  <button type="button" className="button secondary" onClick={clearActiveStudentSchedule}>
-                    {text('Clear all weeks', '清空所有周次')}
-                  </button>
+                  <div className="copyWeeksDivider" aria-hidden="true" />
+                  <div className="copyWeeksActions">
+                    <span className="copyWeeksLabel">{text('Copy to', '复制到')}</span>
+                    <button
+                      type="button"
+                      className={`button copyWeeksButton ${scheduleCopySourceId ? 'ready' : ''}`}
+                      onClick={() => copyScheduleFromCamper(scheduleCopySourceId)}
+                      disabled={!scheduleCopySourceId}
+                    >
+                      {scheduleCopySourceId ? text(`→ ${activeCamperLabel}`, `→ ${activeCamperLabel}`) : activeCamperLabel}
+                    </button>
+                  </div>
+                  <div className="copyWeeksClearWrap">
+                    <button type="button" className="button secondary registrationMiniChip copyWeeksClearButton" onClick={clearActiveStudentSchedule}>
+                      {text(`Clear weeks for ${activeCamperLabel}`, `清空 ${activeCamperLabel} 的周次`)}
+                    </button>
+                  </div>
                 </div>
               ) : null}
               {activeStudent ? (
@@ -6511,7 +6779,7 @@ export default function HomePage() {
                 <p>{dayCampPointsUseCopy}</p>
               </div>
               <p className="subhead">
-                {text('Weekly reminders: Wednesday bring a change of clothes. Thursday BBQ lunch is included in tuition (packing lunch is optional). Friday is family performance day.', '每周提醒：周三请带备用衣物。周四烧烤午餐已包含在学费内（也可自带午餐）。周五为家庭展示日。')}
+                {text('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included in tuition (packing lunch is optional). Friday is family performance day.', '每周提醒：周二户外活动可能需要防晒用品和户外鞋。周三请带备用衣物。周四烧烤午餐已包含在学费内（也可自带午餐）。周五为家庭展示日。')}
               </p>
               <div className="registrationInlineChipRow">
                 <span className="registrationInlineChipLabel">
@@ -6766,11 +7034,11 @@ export default function HomePage() {
               {discountActive && !registrationIsSubmitted ? (
                 <div className={`stepFourDiscountClaim ${registrationDiscountClaimed ? 'claimed' : ''}`}>
                   <div>
-                    <strong>{registrationDiscountClaimed ? 'Discount claimed' : 'Claim discount'}</strong>
+                    <strong>{registrationDiscountClaimed ? 'Early-bird discount claimed' : 'Claim early-bird discount'}</strong>
                     <p>
                       {registrationDiscountClaimed
-                        ? `You've claimed ${currency(claimableDiscountTotal)} in discount pricing through ${discountEndDateSpokenLabel.en}.`
-                        : `You've earned ${currency(claimableDiscountTotal)} in discount. Claim before ${discountEndDateSpokenLabel.en}.`}
+                        ? `You've claimed ${currency(claimableDiscountTotal)} in early-bird pricing through ${discountEndDateSpokenLabel.en}.`
+                        : `You've earned ${currency(claimableDiscountTotal)} in early-bird pricing. Claim before ${discountEndDateSpokenLabel.en}.`}
                     </p>
                   </div>
                   <button
@@ -6783,15 +7051,53 @@ export default function HomePage() {
                     disabled={registrationDiscountClaimed}
                   >
                     {registrationDiscountClaimed
-                      ? `Discount Claimed (${currency(claimableDiscountTotal)})`
-                      : `Claim ${currency(claimableDiscountTotal)} Discount`}
+                      ? `Early-Bird Claimed (${currency(claimableDiscountTotal)})`
+                      : `Claim ${currency(claimableDiscountTotal)} Early-Bird`}
                   </button>
                 </div>
               ) : null}
               {!registrationIsSubmitted
+                ? renderWeekTierPromoCard({
+                    className: `specialOfferCardInline specialOfferCardReview ${stepFourPromoPreview.eligible ? 'specialOfferCardActivated' : ''}`,
+                    eyebrow: text('Train More, Save More', '多练多省'),
+                    headline: stepFourPromoPreview.eligible
+                      ? text(
+                          `Your full-week savings offer is already applying -${currency(stepFourPromoPreview.amount)}.`,
+                          `您的整周优惠已自动应用，立减 ${currency(stepFourPromoPreview.amount)}。`
+                        )
+                      : registration.students.length === 1
+                        ? text(
+                            'Enroll this camper in 4+ full weeks to unlock 50% OFF on weeks 4-6.',
+                            '为这位营员报名4个及以上整周，即可解锁第4至6周半价。'
+                          )
+                        : text(
+                            'Any camper with 4+ full weeks can unlock this offer on their own schedule.',
+                            '任何营员只要自己的整周达到4周以上，就能单独解锁这项优惠。'
+                          ),
+                    lead: stepFourPromoPreview.eligible
+                      ? text(
+                          'Your totals below already include the matching tiered camp-tuition savings automatically.',
+                          '下方总价已自动包含对应的阶梯学费优惠。'
+                        )
+                      : text(
+                          'Once unlocked, the matching savings will apply automatically in your totals below.',
+                          '一旦达到条件，下方总价会自动显示对应优惠。'
+                        ),
+                    appliedAmount: stepFourPromoPreview.eligible ? stepFourPromoPreview.amount : 0,
+                    appliedLabel:
+                      stepFourPromoPreview.eligible && stepFourPromoPreview.camperCount > 1
+                        ? 'Combined qualifying camper savings'
+                        : stepFourPromoPreview.eligible
+                          ? stepFourPromoPreview.labels[0] || WEEK_TIER_PROMO.shortLabel
+                          : '',
+                    activatedLabel: stepFourPromoPreview.eligible ? text('Activated', '已激活') : '',
+                  })
+                : null}
+              {!registrationIsSubmitted
                 ? summaries.map(({ student, summary }) => {
                     const studentIndex = registration.students.findIndex((item) => item.id === student.id)
                     const invoice = buildStudentPriceRows(summary, studentIndex, {
+                      student,
                       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
                       siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(student.id),
                     })
@@ -6832,17 +7138,36 @@ export default function HomePage() {
                             ))}
                           </tbody>
                         </table>
-                        {invoice.limitedDiscountAmount > 0 && discountActive && registrationDiscountClaimed ? (
+                        {invoice.totalCampDiscountAmount > 0 ? (
                           <>
                             <p className="totalLine subtotalLine crossed">Subtotal: {currency(invoice.subtotalRegular)}</p>
-                            <p className="totalLine promoApplyLine">
-                              Total discount: -{currency(invoice.limitedDiscountAmount)}
-                            </p>
+                            {invoice.limitedDiscountAmount > 0 && discountActive && registrationDiscountClaimed ? (
+                              <p className="totalLine promoApplyLine">
+                                Early-bird discount: -{currency(invoice.limitedDiscountAmount)}
+                              </p>
+                            ) : null}
+                            {invoice.fourthWeekPromoLines?.map((promoLine) => (
+                              <p key={`${student.id}-${promoLine.label}`} className="totalLine promoApplyLine promoActivatedLine">
+                                {promoLine.label}: <span className="promoGlowAmount">-{currency(promoLine.amount)}</span>
+                              </p>
+                            ))}
                             <p className="totalLine">New subtotal: {currency(invoice.subtotal)}</p>
                           </>
                         ) : (
                           <p className="totalLine">Subtotal: {currency(invoice.subtotalRegular)}</p>
                         )}
+                        {invoice.fourthWeekPromoEligible ? (
+                          <p className="totalLine promoApplyLine promoActivatedLine">
+                            Offer applied automatically. {WEEK_TIER_PROMO.growth}
+                          </p>
+                        ) : null}
+                        {invoice.nextWeekTierPromoPrompt?.eligible ? (
+                          <p className="totalLine promoNextUnlock">
+                            <span className="promoNextUnlockBadge">1 week away</span>
+                            {invoice.nextWeekTierPromoPrompt.message}{' '}
+                            <span className="promoGlowAmount">Estimated savings: {currency(invoice.nextWeekTierPromoPrompt.estimatedSavings)}</span>
+                          </p>
+                        ) : null}
                         {invoice.siblingDiscountAmount > 0 ? (
                           <p className="totalLine discountLine">
                             Sibling discount ({invoice.siblingDiscountPct}%){' '}
@@ -6864,6 +7189,7 @@ export default function HomePage() {
                   summaries.reduce((sum, item) => {
                     const studentIndex = registration.students.findIndex((student) => student.id === item.student.id)
                     return sum + buildStudentPriceRows(item.summary, studentIndex, {
+                      student: item.student,
                       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
                       siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
                     }).total
@@ -7486,10 +7812,11 @@ export default function HomePage() {
           }`}
           aria-label="Discount countdown"
         >
-          <div className="discountCountdownMeta single">
+          <div className="discountCountdownMeta discountCountdownMetaPrimary">
+            <strong>{text('Early-Bird', '早鸟优惠')}</strong>
             <p className="discountAmountHero">
-              {discountAmountLabel}
-              <span>{text('per week', '每周')}</span>
+              <span className="discountAmountMain">{discountAmountLabel}</span>
+              <span className="discountAmountSub">{text('per week', '每周')}</span>
             </p>
             <div className="discountCountdownBoxes" aria-label="Countdown timer">
               <div className="discountTimeBox">
@@ -7511,17 +7838,27 @@ export default function HomePage() {
             </div>
             {!isMobileViewport ? (
               <>
-                <span>{text('Ends on', '截止日期')} {discountCountdown.endLabel}</span>
+                <span>{text('Claim by', '请于')} {discountCountdown.endLabel}</span>
                 {adminConfig.tuition.discountCode ? (
                   <p className="discountCodeLine">
                     {text('Code', '优惠码')}: <code>{adminConfig.tuition.discountCode}</code>
                   </p>
                 ) : null}
                 <button type="button" className="button discountClaimBtn" onClick={jumpToRegistration}>
-                  {text('Claim Discount', '立即报名')}
+                  {text('Claim Early-Bird', '领取早鸟优惠')}
                 </button>
               </>
             ) : null}
+          </div>
+          <div className="discountCountdownMeta discountCountdownMetaSecondary">
+            <strong>{text('Train More, Save More', '多练多省')}</strong>
+            <p className="discountSecondaryLead">
+              <span className="discountSecondaryBig">{text('50% OFF', '5折优惠')}</span>{' '}
+              {text('Full Weeks', '整周课程')}
+            </p>
+            <p className="discountSecondaryDeadline">
+              {text('Enroll by June 30.', '请于6月30日前报名。')}
+            </p>
           </div>
           {isMobileViewport ? (
             <div className="discountMobileLangToggle" aria-label="Language">
@@ -7541,7 +7878,23 @@ export default function HomePage() {
       ) : null}
       {showRegistrationSections && isMobileViewport ? (
         <nav className="mobileRegistrationStepBar" aria-label="Registration steps">
-          <div className="mobileRegistrationFlowRibbon">Registering for Day Camp</div>
+          <div className="mobileRegistrationFlowRibbon">
+            <span>{text('Registering for', '正在报名')}</span>
+            <button
+              type="button"
+              className="mobileRegistrationFlowRibbonLocation"
+              onClick={() => {
+                setStep(1)
+                window.setTimeout(() => {
+                  const locationInput = typeof document !== 'undefined' ? document.querySelector('#reg-location') : null
+                  scrollElementIntoFocusZone(locationInput)
+                }, 200)
+              }}
+            >
+              {selectedLocationLabel}
+            </button>
+            <span>{text('Day Camp', '日营')}</span>
+          </div>
           {registrationSteps.map((item) => {
             const isComplete = isRegistrationStepComplete(item.id)
             const isMissing = !isComplete

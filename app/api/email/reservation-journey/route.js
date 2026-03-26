@@ -4,6 +4,7 @@ import { buildPaymentPageHref } from '../../../../lib/paymentPageLink'
 import { buildPaymentSummaryPdfBase64 } from '../../../../lib/paymentSummaryPdf'
 import { buildProgramWeekOptions, defaultAdminConfig, mergeAdminConfig } from '../../../../lib/campAdmin'
 import { buildRegistrationSummarySnapshot } from '../../../../lib/registrationSummaryDocument'
+import { getWeekTierPromoLines } from '../../../../lib/campPricing'
 
 const CAMP_NAME = 'New England Wushu Summer Camp'
 const PAYMENT_METHODS_TEXT = [
@@ -321,16 +322,12 @@ function normalizeCampWeeks(payload) {
 function getUpsellOfferLines(payload) {
   const camperCount = Math.max(1, Array.isArray(payload?.camperNames) ? payload.camperNames.length : 1)
   const totalPoints = camperCount * 2500
-  const weekCount = normalizeCampWeeks(payload).length
-  const offerLine =
-    weekCount >= 3
-      ? 'Loyalty family perk: add 2 more weeks and receive 20% OFF those added weeks.'
-      : 'Registered-family perk: keep an additional $100 OFF even after the public discount date.'
 
   return [
+    ...getWeekTierPromoLines(),
     `${totalPoints.toLocaleString('en-US')} New England Wushu Level Up points are included when each camper is enrolled for a full week (${(2500).toLocaleString('en-US')} per camper full-week enrollment).`,
     'Points can be saved for prizes, equipment, and future discounts during the fall or spring season.',
-    offerLine,
+    'Reply if you want help mapping the best week count for skill growth and savings.',
   ]
 }
 
@@ -1025,9 +1022,10 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         '',
         'Your camp week is coming up fast. A few key reminders for a smooth start:',
         '- Label water bottle, athletic shoes, and comfortable training clothing.',
+        '- Tuesday outdoor time: pack sunscreen and a change of outdoor shoes if helpful for your camper.',
         '- Wednesday: bring a change of clothes for Water Wednesday activities.',
         '- Thursday: BBQ lunch is included (optional to pack your own).',
-        '- Friday: family performance showcase day at 4:00 PM.',
+        '- Friday: family performance showcase day at 4:30 PM.',
         '',
         ...commonClose,
       ],
@@ -1044,8 +1042,9 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         'Three-day reminder before your camp week begins:',
         '- Confirm drop-off / pick-up timing in your family plan.',
         '- Pack daily essentials and Thursday backup lunch only if preferred.',
+        '- Keep Tuesday sunscreen and outdoor shoes/change-of-shoes ready if needed.',
         '- Keep Wednesday change-of-clothes ready.',
-        '- Friday showcase runs at 4:00 PM for family attendance.',
+        '- Friday showcase runs at 4:30 PM for family attendance.',
         '',
         ...commonClose,
       ],
@@ -1062,6 +1061,7 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         'Camp starts tomorrow. Final reminder before arrival:',
         '- Double-check drop-off and pickup timing.',
         '- Pack training clothes, water bottle, and any needed medication info.',
+        '- If useful, keep Tuesday sunscreen and outdoor shoes/change-of-shoes packed.',
         '- Keep your Wednesday clothes change and Friday showcase timing in mind.',
         '',
         ...commonClose,
@@ -1428,6 +1428,20 @@ async function getMergedAdminConfigForJourneys() {
         pmHalf: settingsResponse.data?.discount_pm_half || 0,
         overnightWeek: settingsResponse.data?.discount_overnight_week || 0,
         overnightDay: settingsResponse.data?.discount_overnight_day || 0,
+      },
+      bootcamp: {
+        regular: {
+          fullWeek: settingsResponse.data?.bootcamp_tuition_full_week || 0,
+          fullDay: settingsResponse.data?.bootcamp_tuition_full_day || 0,
+          amHalf: settingsResponse.data?.bootcamp_tuition_am_half || 0,
+          pmHalf: settingsResponse.data?.bootcamp_tuition_pm_half || 0,
+        },
+        discount: {
+          fullWeek: settingsResponse.data?.bootcamp_discount_full_week || 0,
+          fullDay: settingsResponse.data?.bootcamp_discount_full_day || 0,
+          amHalf: settingsResponse.data?.bootcamp_discount_am_half || 0,
+          pmHalf: settingsResponse.data?.bootcamp_discount_pm_half || 0,
+        },
       },
       discountEndDate: settingsResponse.data?.discount_end_date || '',
       discountDisplayValue: settingsResponse.data?.discount_display_value || '',

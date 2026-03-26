@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildProgramWeekOptions, defaultAdminConfig, formatWeekLabel } from '../../lib/campAdmin'
+import { buildProgramWeekOptions, defaultAdminConfig, formatWeekLabel, resolveBootcampTuition } from '../../lib/campAdmin'
 import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
 import {
   fetchAdminConfigFromSupabase,
@@ -49,23 +49,39 @@ function discountAmount(regular, discountedPrice) {
   return Math.max(0, Number(regular || 0) - Number(discountedPrice || 0))
 }
 
-function buildBootcampTuition(tuition) {
-  const premiumFactor = 1 + Number(tuition.bootcampPremiumPct || 0) / 100
-  const derive = (value) => roundUpToFive(Number(value || 0) * premiumFactor)
+function buildBootcampChecks(tuition) {
+  const general = tuition?.regular || {}
+  const generalDiscount = tuition?.discount || {}
+  const bootcamp = resolveBootcampTuition(tuition)
+
+  const buildLine = (generalValue, bootcampValue, label) => {
+    const generalPrice = Number(generalValue || 0)
+    const bootcampPrice = Number(bootcampValue || 0)
+    const pass = generalPrice <= 0 || bootcampPrice > generalPrice
+    return {
+      pass,
+      line: `${label}: ${money(bootcampPrice)} vs General ${money(generalPrice)}`,
+      fixText: pass ? '' : `Set Boot Camp above General for ${label.toLowerCase()}.`,
+    }
+  }
 
   return {
-    regular: {
-      fullWeek: derive(tuition.regular.fullWeek),
-      fullDay: derive(tuition.regular.fullDay),
-      amHalf: derive(tuition.regular.amHalf),
-      pmHalf: derive(tuition.regular.pmHalf),
-    },
-    discount: {
-      fullWeek: derive(tuition.discount.fullWeek),
-      fullDay: derive(tuition.discount.fullDay),
-      amHalf: derive(tuition.discount.amHalf),
-      pmHalf: derive(tuition.discount.pmHalf),
-    },
+    fullWeek: [
+      buildLine(general.fullWeek, bootcamp.regular.fullWeek, 'Regular Full Week'),
+      buildLine(generalDiscount.fullWeek, bootcamp.discount.fullWeek, 'Discounted Full Week'),
+    ],
+    fullDay: [
+      buildLine(general.fullDay, bootcamp.regular.fullDay, 'Regular Full Day'),
+      buildLine(generalDiscount.fullDay, bootcamp.discount.fullDay, 'Discounted Full Day'),
+    ],
+    amHalf: [
+      buildLine(general.amHalf, bootcamp.regular.amHalf, 'Regular AM Half Day'),
+      buildLine(generalDiscount.amHalf, bootcamp.discount.amHalf, 'Discounted AM Half Day'),
+    ],
+    pmHalf: [
+      buildLine(general.pmHalf, bootcamp.regular.pmHalf, 'Regular PM Half Day'),
+      buildLine(generalDiscount.pmHalf, bootcamp.discount.pmHalf, 'Discounted PM Half Day'),
+    ],
   }
 }
 
@@ -173,6 +189,10 @@ function getInitialState() {
     tuition: {
       regular: { ...defaultAdminConfig.tuition.regular },
       discount: { ...defaultAdminConfig.tuition.discount },
+      bootcamp: {
+        regular: { ...defaultAdminConfig.tuition.bootcamp.regular },
+        discount: { ...defaultAdminConfig.tuition.bootcamp.discount },
+      },
       discountEndDate: defaultAdminConfig.tuition.discountEndDate,
       discountDisplayValue: defaultAdminConfig.tuition.discountDisplayValue,
       discountCode: defaultAdminConfig.tuition.discountCode,
@@ -1093,7 +1113,7 @@ function buildCamperPricing({
 }) {
   const regular = tuition.regular || {}
   const discount = tuition.discount || {}
-  const premiumFactor = 1 + Number(tuition.bootcampPremiumPct || 0) / 100
+  const bootcampTuition = resolveBootcampTuition(tuition)
   const schedule = getStudentScheduleForAccounting(student)
   const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
 
@@ -1146,12 +1166,7 @@ function buildCamperPricing({
 
     const programRegularRates =
       programKey === 'bootcamp'
-        ? {
-            fullWeek: roundUpToFive(Number(regular.fullWeek || 0) * premiumFactor),
-            fullDay: roundUpToFive(Number(regular.fullDay || 0) * premiumFactor),
-            amHalf: roundUpToFive(Number(regular.amHalf || 0) * premiumFactor),
-            pmHalf: roundUpToFive(Number(regular.pmHalf || 0) * premiumFactor),
-          }
+        ? bootcampTuition.regular
         : programKey === 'overnight'
           ? { fullWeek: Number(regular.overnightWeek || 0), fullDay: Number(regular.overnightDay || 0), amHalf: 0, pmHalf: 0 }
           : {
@@ -1162,12 +1177,7 @@ function buildCamperPricing({
             }
     const programDiscountRates =
       programKey === 'bootcamp'
-        ? {
-            fullWeek: roundUpToFive(Number(discount.fullWeek || 0) * premiumFactor),
-            fullDay: roundUpToFive(Number(discount.fullDay || 0) * premiumFactor),
-            amHalf: roundUpToFive(Number(discount.amHalf || 0) * premiumFactor),
-            pmHalf: roundUpToFive(Number(discount.pmHalf || 0) * premiumFactor),
-          }
+        ? bootcampTuition.discount
         : programKey === 'overnight'
           ? { fullWeek: Number(discount.overnightWeek || 0), fullDay: Number(discount.overnightDay || 0), amHalf: 0, pmHalf: 0 }
           : {
@@ -1569,7 +1579,8 @@ export default function AdminPage() {
     [config.programs]
   )
   const tuitionChecks = useMemo(() => buildTuitionChecks(config.tuition), [config.tuition])
-  const bootcampTuition = useMemo(() => buildBootcampTuition(config.tuition), [config.tuition])
+  const bootcampTuition = useMemo(() => resolveBootcampTuition(config.tuition), [config.tuition])
+  const bootcampChecks = useMemo(() => buildBootcampChecks(config.tuition), [config.tuition])
   const activePreviewUrl =
     config.media.levelUpScreenshotUrls[activePreviewIndex] || config.media.levelUpScreenshotUrls[0] || ''
   const activeLibraryPreviewUrl =
@@ -1616,7 +1627,7 @@ export default function AdminPage() {
           accountingDiscountActive &&
           Number(bootcampTuition.discount.fullWeek || 0) > 0 &&
           Number(bootcampTuition.discount.fullWeek || 0) !== Number(bootcampTuition.regular.fullWeek || 0),
-        note: `Includes +${Number(config.tuition.bootcampPremiumPct || 0)}% premium`,
+        note: 'Uses the saved Boot Camp tuition fields.',
         rows: [
           {
             label: 'Full Day',
@@ -1659,7 +1670,7 @@ export default function AdminPage() {
           : [],
       },
     ]
-  }, [accountingDiscountActive, bootcampTuition.discount.amHalf, bootcampTuition.discount.fullDay, bootcampTuition.discount.fullWeek, bootcampTuition.discount.pmHalf, bootcampTuition.regular.amHalf, bootcampTuition.regular.fullDay, bootcampTuition.regular.fullWeek, bootcampTuition.regular.pmHalf, config.tuition.bootcampPremiumPct, config.tuition.discount, config.tuition.discountEndDate, config.tuition.regular])
+  }, [accountingDiscountActive, bootcampTuition.discount.amHalf, bootcampTuition.discount.fullDay, bootcampTuition.discount.fullWeek, bootcampTuition.discount.pmHalf, bootcampTuition.regular.amHalf, bootcampTuition.regular.fullDay, bootcampTuition.regular.fullWeek, bootcampTuition.regular.pmHalf, config.tuition.discount, config.tuition.discountEndDate, config.tuition.regular])
   const imageLibrary = useMemo(
     () => mediaLibrary.filter((item) => !isVideoUrl(item.publicUrl)),
     [mediaLibrary]
@@ -2692,10 +2703,17 @@ export default function AdminPage() {
       config.tuition.discount.fullDay,
       config.tuition.discount.amHalf,
       config.tuition.discount.pmHalf,
+      config.tuition.bootcamp.regular.fullWeek,
+      config.tuition.bootcamp.regular.fullDay,
+      config.tuition.bootcamp.regular.amHalf,
+      config.tuition.bootcamp.regular.pmHalf,
+      config.tuition.bootcamp.discount.fullWeek,
+      config.tuition.bootcamp.discount.fullDay,
+      config.tuition.bootcamp.discount.amHalf,
+      config.tuition.bootcamp.discount.pmHalf,
       config.tuition.discount.overnightWeek,
       config.tuition.discount.overnightDay,
       config.tuition.lunchPrice,
-      config.tuition.bootcampPremiumPct,
       config.tuition.siblingDiscountPct,
     ].reduce((sum, value) => sum + countMissingPositive(value), 0) + countMissingString(config.tuition.discountEndDate)
 
@@ -4343,13 +4361,29 @@ export default function AdminPage() {
     }))
   }
 
+  function updateBootcampTuition(group, field, value) {
+    setConfig((current) => ({
+      ...current,
+      tuition: {
+        ...current.tuition,
+        bootcamp: {
+          ...current.tuition.bootcamp,
+          [group]: {
+            ...current.tuition.bootcamp[group],
+            [field]: value === '' ? '' : Number(value),
+          },
+        },
+      },
+    }))
+  }
+
   function updateTuitionField(field, value) {
     setConfig((current) => ({
       ...current,
       tuition: {
         ...current.tuition,
         [field]:
-          field === 'lunchPrice' || field === 'bootcampPremiumPct' || field === 'siblingDiscountPct'
+          field === 'lunchPrice' || field === 'siblingDiscountPct'
             ? value === ''
               ? ''
               : Math.max(0, Number(value) || 0)
@@ -6387,19 +6421,8 @@ export default function AdminPage() {
             />
           </label>
           <label>
-            Competition Team premium (% over General)
-            <div className="tuitionSliderControl">
-              <input
-                type="range"
-                min="0"
-                max="60"
-                step="1"
-                value={config.tuition.bootcampPremiumPct}
-                onChange={(event) => updateTuitionField('bootcampPremiumPct', event.target.value)}
-              />
-              <strong className="tuitionSliderValue">{Number(config.tuition.bootcampPremiumPct || 0)}%</strong>
-            </div>
-            <small>Boot Camp prices auto-round to the nearest $5.</small>
+            Boot Camp pricing
+            <small>Boot Camp now has its own editable saved fields below.</small>
           </label>
           <label>
             Sibling discount (% from 2nd camper)
@@ -6529,18 +6552,18 @@ export default function AdminPage() {
         </div>
 
         <div className="tuitionTableWrap">
-          <h3>Competition Team Boot Camp (auto-calculated)</h3>
+          <h3>Competition Team Boot Camp</h3>
           <p className="subhead">
-            Derived from General prices using +{Number(config.tuition.bootcampPremiumPct || 0)}% premium, then rounded
-            up to the nearest $5.
+            Edit Boot Camp prices directly. Checks below warn if a Boot Camp price is not above the matching General Camp price.
           </p>
           <table className="tuitionTable">
             <thead>
               <tr>
                 <th>Method</th>
-                <th>Regular (Auto)</th>
-                <th>Discounted Price (Auto)</th>
-                <th>Discount Amount (Auto)</th>
+                <th>Regular</th>
+                <th>Discounted Price</th>
+                <th>Discount Amount</th>
+                <th>Checks</th>
               </tr>
             </thead>
             <tbody>
@@ -6552,12 +6575,43 @@ export default function AdminPage() {
               ].map(([key, label]) => {
                 const regularValue = bootcampTuition.regular[key]
                 const discountValue = bootcampTuition.discount[key]
+                const checks = bootcampChecks[key] || []
+                const pass = checks.every((item) => item.pass)
                 return (
                   <tr key={`boot-${key}`}>
                     <td>{label}</td>
-                    <td>{money(regularValue)}</td>
-                    <td>{money(discountValue)}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={config.tuition.bootcamp.regular[key]}
+                        onChange={(event) => updateBootcampTuition('regular', key, event.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={config.tuition.bootcamp.discount[key]}
+                        onChange={(event) => updateBootcampTuition('discount', key, event.target.value)}
+                      />
+                    </td>
                     <td>{money(discountAmount(regularValue, discountValue))}</td>
+                    <td className={`checkCell ${pass ? 'pass' : 'warn'}`}>
+                      <div className={`checkBadge ${pass ? 'pass' : 'warn'}`}>
+                        {pass ? 'GREEN LIGHT' : 'Needs update'}
+                      </div>
+                      {checks.map((item) => (
+                        <p key={item.line}>{item.line}</p>
+                      ))}
+                      {checks.filter((item) => item.fixText).map((item) => (
+                        <p key={item.fixText} className="raiseBox">
+                          {item.fixText}
+                        </p>
+                      ))}
+                    </td>
                   </tr>
                 )
               })}

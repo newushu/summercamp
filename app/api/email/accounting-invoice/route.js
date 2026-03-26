@@ -1,4 +1,5 @@
 import { sendWithSes } from '../../../../lib/emailProvider'
+import { WEEK_TIER_PROMO } from '../../../../lib/campPricing'
 
 function isValidEmail(value) {
   return /^\S+@\S+\.\S+$/.test(String(value || '').trim())
@@ -36,6 +37,9 @@ function buildEmailHtml({ parentName, camperName, paymentMethod, summaryHtml }) 
       <div style="padding:20px;">
         <p style="margin:0 0 8px;">Hi ${safeParent},</p>
         <p style="margin:0 0 14px;">Attached is your current registration summary for <strong>${safeCamper}</strong>.</p>
+        <div style="margin:0 0 14px;padding:12px;border:1px solid #fdba74;border-radius:12px;background:#fff7ed;">
+          <p style="margin:0;font-size:14px;color:#9a3412;"><strong>${escapeHtml(WEEK_TIER_PROMO.shortLabel)}:</strong> ${escapeHtml(WEEK_TIER_PROMO.cap)} ${escapeHtml(WEEK_TIER_PROMO.tiers)} ${escapeHtml(WEEK_TIER_PROMO.detail)} ${escapeHtml(WEEK_TIER_PROMO.growth)}</p>
+        </div>
         <div style="margin:0 0 14px;padding:12px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;">
           <p style="margin:0;font-size:14px;color:#1e3a8a;"><strong>Preferred payment method:</strong> ${safeMethod}</p>
         </div>
@@ -72,6 +76,12 @@ export async function POST(request) {
       `Hi ${parentName || 'Parent/Guardian'},`,
       '',
       `Attached is your current registration summary for ${camperName || 'Camper'}.`,
+      '',
+      `${WEEK_TIER_PROMO.shortLabel}: ${WEEK_TIER_PROMO.headline}`,
+      WEEK_TIER_PROMO.cap,
+      WEEK_TIER_PROMO.tiers,
+      WEEK_TIER_PROMO.detail,
+      WEEK_TIER_PROMO.growth,
       '',
       summaryText,
       '',

@@ -35,6 +35,14 @@ alter table public.camp_admin_settings
   add column if not exists discount_full_day numeric not null default 0,
   add column if not exists discount_am_half numeric not null default 0,
   add column if not exists discount_pm_half numeric not null default 0,
+  add column if not exists bootcamp_tuition_full_week numeric not null default 0,
+  add column if not exists bootcamp_tuition_full_day numeric not null default 0,
+  add column if not exists bootcamp_tuition_am_half numeric not null default 0,
+  add column if not exists bootcamp_tuition_pm_half numeric not null default 0,
+  add column if not exists bootcamp_discount_full_week numeric not null default 0,
+  add column if not exists bootcamp_discount_full_day numeric not null default 0,
+  add column if not exists bootcamp_discount_am_half numeric not null default 0,
+  add column if not exists bootcamp_discount_pm_half numeric not null default 0,
   add column if not exists discount_overnight_week numeric not null default 980,
   add column if not exists discount_overnight_day numeric not null default 0,
   add column if not exists discount_end_date date,
@@ -80,6 +88,46 @@ where coalesce(bootcamp_premium_pct, 15) = 15;
 
 update public.camp_admin_settings
 set
+  bootcamp_tuition_full_week = case
+    when coalesce(bootcamp_tuition_full_week, 0) = 0 and coalesce(tuition_full_week, 0) > 0
+      then round((tuition_full_week * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_tuition_full_week
+  end,
+  bootcamp_tuition_full_day = case
+    when coalesce(bootcamp_tuition_full_day, 0) = 0 and coalesce(tuition_full_day, 0) > 0
+      then round((tuition_full_day * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_tuition_full_day
+  end,
+  bootcamp_tuition_am_half = case
+    when coalesce(bootcamp_tuition_am_half, 0) = 0 and coalesce(tuition_am_half, 0) > 0
+      then round((tuition_am_half * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_tuition_am_half
+  end,
+  bootcamp_tuition_pm_half = case
+    when coalesce(bootcamp_tuition_pm_half, 0) = 0 and coalesce(tuition_pm_half, 0) > 0
+      then round((tuition_pm_half * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_tuition_pm_half
+  end,
+  bootcamp_discount_full_week = case
+    when coalesce(bootcamp_discount_full_week, 0) = 0 and coalesce(discount_full_week, 0) > 0
+      then round((discount_full_week * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_discount_full_week
+  end,
+  bootcamp_discount_full_day = case
+    when coalesce(bootcamp_discount_full_day, 0) = 0 and coalesce(discount_full_day, 0) > 0
+      then round((discount_full_day * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_discount_full_day
+  end,
+  bootcamp_discount_am_half = case
+    when coalesce(bootcamp_discount_am_half, 0) = 0 and coalesce(discount_am_half, 0) > 0
+      then round((discount_am_half * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_discount_am_half
+  end,
+  bootcamp_discount_pm_half = case
+    when coalesce(bootcamp_discount_pm_half, 0) = 0 and coalesce(discount_pm_half, 0) > 0
+      then round((discount_pm_half * (1 + coalesce(bootcamp_premium_pct, 25) / 100.0)) / 5.0) * 5
+    else bootcamp_discount_pm_half
+  end,
   tuition_overnight_week = case when coalesce(tuition_overnight_week, 0) = 0 then 1180 else tuition_overnight_week end,
   discount_overnight_week = case when coalesce(discount_overnight_week, 0) = 0 then 980 else discount_overnight_week end,
   discount_end_date = coalesce(discount_end_date, date '2026-05-20'),
