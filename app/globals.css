@@ -690,6 +690,96 @@ h3 {
   backdrop-filter: blur(6px);
 }
 
+.portraitOnlyOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background:
+    radial-gradient(120% 120% at 50% 0%, rgba(191, 219, 254, 0.22), transparent 48%),
+    rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.portraitOnlyCard {
+  width: min(100%, 320px);
+  display: grid;
+  justify-items: center;
+  gap: 0.72rem;
+  text-align: center;
+  padding: 1.25rem 1rem 1rem;
+  border-radius: 24px;
+  border: 1px solid rgba(191, 219, 254, 0.34);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.97), rgba(239, 246, 255, 0.95));
+  box-shadow: 0 24px 50px rgba(15, 23, 42, 0.3);
+}
+
+.portraitOnlyCard strong {
+  color: #0f172a;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.portraitOnlyCard p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.portraitOnlyIcon {
+  position: relative;
+  width: 96px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+}
+
+.portraitOnlyPhone {
+  width: 36px;
+  height: 58px;
+  border-radius: 12px;
+  border: 2px solid #1d4ed8;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  box-shadow: 0 14px 28px rgba(29, 78, 216, 0.18);
+  transform: rotate(-90deg);
+}
+
+.portraitOnlyPhoneScreen {
+  display: block;
+  width: 22px;
+  height: 36px;
+  margin: 8px auto 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #e0f2fe 100%);
+}
+
+.portraitOnlyTurnArrow {
+  position: absolute;
+  right: 12px;
+  top: 4px;
+  color: #ea580c;
+  font-size: 1.4rem;
+  font-weight: 900;
+  animation: portraitOnlyTurnPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes portraitOnlyTurnPulse {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scale(1.12) rotate(16deg);
+    opacity: 1;
+  }
+}
+
 .langToggleDock span {
   color: #64748b;
   font-size: 0.72rem;
@@ -4228,7 +4318,7 @@ h3 {
   border: 1px solid rgba(191, 219, 254, 0.8);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.97);
-  padding: 0.35rem 0.4rem;
+  padding: 0.28rem 0.34rem;
   box-shadow:
     0 1px 3px rgba(15, 23, 42, 0.04),
     0 6px 18px rgba(37, 99, 235, 0.1);
@@ -4245,7 +4335,7 @@ h3 {
 }
 
 .regSummaryStatusBar {
-  margin: 0 0 0.22rem;
+  margin: 0 0 0.16rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4260,10 +4350,10 @@ h3 {
 }
 
 .regSummaryAddCamperSmall {
-  min-height: 20px;
-  padding: 0.08rem 0.38rem;
-  font-size: 0.64rem;
-  line-height: 1.1;
+  min-height: 14px;
+  padding: 0.02rem 0.22rem;
+  font-size: 0.5rem;
+  line-height: 1;
 }
 
 .regSummaryToggle {
@@ -4275,7 +4365,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 0.35rem;
-  padding: 0.28rem 0.4rem;
+  padding: 0.22rem 0.34rem;
   cursor: pointer;
   text-align: left;
   box-shadow: none;
@@ -4405,14 +4495,14 @@ h3 {
 }
 
 .regSummaryCamperSwitch {
-  margin-top: 0.32rem;
+  margin-top: 0.26rem;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.32rem;
+  gap: 0.26rem;
 }
 
 .regSummaryCamperSwitchTop {
-  margin-top: 0.35rem;
+  margin-top: 0.26rem;
 }
 
 .regSummaryCamperChip {
@@ -4420,9 +4510,9 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 26px;
-  padding: 0.18rem 0.38rem;
-  font-size: 0.68rem;
+  min-height: 18px;
+  padding: 0.08rem 0.2rem;
+  font-size: 0.52rem;
 }
 
 .regSummaryCamperMainBtn {
@@ -6458,6 +6548,11 @@ h3 {
   box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
 }
 
+.registrationCamperTab.regSummaryCamperChip {
+  padding: 0.08rem 0.2rem;
+  font-size: 0.58rem;
+}
+
 .registrationStepAlertDot,
 .registrationCamperAlertDot {
   width: 0.5rem;
@@ -6766,6 +6861,13 @@ textarea:focus {
 .button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.button.regSummaryAddCamperSmall {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  min-height: unset;
+  box-shadow: 0 2px 6px rgba(3, 105, 161, 0.18);
 }
 
 .button.secondary {
@@ -8611,7 +8713,6 @@ textarea:focus {
     align-items: stretch;
   }
 
-  .regSummaryAddCamperSmall,
   .registrationLocationSummaryCard.compact,
   .regSummaryToggle {
     width: 100%;
@@ -9073,7 +9174,7 @@ textarea:focus {
   }
 
   .discountCountdownDock.mobileStrip.registrationOffset {
-    bottom: calc(5.25rem + env(safe-area-inset-bottom));
+    bottom: calc(4.8rem + env(safe-area-inset-bottom));
   }
 
   .overnightDiscountCountdownDock {
@@ -9082,24 +9183,24 @@ textarea:focus {
 
   .discountCountdownDock.mobileStrip .discountCountdownBoxes {
     margin-top: 0;
-    gap: 0.16rem;
+    gap: 0.12rem;
     justify-content: center;
   }
 
   .discountCountdownDock.mobileStrip .discountTimeBox {
-    width: 2.18rem;
-    min-width: 2.18rem;
-    max-width: 2.18rem;
-    padding: 0.12rem 0.1rem;
-    border-radius: 6px;
+    width: 1.92rem;
+    min-width: 1.92rem;
+    max-width: 1.92rem;
+    padding: 0.1rem 0.08rem;
+    border-radius: 5px;
   }
 
   .discountCountdownDock.mobileStrip .discountTimeValue {
-    font-size: 0.72rem;
+    font-size: 0.64rem;
   }
 
   .discountCountdownDock.mobileStrip .discountTimeLabel {
-    font-size: 0.48rem;
+    font-size: 0.42rem;
     letter-spacing: 0;
   }
 
@@ -9107,20 +9208,20 @@ textarea:focus {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.3rem;
   }
 
   .discountCountdownDock.mobileStrip .discountSecondaryLead {
-    font-size: 0.56rem;
+    font-size: 0.5rem;
   }
 
   .discountCountdownDock.mobileStrip .discountSecondaryBig {
-    font-size: 0.8rem;
+    font-size: 0.7rem;
   }
 
   .discountCountdownDock.mobileStrip .discountSecondaryNote,
   .discountCountdownDock.mobileStrip .discountSecondaryDeadline {
-    font-size: 0.54rem;
+    font-size: 0.48rem;
     line-height: 1.18;
   }
 
@@ -9161,14 +9262,14 @@ textarea:focus {
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    bottom: calc(0.6rem + env(safe-area-inset-bottom));
+    bottom: calc(0.52rem + env(safe-area-inset-bottom));
     z-index: 92;
     width: min(calc(100vw - 1.5rem), 460px);
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.28rem;
-    padding: 1rem 0.32rem 0.32rem;
-    border-radius: 16px;
+    gap: 0.22rem;
+    padding: 0.86rem 0.28rem 0.28rem;
+    border-radius: 14px;
     border: 1px solid rgba(203, 213, 225, 0.8);
     background: rgba(255, 255, 255, 0.97);
     box-shadow:
@@ -9186,16 +9287,16 @@ textarea:focus {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.18rem;
-    min-height: 1.4rem;
+    gap: 0.14rem;
+    min-height: 1.18rem;
     max-width: calc(100% - 1rem);
-    padding: 0.16rem 0.56rem;
+    padding: 0.12rem 0.46rem;
     border-radius: 999px;
     border: 1px solid #7dd3fc;
     background: linear-gradient(135deg, #ecfeff 0%, #dbeafe 100%);
     color: #0f4c81;
     box-shadow: 0 8px 16px rgba(14, 116, 144, 0.18);
-    font-size: 0.68rem;
+    font-size: 0.6rem;
     font-weight: 900;
     line-height: 1;
     letter-spacing: 0.02em;
@@ -9210,9 +9311,9 @@ textarea:focus {
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.88);
     color: #0f4c81;
-    min-height: 1.08rem;
-    padding: 0.06rem 0.4rem;
-    font-size: 0.62rem;
+    min-height: 0.96rem;
+    padding: 0.05rem 0.34rem;
+    font-size: 0.56rem;
     font-weight: 900;
     line-height: 1;
     box-shadow: 0 4px 10px rgba(14, 116, 144, 0.12);
@@ -9230,10 +9331,10 @@ textarea:focus {
     position: relative;
     display: grid;
     justify-items: center;
-    gap: 0.12rem;
-    min-height: 2.4rem;
-    padding: 0.28rem 0.18rem;
-    border-radius: 10px;
+    gap: 0.08rem;
+    min-height: 2.04rem;
+    padding: 0.22rem 0.12rem;
+    border-radius: 9px;
     border: 1px solid rgba(219, 229, 240, 0.8);
     background: #f8fafc;
     color: #475569;
@@ -9261,12 +9362,12 @@ textarea:focus {
   .mobileRegistrationStepNumber {
     display: inline-grid;
     place-items: center;
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1.08rem;
+    height: 1.08rem;
     border-radius: 999px;
     background: #e2e8f0;
     color: #334155;
-    font-size: 0.68rem;
+    font-size: 0.6rem;
     font-weight: 800;
   }
 
@@ -9276,10 +9377,10 @@ textarea:focus {
   }
 
   .mobileRegistrationStepLabel {
-    font-size: 0.58rem;
+    font-size: 0.52rem;
     font-weight: 700;
     text-align: center;
-    line-height: 1.15;
+    line-height: 1.08;
   }
 
   .mobileNavLangToggle {

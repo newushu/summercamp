@@ -994,6 +994,7 @@ export default function HomePage() {
   const [stepDirection, setStepDirection] = useState('next')
   const [countdownNow, setCountdownNow] = useState(null)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
+  const [showPortraitOnlyOverlay, setShowPortraitOnlyOverlay] = useState(false)
   const [assistantCollapsed, setAssistantCollapsed] = useState(() => readAssistantCollapsedDraft())
   const [isDiscountCollapsed, setIsDiscountCollapsed] = useState(false)
   const [overnightRequestOption, setOvernightRequestOption] = useState('fullWeek')
@@ -1545,7 +1546,9 @@ export default function HomePage() {
   useEffect(() => {
     function syncViewport() {
       const mobile = window.matchMedia('(max-width: 700px)').matches
+      const landscape = window.matchMedia('(orientation: landscape)').matches
       setIsMobileViewport(mobile)
+      setShowPortraitOnlyOverlay(mobile && landscape)
     }
 
     syncViewport()
@@ -4470,6 +4473,20 @@ export default function HomePage() {
         currentMode === 'learn' && isMobileViewport ? 'learnOnly' : ''
       }`}
     >
+      {showPortraitOnlyOverlay ? (
+        <div className="portraitOnlyOverlay" aria-live="polite">
+          <div className="portraitOnlyCard">
+            <div className="portraitOnlyIcon" aria-hidden="true">
+              <span className="portraitOnlyPhone">
+                <span className="portraitOnlyPhoneScreen" />
+              </span>
+              <span className="portraitOnlyTurnArrow">↺</span>
+            </div>
+            <strong>{text('Please Rotate Back to Portrait', '请旋转回竖屏')}</strong>
+            <p>{text('This page works best in portrait view on your phone.', '此页面在手机竖屏模式下效果最佳。')}</p>
+          </div>
+        </div>
+      ) : null}
       {showLandingOnlySections && !isMobileViewport ? (
       <aside className="desktopSideRail desktopCampRail" aria-label="Summer camp navigation">
         <div className="desktopSideRailCard">
@@ -6099,7 +6116,7 @@ export default function HomePage() {
               <em>
                 {summaryExpanded
                   ? `${registration.students.length} ${text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} · ${summaryDigest.totalCampDays} ${text('selected day blocks', '个已选上课时段')} · ${summaryDigest.totalPaidLunchDays} ${text('paid lunch days', '个付费午餐日')} · ${summaryDigest.totalIncludedLunchDays} ${text('Thu included lunch days', '个周四含午餐日')}`
-                  : text('Tap to expand summary', '点击展开摘要')}
+                  : ''}
               </em>
             </span>
             <span className={`regSummaryToggleAction ${summaryExpanded ? 'open' : ''}`}>
@@ -6791,31 +6808,39 @@ export default function HomePage() {
               </div>
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
-                  <label>
-                    {text('Copy another camper lunch', '复制另一位营员的午餐选择')}
-                    <select
-                      value={lunchCopySourceId}
-                      onChange={(event) => setLunchCopySourceId(event.target.value)}
-                    >
-                      <option value="">{text('Select camper', '选择营员')}</option>
+                  <div className="copyWeeksPicker">
+                    <span className="copyWeeksLabel">{text('Copy lunch from', '从以下营员复制午餐')}</span>
+                    <div className="copyWeeksChipRow" aria-label="Copy lunch source camper">
                       {copySourceOptions.map((option) => (
-                        <option key={`copy-lunch-${option.id}`} value={option.id}>
+                        <button
+                          key={`copy-lunch-${option.id}`}
+                          type="button"
+                          className={`copyWeeksChip ${lunchCopySourceId === option.id ? 'active' : ''}`}
+                          onClick={() => setLunchCopySourceId((current) => (current === option.id ? '' : option.id))}
+                          aria-pressed={lunchCopySourceId === option.id}
+                        >
                           {option.label}
-                        </option>
+                        </button>
                       ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => copyLunchFromCamper(lunchCopySourceId)}
-                    disabled={!lunchCopySourceId}
-                  >
-                    {text('Copy lunch', '复制午餐')}
-                  </button>
-                  <button type="button" className="button secondary" onClick={clearActiveStudentLunch}>
-                    {text('Clear all lunch', '清空所有午餐')}
-                  </button>
+                    </div>
+                  </div>
+                  <div className="copyWeeksDivider" aria-hidden="true" />
+                  <div className="copyWeeksActions">
+                    <span className="copyWeeksLabel">{text('Copy to', '复制到')}</span>
+                    <button
+                      type="button"
+                      className={`button copyWeeksButton ${lunchCopySourceId ? 'ready' : ''}`}
+                      onClick={() => copyLunchFromCamper(lunchCopySourceId)}
+                      disabled={!lunchCopySourceId}
+                    >
+                      {lunchCopySourceId ? text(`→ ${activeCamperLabel}`, `→ ${activeCamperLabel}`) : activeCamperLabel}
+                    </button>
+                  </div>
+                  <div className="copyWeeksClearWrap">
+                    <button type="button" className="button secondary registrationMiniChip copyWeeksClearButton" onClick={clearActiveStudentLunch}>
+                      {text(`Clear lunch for ${activeCamperLabel}`, `清空 ${activeCamperLabel} 的午餐`)}
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
