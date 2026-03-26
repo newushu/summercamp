@@ -1014,6 +1014,25 @@ export function OvernightCampPage({ view = 'landing' }) {
       <div className="overnightPageContent">
 
       {isLandingView ? (
+      <section className="card section specialOfferCardSection overnightTrainMoreCard" id="overnight-train-more">
+        <p className="eyebrow">{text('Train More, Save More', '多练多省')}</p>
+        <h2>{text('Train More, Save More', '多练多省')}</h2>
+        <p className="subhead">
+          {text(
+            'Percentage savings are based on full-week General Camp or Competition Boot Camp tuition, not the overnight weekly rate.',
+            '百分比优惠按普通营或竞赛集训营的整周学费计算，不按过夜营周价格计算。'
+          )}
+        </p>
+        <p className="subhead">
+          {text(
+            'If you are signing up for overnight and want to discuss discount options, please contact us directly.',
+            '如果您报名过夜营并想了解相关优惠，请直接联系我们。'
+          )}
+        </p>
+      </section>
+      ) : null}
+
+      {isLandingView ? (
       <section className="card section overnightGallerySection" id="overnight-gallery">
         <div className="overnightGalleryHeader">
           <div>

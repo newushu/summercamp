@@ -3993,7 +3993,7 @@ export default function HomePage() {
     { eligible: false, amount: 0, camperCount: 0, labels: [] }
   )
   const weekTierPromoPills = [
-    text('First 30 campers', '前30位营员'),
+    text('First 30 enrollments', '前30个报名名额'),
     text('Weeks 4-6: 50% OFF', '第4至6周享半价'),
     text('Weeks 7-9: 60% OFF', '第7至9周享6折'),
     text('Week 10: FREE', '第10周免费'),
@@ -5436,8 +5436,8 @@ export default function HomePage() {
           className: 'specialOfferCardHero',
           eyebrow: text('Train More, Save More', '多练多省'),
           headline: text(
-            'Earn 50% OFF full weeks when one camper enrolls in 4+ full weeks.',
-            '同一位营员报名4个及以上整周，可享整周学费半价优惠。'
+            'Earn 50% OFF full weeks with 4+ full weeks enrolled.',
+            '报名4个及以上整周，可享整周学费半价优惠。'
           ),
           lead: text(
             'Build a stronger summer plan early: weeks 7-9 jump to 60% OFF, and week 10 is FREE.',
@@ -5570,7 +5570,10 @@ export default function HomePage() {
             'Enroll 4+ full weeks by June 30.',
             '6月30日前报名4个及以上整周。'
           ),
-          note: text('First 30 campers. Full weeks only. Great for one camper building a stronger summer plan.', '前30位营员。仅限整周。很适合为同一位营员规划更完整的夏令营安排。'),
+          note: text(
+            'Limited to the first 30 enrollments. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.',
+            '仅限前30个报名名额。仅限整周。适用于营员的普通营或竞赛集训营整周学费。'
+          ),
           ctaLabel: text('See Week Options', '查看周次选择'),
           onCta: jumpToRegistration,
         })}
@@ -5658,7 +5661,10 @@ export default function HomePage() {
             'Enroll 4+ full weeks by June 30.',
             '6月30日前报名4个及以上整周。'
           ),
-          note: text('First 30 campers. Full weeks only. Great for one camper building a stronger summer plan.', '前30位营员。仅限整周。很适合为同一位营员规划更完整的夏令营安排。'),
+          note: text(
+            'Limited to the first 30 enrollments. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.',
+            '仅限前30个报名名额。仅限整周。适用于营员的普通营或竞赛集训营整周学费。'
+          ),
         })}
         <div className="heroActions">
           <button type="button" className="button heroPrimaryCta" onClick={jumpToRegistration}>
