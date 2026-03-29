@@ -21,6 +21,46 @@ function isValidEmail(value) {
   return /^\S+@\S+\.\S+$/.test(String(value || '').trim())
 }
 
+function getSiteBaseUrl() {
+  return (
+    String(process.env.NEXT_PUBLIC_SITE_URL || '').trim() ||
+    String(process.env.SITE_URL || '').trim() ||
+    'https://summer.newushu.com'
+  )
+}
+
+function buildOpenTrackingUrl({ runId = 0, stepNumber = 0, stepKey = '' }) {
+  const baseUrl = getSiteBaseUrl().replace(/\/$/, '')
+  const params = new URLSearchParams({
+    flow: 'reservation',
+    runId: String(Number(runId || 0)),
+  })
+  if (Number(stepNumber || 0) > 0) {
+    params.set('stepNumber', String(Number(stepNumber)))
+  }
+  if (String(stepKey || '').trim()) {
+    params.set('stepKey', String(stepKey || '').trim())
+  }
+  return `${baseUrl}/api/email/open?${params.toString()}`
+}
+
+function appendOpenTrackingPixel(html, trackingUrl = '') {
+  const safeHtml = String(html || '')
+  const safeUrl = String(trackingUrl || '').trim()
+  if (!safeHtml || !safeUrl) {
+    return safeHtml
+  }
+  return `${safeHtml}<img src="${safeUrl}" alt="" width="1" height="1" style="display:block;width:1px;height:1px;border:0;opacity:0;" />`
+}
+
+function isArchivedRegistrationRecord(record) {
+  const entries = Array.isArray(record?.accounting_entries) ? record.accounting_entries : []
+  if (entries.length === 0) {
+    return false
+  }
+  return entries.every((entry) => Boolean(entry?.archived))
+}
+
 function isTestJourneyStatus(status = '') {
   return String(status || '').startsWith('test_')
 }
@@ -291,7 +331,24 @@ async function getEmailBranding() {
 
 function normalizeCampWeeks(payload) {
   const incoming = Array.isArray(payload?.campWeeks) ? payload.campWeeks : []
-  const mapped = incoming
+  const registrationFallback = Array.isArray(payload?.registration?.students)
+    ? payload.registration.students
+        .flatMap((student) => Object.keys(student?.schedule || {}).filter(Boolean))
+        .map((weekKey) => {
+          const raw = String(weekKey || '').trim()
+          const dateMatch = raw.match(/(\d{4}-\d{2}-\d{2})$/)
+          if (!dateMatch) {
+            return null
+          }
+          return {
+            start: dateMatch[1],
+            end: dateMatch[1],
+          }
+        })
+        .filter(Boolean)
+    : []
+  const sourceWeeks = incoming.length > 0 ? incoming : registrationFallback
+  const mapped = sourceWeeks
     .map((week) => {
       if (typeof week === 'string') {
         const start = parseDateOnly(week)
@@ -329,6 +386,57 @@ function getUpsellOfferLines(payload) {
     'Points can be saved for prizes, equipment, and future discounts during the fall or spring season.',
     'Reply if you want help mapping the best week count for skill growth and savings.',
   ]
+}
+
+function getSelectedCampTypesFromRegistration(registration) {
+  return Array.from(
+    new Set(
+      (Array.isArray(registration?.students) ? registration.students : [])
+        .flatMap((student) => Object.values(student?.schedule || {}))
+        .map((entry) => String(entry?.campType || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  )
+}
+
+function detectCampJourneyTrack(payload) {
+  if (String(payload?.registrationType || '').trim() === 'overnight-only') {
+    return 'overnight'
+  }
+  const explicitCampTypes = Array.from(
+    new Set(
+      [
+        ...getSelectedCampTypesFromRegistration(payload?.registration),
+        ...(Array.isArray(payload?.selectedCampTypes) ? payload.selectedCampTypes : []),
+      ]
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  )
+  const hasExplicitBootcamp = explicitCampTypes.includes('bootcamp')
+  const hasExplicitGeneral = explicitCampTypes.includes('general')
+  if (hasExplicitBootcamp && hasExplicitGeneral) {
+    return 'mixed'
+  }
+  if (hasExplicitBootcamp) {
+    return 'bootcamp'
+  }
+  if (hasExplicitGeneral) {
+    return 'general'
+  }
+  const summaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
+  const normalizedLines = summaryLines.map((line) => String(line || '').toLowerCase())
+  const hasBootcamp = normalizedLines.some(
+    (line) => line.includes('competition boot camp') || line.includes('competition team boot camp') || line.includes('boot camp')
+  )
+  const hasGeneral = normalizedLines.some((line) => line.includes('general camp'))
+  if (hasBootcamp && hasGeneral) {
+    return 'mixed'
+  }
+  if (hasBootcamp) {
+    return 'bootcamp'
+  }
+  return 'general'
 }
 
 function buildRegistrationSummaryHtml(summaryLines) {
@@ -766,7 +874,64 @@ function getReservationDeadlineLabel(submittedAtIso) {
   })
 }
 
-function buildCurrentReservationDetails(payload, config) {
+function buildLiveReservationAccountingDetails(record, config) {
+  const rawMeta = parseMaybeJson(record?.medical_notes, {}) || {}
+  const registration = rawMeta?.registration || {}
+  const students = Array.isArray(registration.students) ? registration.students : []
+  if (students.length === 0) {
+    return null
+  }
+
+  const safeConfig = config || defaultAdminConfig
+  const weeksById = buildWeeksByIdForJourneys(safeConfig)
+  const snapshot = buildRegistrationSummarySnapshot({
+    registration,
+    tuition: safeConfig.tuition,
+    weeksById,
+    applyLimitedDiscount: isLimitedDiscountActiveForDate(safeConfig?.tuition?.discountEndDate, record?.created_at),
+  })
+  const lunchCount = students.reduce(
+    (sum, student) =>
+      sum +
+      Object.entries(student?.lunch || {}).filter(
+        ([key, value]) => Boolean(value) && !String(key || '').endsWith(':Thu')
+      ).length,
+    0
+  )
+  const lunchTotal = lunchCount * Number(safeConfig?.tuition?.lunchPrice || 0)
+  const accountingEntries = Array.isArray(record?.accounting_entries) ? record.accounting_entries : []
+  const manualDiscountTotal = accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.manual_discount || 0)), 0)
+  const tuitionBeforeManualDiscount = Math.max(0, Number(snapshot.amountDue || 0) - lunchTotal)
+  const tuitionAfterManualDiscount = Math.max(0, tuitionBeforeManualDiscount - manualDiscountTotal)
+  const hasSplitValues = accountingEntries.some((entry) => entry?.tuition_paid_amount != null || entry?.lunch_paid_amount != null)
+  const legacyPaidAmount = accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.paid_amount || 0)), 0)
+  const tuitionPaidAmount = hasSplitValues
+    ? accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.tuition_paid_amount || 0)), 0)
+    : Math.min(legacyPaidAmount, tuitionAfterManualDiscount)
+  const lunchPaidAmount = hasSplitValues
+    ? accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.lunch_paid_amount || 0)), 0)
+    : Math.max(0, legacyPaidAmount - tuitionPaidAmount)
+  const tuitionOwedAmount = Math.max(0, tuitionAfterManualDiscount - tuitionPaidAmount)
+  const lunchOwedAmount = Math.max(0, lunchTotal - lunchPaidAmount)
+  const totalPaidAmount = tuitionPaidAmount + lunchPaidAmount
+  const totalOwedAmount = tuitionOwedAmount + lunchOwedAmount
+
+  const summaryLines = (Array.isArray(snapshot.summaryLines) ? snapshot.summaryLines : []).filter(
+    (line) => !String(line || '').startsWith('Grand total:')
+  )
+  summaryLines.push(`Original total: ${formatCurrency(Number(snapshot.amountDue || 0))}`)
+  summaryLines.push(`Manual discounts applied: ${formatCurrency(manualDiscountTotal)}`)
+  summaryLines.push(`Paid so far: ${formatCurrency(totalPaidAmount)}`)
+  summaryLines.push(`Current balance due: ${formatCurrency(totalOwedAmount)}`)
+
+  return {
+    summaryLines,
+    amountDue: totalOwedAmount,
+    camperNames: snapshot.camperNames,
+  }
+}
+
+function buildCurrentReservationDetails(payload, config, registrationRecord = null) {
   const fallbackSummaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
   const fallbackAmountDue = Number(payload?.amountDue || 0)
   const fallbackCamperNames = Array.isArray(payload?.camperNames) ? payload.camperNames : []
@@ -811,6 +976,13 @@ function buildCurrentReservationDetails(payload, config) {
       summaryLines,
       amountDue: requestedWeeks * weeklyRate,
       camperNames: fallbackCamperNames.length ? fallbackCamperNames : ['Overnight Camper'],
+    }
+  }
+
+  if (registrationRecord?.id) {
+    const liveDetails = buildLiveReservationAccountingDetails(registrationRecord, safeConfig)
+    if (liveDetails) {
+      return liveDetails
     }
   }
 
@@ -897,72 +1069,96 @@ function getPaidPrepSchedule(payload) {
   if (campWeeks.length === 0) {
     return null
   }
-  const firstWeekStart = parseDateOnly(campWeeks[0].start)
-  if (!firstWeekStart) {
+  const weekStarts = campWeeks
+    .map((week) => parseDateOnly(week.start))
+    .filter((week) => week && !Number.isNaN(week.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime())
+  if (weekStarts.length === 0) {
     return null
   }
-  const sevenDayAt = addDays(firstWeekStart, -7)
-  const fiveDayAt = addDays(firstWeekStart, -5)
-  const threeDayAt = addDays(firstWeekStart, -3)
-  const oneDayAt = addDays(firstWeekStart, -1)
+
+  const buildInstances = (id, eventType, daysBefore) =>
+    weekStarts.map((weekStart) => ({
+      id,
+      eventType,
+      weekStart: weekStart.toISOString().slice(0, 10),
+      scheduledAt: addDays(weekStart, -daysBefore),
+      eligibleUntil: addDays(weekStart, 1),
+      eligible: true,
+      instanceKey: `${id}:${weekStart.toISOString().slice(0, 10)}`,
+    }))
 
   return {
-    firstWeekStart,
+    weekStarts,
     stages: {
       sevenDay: {
         id: 'sevenDay',
         eventType: 'paid_prep_7d_sent',
-        scheduledAt: sevenDayAt,
-        eligible: true,
+        instances: buildInstances('sevenDay', 'paid_prep_7d_sent', 7),
       },
       fiveDay: {
         id: 'fiveDay',
         eventType: 'paid_prep_5d_sent',
-        scheduledAt: fiveDayAt,
-        eligible: true,
+        instances: buildInstances('fiveDay', 'paid_prep_5d_sent', 5),
       },
       threeDay: {
         id: 'threeDay',
         eventType: 'paid_prep_3d_sent',
-        scheduledAt: threeDayAt,
-        eligible: true,
+        instances: buildInstances('threeDay', 'paid_prep_3d_sent', 3),
       },
       oneDay: {
         id: 'oneDay',
         eventType: 'paid_prep_1d_sent',
-        scheduledAt: oneDayAt,
-        eligible: true,
+        instances: buildInstances('oneDay', 'paid_prep_1d_sent', 1),
       },
     },
   }
 }
 
-function getPaidPrepDueStage(payload, eventTypes) {
+function buildPaidJourneySentKeySet(payload, events) {
+  const eventRows = Array.isArray(events) ? events : []
+  const firstWeekStart = normalizeCampWeeks(payload)[0]?.start || ''
+  const sentKeys = new Set()
+
+  for (const row of eventRows) {
+    const eventType = String(row?.event_type || '')
+    const payloadData = typeof row?.event_payload === 'object' && row?.event_payload ? row.event_payload : parseMaybeJson(row?.event_payload, {}) || {}
+    const weekStart = String(payloadData?.weekStart || '').trim() || firstWeekStart
+    if (eventType === 'paid_prep_7d_sent') sentKeys.add(`sevenDay:${weekStart}`)
+    if (eventType === 'paid_prep_5d_sent') sentKeys.add(`fiveDay:${weekStart}`)
+    if (eventType === 'paid_prep_3d_sent') sentKeys.add(`threeDay:${weekStart}`)
+    if (eventType === 'paid_prep_1d_sent') sentKeys.add(`oneDay:${weekStart}`)
+    if (eventType === 'paid_followup_0w_sent') sentKeys.add('zeroWeek:global')
+    if (eventType === 'paid_followup_2w_sent') sentKeys.add('twoWeek:global')
+    if (eventType === 'paid_followup_4w_sent') sentKeys.add('fourWeek:global')
+    if (eventType === 'paid_followup_8w_sent') sentKeys.add('eightWeek:global')
+  }
+
+  return sentKeys
+}
+
+function getPaidPrepDueStage(payload, sentKeys) {
   const schedule = getPaidPrepSchedule(payload)
   if (!schedule) {
     return null
   }
 
   const now = new Date()
-  const startBoundary = addDays(schedule.firstWeekStart, 1)
-
-  const ordered = [
-    schedule.stages.sevenDay,
-    schedule.stages.fiveDay,
-    schedule.stages.threeDay,
-    schedule.stages.oneDay,
+  const due = [
+    ...schedule.stages.sevenDay.instances,
+    ...schedule.stages.fiveDay.instances,
+    ...schedule.stages.threeDay.instances,
+    ...schedule.stages.oneDay.instances,
   ]
-
-  const due = ordered
-    .filter((stage) => stage.eligible && !eventTypes.has(stage.eventType))
+    .filter((stage) => stage.eligible && !sentKeys.has(stage.instanceKey))
     .filter((stage) => now.getTime() >= stage.scheduledAt.getTime())
-    .filter(() => now.getTime() <= startBoundary.getTime())
+    .filter((stage) => now.getTime() <= stage.eligibleUntil.getTime())
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
 
   return due[0] || null
 }
 
-function getNextPaidPrepSendAt(payload, eventTypes) {
+function getNextPaidPrepSendAt(payload, sentKeys) {
   const schedule = getPaidPrepSchedule(payload)
   if (!schedule) {
     return null
@@ -970,12 +1166,12 @@ function getNextPaidPrepSendAt(payload, eventTypes) {
 
   const now = new Date()
   const candidates = [
-    schedule.stages.sevenDay,
-    schedule.stages.fiveDay,
-    schedule.stages.threeDay,
-    schedule.stages.oneDay,
+    ...schedule.stages.sevenDay.instances,
+    ...schedule.stages.fiveDay.instances,
+    ...schedule.stages.threeDay.instances,
+    ...schedule.stages.oneDay.instances,
   ]
-    .filter((stage) => stage.eligible && !eventTypes.has(stage.eventType))
+    .filter((stage) => stage.eligible && !sentKeys.has(stage.instanceKey))
     .map((stage) => stage.scheduledAt)
     .filter((date) => date.getTime() > now.getTime())
     .sort((a, b) => a.getTime() - b.getTime())
@@ -983,93 +1179,516 @@ function getNextPaidPrepSendAt(payload, eventTypes) {
   return candidates[0] ? candidates[0].toISOString() : null
 }
 
+function getPaidEnrollmentAnchorDate(payload, eventRows = []) {
+  const payloadPaidAt = new Date(payload?.paidAt || '')
+  if (!Number.isNaN(payloadPaidAt.getTime())) {
+    return payloadPaidAt
+  }
+
+  const rows = Array.isArray(eventRows) ? eventRows : []
+  const paidEvent = rows
+    .filter((row) => {
+      const eventType = String(row?.event_type || '')
+      const payloadData =
+        typeof row?.event_payload === 'object' && row?.event_payload ? row.event_payload : parseMaybeJson(row?.event_payload, {}) || {}
+      return (
+        eventType === 'payment_marked_paid' ||
+        (eventType === 'reservation_step_auto_skipped' && String(payloadData?.reason || '') === 'tuition_95_percent_paid')
+      )
+    })
+    .sort((a, b) => new Date(a?.event_at || 0).getTime() - new Date(b?.event_at || 0).getTime())[0]
+
+  const paidEventAt = new Date(paidEvent?.event_at || '')
+  if (!Number.isNaN(paidEventAt.getTime())) {
+    return paidEventAt
+  }
+  return null
+}
+
+function getPaidEnrollmentFollowupSchedule(payload, eventRows = []) {
+  if (String(payload?.registrationType || '').trim() === 'overnight-only') {
+    return null
+  }
+
+  const anchorDate = getPaidEnrollmentAnchorDate(payload, eventRows)
+  if (!anchorDate) {
+    return null
+  }
+
+  return {
+    anchorDate,
+    stages: {
+      zeroWeek: {
+        id: 'zeroWeek',
+        eventType: 'paid_followup_0w_sent',
+        scheduledAt: new Date(anchorDate),
+        eligible: true,
+      },
+      twoWeek: {
+        id: 'twoWeek',
+        eventType: 'paid_followup_2w_sent',
+        scheduledAt: addDays(anchorDate, 14),
+        eligible: true,
+      },
+      fourWeek: {
+        id: 'fourWeek',
+        eventType: 'paid_followup_4w_sent',
+        scheduledAt: addDays(anchorDate, 28),
+        eligible: true,
+      },
+      eightWeek: {
+        id: 'eightWeek',
+        eventType: 'paid_followup_8w_sent',
+        scheduledAt: addDays(anchorDate, 56),
+        eligible: true,
+      },
+    },
+  }
+}
+
+function getPaidEnrollmentDueStage(payload, sentKeys, eventRows = []) {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+  if (!schedule) {
+    return null
+  }
+
+  const now = new Date()
+  const ordered = [schedule.stages.zeroWeek, schedule.stages.twoWeek, schedule.stages.fourWeek, schedule.stages.eightWeek]
+  const due = ordered
+    .filter((stage) => stage.eligible && !sentKeys.has(`${stage.id}:global`))
+    .filter((stage) => now.getTime() >= stage.scheduledAt.getTime())
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
+
+  return due[0] || null
+}
+
+function getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows = []) {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+  if (!schedule) {
+    return null
+  }
+
+  const now = new Date()
+  const candidates = [schedule.stages.zeroWeek, schedule.stages.twoWeek, schedule.stages.fourWeek, schedule.stages.eightWeek]
+    .filter((stage) => stage.eligible && !sentKeys.has(`${stage.id}:global`))
+    .map((stage) => stage.scheduledAt)
+    .filter((date) => date.getTime() > now.getTime())
+    .sort((a, b) => a.getTime() - b.getTime())
+
+  return candidates[0] ? candidates[0].toISOString() : null
+}
+
+function getNextPaidJourneyStage(payload, sentKeys, eventRows = []) {
+  return [getPaidPrepDueStage(payload, sentKeys), getPaidEnrollmentDueStage(payload, sentKeys, eventRows)]
+    .filter(Boolean)
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0] || null
+}
+
+function getNextPaidJourneySendAt(payload, sentKeys, eventRows = []) {
+  return [getNextPaidPrepSendAt(payload, sentKeys), getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows)]
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime())[0]?.toISOString() || null
+}
+
+function getNextSpecificPaidPrepStage(payload, sentKeys, stageId) {
+  const schedule = getPaidPrepSchedule(payload)
+  if (!schedule || !schedule.stages?.[stageId]?.instances) {
+    return null
+  }
+  return schedule.stages[stageId].instances
+    .filter((stage) => !sentKeys.has(stage.instanceKey))
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0] || null
+}
+
+function getPreviewPaidPrepStage(payload, sentKeys, stageId) {
+  return (
+    getNextSpecificPaidPrepStage(payload, sentKeys, stageId) ||
+    getPaidPrepSchedule(payload)?.stages?.[stageId]?.instances
+      ?.slice()
+      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0] ||
+    null
+  )
+}
+
+function getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = []) {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+  const stage = schedule?.stages?.[stageId]
+  if (!stage || sentKeys.has(`${stage.id}:global`)) {
+    return null
+  }
+  return stage
+}
+
+function getPreviewPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = []) {
+  return (
+    getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows) ||
+    getPaidEnrollmentFollowupSchedule(payload, eventRows)?.stages?.[stageId] ||
+    null
+  )
+}
+
 function buildPaidPrepContent({ firstName, stage, payload }) {
   const camperNames = Array.isArray(payload?.camperNames) ? payload.camperNames : []
   const camperLabel = camperNames.length > 0 ? camperNames.join(', ') : 'your camper'
-  const firstWeek = normalizeCampWeeks(payload)[0]
-  const firstWeekLabel = firstWeek?.start || 'your selected week'
+  const stageWeek = stage?.weekStart ? { start: stage.weekStart } : normalizeCampWeeks(payload)[0]
+  const firstWeekLabel = stageWeek?.start || 'your selected week'
+  const track = detectCampJourneyTrack(payload)
+  const isBootcampTrack = track === 'bootcamp' || track === 'mixed'
 
-  const commonClose = [
+  const weeklyFunLines = [
+    '- Tuesday: outdoor park day.',
+    '- Wednesday: Water Wednesday / water balloon day.',
+    '- Thursday: BBQ day.',
+    '- Friday: family showcase.',
+  ]
+
+  const generalClose = [
     '',
-    'If your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
+    'General Camp is a fun and productive way to build fundamentals and give your camper a great start in their wushu journey.',
+    'The Level Up app helps kids earn prizes and rewards for hard work, while we also use camp to teach teamwork, responsibility, and cleaning up together.',
+    'Each full week also earns 2,500 Level Up points.',
     '',
+    'Train More, Save More: adding more weeks can help your camper build stronger fundamentals and confidence over the summer.',
     'Need help adding weeks or adjusting schedule? Reply and we will handle it for you quickly.',
   ]
 
-  const stageMap = {
+  const bootcampClose = [
+    '',
+    'Competition Boot Camp is designed to help athletes keep progressing in taolu, tumbling, and overall competition readiness.',
+    'Every athlete works through skill tree items and skill sprint items in our Level Up app.',
+    'Skill sprint means a featured skill has a deadline and prize pool, and that prize pool drops over time to motivate students to work hard and hit the skill earlier.',
+    'Summer camp is a great way to keep up with skill sprint goals and keep moving through the curriculum pathway.',
+    '',
+    'If your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
+    'Need help adding weeks or adjusting schedule? Reply and we will handle it for you quickly.',
+  ]
+
+  const generalStageMap = {
     sevenDay: {
-      heading: '7-Day Countdown - Camp Preparation Snapshot',
-      subject: '7 Days Before Camp: Preparation Checklist + Bonus Week Offers',
-      preview: `${CAMP_NAME} 7-day preparation`,
+      heading: '7-Day Countdown - General Camp Preparation Snapshot',
+      subject: '7 Days Before General Camp: Fun Week Preview + Family Checklist',
+      preview: `${CAMP_NAME} 7-day general camp preparation`,
       ctaLabel: 'View Schedule & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        `Great news - ${camperLabel} is officially registered for ${CAMP_NAME}, and your first selected week starts ${firstWeekLabel}.`,
-        'Camp begins next week. Here is your preparation snapshot plus your family add-weeks offer:',
-        ...commonClose,
+        `Great news - ${camperLabel} is officially registered for General Camp, and your selected week starts ${firstWeekLabel}.`,
+        'This is a great start to your camper’s wushu journey, and camp next week will be a fun and productive way to build fundamentals.',
+        '',
+        'Here is a quick reminder of some of the fun your camper will see during the week:',
+        ...weeklyFunLines,
+        ...generalClose,
       ],
     },
     fiveDay: {
-      heading: '5-Day Reminder - Keep Building Summer Momentum',
-      subject: '5 Days Before Camp: Final Logistics + Extra Week Invitation',
-      preview: `${CAMP_NAME} 5-day preparation`,
-      ctaLabel: 'Review Prep + Add Weeks',
+      heading: '5-Day Reminder - General Camp Week Is Almost Here',
+      subject: '5 Days Before General Camp: What To Pack + Week Highlights',
+      preview: `${CAMP_NAME} 5-day general camp preparation`,
+      ctaLabel: 'Review Prep & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Your camp week is coming up fast. A few key reminders for a smooth start:',
-        '- Label water bottle, athletic shoes, and comfortable training clothing.',
-        '- Tuesday outdoor time: pack sunscreen and a change of outdoor shoes if helpful for your camper.',
-        '- Wednesday: bring a change of clothes for Water Wednesday activities.',
-        '- Thursday: BBQ lunch is included (optional to pack your own).',
-        '- Friday: family performance showcase day at 4:30 PM.',
-        '',
-        ...commonClose,
+        'General Camp is coming up fast. A few reminders for a smooth and fun week:',
+        '- Label water bottle, athletic shoes, and comfortable training clothes.',
+        '- Pack sunscreen or outdoor shoes if that helps for Tuesday park day.',
+        '- Bring a change of clothes for Wednesday water balloon fun.',
+        '- Thursday BBQ is part of the camp fun.',
+        '- Friday ends with the family showcase.',
+        ...generalClose,
       ],
     },
     threeDay: {
-      heading: '3-Day Reminder - Final What-To-Prepare Checklist',
-      subject: '3 Days Before Camp: Final Packing + Arrival Checklist',
-      preview: `${CAMP_NAME} 3-day preparation`,
+      heading: '3-Day Reminder - General Camp Final Checklist',
+      subject: '3 Days Before General Camp: Final Prep + Summer Growth Reminder',
+      preview: `${CAMP_NAME} 3-day general camp preparation`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Three-day reminder before your camp week begins:',
-        '- Confirm drop-off / pick-up timing in your family plan.',
-        '- Pack daily essentials and Thursday backup lunch only if preferred.',
-        '- Keep Tuesday sunscreen and outdoor shoes/change-of-shoes ready if needed.',
-        '- Keep Wednesday change-of-clothes ready.',
-        '- Friday showcase runs at 4:30 PM for family attendance.',
+        'Three days to go before General Camp starts:',
+        '- Confirm your drop-off and pick-up plan.',
+        '- Pack daily training clothes and water bottle.',
+        '- Keep Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase in mind.',
         '',
-        ...commonClose,
+        'General Camp helps campers learn a lot more than just movements. We use camp to build focus, teamwork, responsibility, and confidence too.',
+        ...generalClose,
       ],
     },
     oneDay: {
-      heading: '1-Day Reminder - See You Tomorrow',
-      subject: 'Camp Starts Tomorrow: Arrival Reminder + Final Checklist',
-      preview: `${CAMP_NAME} 1-day preparation`,
+      heading: '1-Day Reminder - See You Tomorrow At General Camp',
+      subject: 'General Camp Starts Tomorrow: Final Reminder + Welcome',
+      preview: `${CAMP_NAME} 1-day general camp preparation`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Camp starts tomorrow. Final reminder before arrival:',
+        'General Camp starts tomorrow. Final reminder before arrival:',
         '- Double-check drop-off and pickup timing.',
-        '- Pack training clothes, water bottle, and any needed medication info.',
-        '- If useful, keep Tuesday sunscreen and outdoor shoes/change-of-shoes packed.',
-        '- Keep your Wednesday clothes change and Friday showcase timing in mind.',
-        '',
-        ...commonClose,
+        '- Pack training clothes, water bottle, and anything else your camper needs.',
+        '- We are excited for a week of training, park day, water fun, BBQ, and the Friday showcase.',
+        ...generalClose,
       ],
     },
   }
 
+  const bootcampStageMap = {
+    sevenDay: {
+      heading: '7-Day Countdown - Boot Camp Preparation Snapshot',
+      subject: '7 Days Before Boot Camp: Taolu Progress + Competition Prep',
+      preview: `${CAMP_NAME} 7-day boot camp preparation`,
+      ctaLabel: 'View Schedule & Add Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Great news - ${camperLabel} is officially registered for Competition Boot Camp, and your selected week starts ${firstWeekLabel}.`,
+        'Boot Camp next week is a strong chance to keep building taolu competition skills, tumbling skills, and sharper performance habits.',
+        ...bootcampClose,
+      ],
+    },
+    fiveDay: {
+      heading: '5-Day Reminder - Boot Camp Week Is Almost Here',
+      subject: '5 Days Before Boot Camp: Final Logistics + Skill Progress Focus',
+      preview: `${CAMP_NAME} 5-day boot camp preparation`,
+      ctaLabel: 'Review Prep & Add Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        'Competition Boot Camp is coming up fast. A few reminders before the week begins:',
+        '- Pack training clothes, athletic shoes, and water bottle each day.',
+        '- Athletes should come ready for technical reps, tumbling work, and focused corrections.',
+        '- Summer camp is one of the best ways to stay current on skill sprint goals and keep progressing through the curriculum pathway.',
+        '- Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase are all still part of the summer camp week rhythm.',
+        ...bootcampClose,
+      ],
+    },
+    threeDay: {
+      heading: '3-Day Reminder - Boot Camp Final Checklist',
+      subject: '3 Days Before Boot Camp: Final Prep + Competition Mindset',
+      preview: `${CAMP_NAME} 3-day boot camp preparation`,
+      ctaLabel: 'Open Family Checklist',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        'Three days to go before Competition Boot Camp starts:',
+        '- Confirm your drop-off and pick-up plan.',
+        '- Pack daily training gear and water bottle.',
+        '- Athletes should be ready for taolu reps, tumbling progress, and steady work on skill tree and skill sprint items.',
+        ...bootcampClose,
+      ],
+    },
+    oneDay: {
+      heading: '1-Day Reminder - See You Tomorrow At Boot Camp',
+      subject: 'Boot Camp Starts Tomorrow: Final Reminder + Ready To Train',
+      preview: `${CAMP_NAME} 1-day boot camp preparation`,
+      ctaLabel: 'Open Family Checklist',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        'Competition Boot Camp starts tomorrow. Final reminder before arrival:',
+        '- Double-check drop-off and pickup timing.',
+        '- Pack training clothes, water bottle, and anything needed for tumbling or conditioning work.',
+        '- We are excited to help your athlete keep progressing in taolu, tumbling, and the broader curriculum pathway.',
+        ...bootcampClose,
+      ],
+    },
+  }
+
+  const stageMap = isBootcampTrack ? bootcampStageMap : generalStageMap
   return stageMap[stage?.id] || stageMap.sevenDay
+}
+
+function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
+  const camperNames = Array.isArray(payload?.camperNames) ? payload.camperNames : []
+  const camperLabel = camperNames.length > 0 ? camperNames.join(', ') : 'your camper'
+  const track = detectCampJourneyTrack(payload)
+  const isBootcampTrack = track === 'bootcamp' || track === 'mixed'
+  const generalCommonClose = [
+    '',
+    'Thank you again for signing up. We are excited to welcome your family and cannot wait to see you at summer camp.',
+    '',
+    'General Camp is a fun and productive way for campers to build fundamentals and make a strong start in their wushu journey.',
+    'During the week, campers also get to enjoy Tuesday outdoor park day, Wednesday water balloon day, Thursday BBQ, and Friday family showcase.',
+    'The Level Up app helps kids earn prizes and rewards for hard work, and we also use camp to teach teamwork, responsibility, and cleaning up together.',
+    'Each full week earns 2,500 Level Up points.',
+    '',
+    'Train More, Save More: adding more full weeks can help your camper build stronger basics and more confidence over the summer.',
+    'If you want help adding weeks or choosing the best next weeks, reply anytime and we will handle it for you.',
+  ]
+
+  const bootcampCommonClose = [
+    '',
+    'Thank you again for signing up. We are excited to welcome your family and cannot wait to see you at summer camp.',
+    '',
+    'Competition Boot Camp is built to help athletes keep progressing in taolu competition work, tumbling skills, and overall performance readiness.',
+    'Every athlete works through skill tree items and skill sprint items in our Level Up app.',
+    'Skill sprint means a featured skill has a deadline and prize pool, and the prize pool decreases with time to motivate students to work hard and finish the skill sooner.',
+    'Summer camp is a great way to keep up with skill sprint goals and continue progressing through our curriculum pathway.',
+    '',
+    'Train More, Save More: adding more full weeks can give athletes more reps, more corrections, and stronger competition momentum.',
+    'If your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.',
+    'If you want help adding weeks or choosing the best next weeks, reply anytime and we will handle it for you.',
+  ]
+
+  const generalStageMap = {
+    zeroWeek: {
+      heading: 'General Camp Registration Confirmed',
+      subject: 'Your Summer Camp Registration Is Confirmed',
+      preview: `${CAMP_NAME} paid confirmation`,
+      ctaLabel: 'Add More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Wonderful news - ${camperLabel} is confirmed for General Camp, and we are excited to welcome your family this summer.`,
+        '',
+        'How do you help a camper build strong fundamentals, confidence, and good habits over the summer?',
+        'We do that with a camp week that is active, structured, fun, and productive, so kids keep learning while also enjoying the rhythm of the week.',
+        '',
+        'Your registration is confirmed and your spot is secure. If you want even more consistency and stronger progress this summer, this is a great time to add more full weeks while schedule options are still open.',
+        ...generalCommonClose,
+      ],
+    },
+    twoWeek: {
+      heading: 'General Camp Momentum Check-In',
+      subject: 'You’re Signed Up for General Camp. Want Even More Growth This Summer?',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Add More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Thank you again for signing up ${camperLabel} for General Camp. We are excited to have your family enrolled and cannot wait to see you this summer.`,
+        '',
+        'How do you help a camper build strong fundamentals, confidence, and good habits over the summer?',
+        'We do that with a camp week that is active, structured, fun, and productive, so kids keep learning while also enjoying the rhythm of the week.',
+        '',
+        'Many families begin with a few weeks, then realize their camper benefits from more consistency, more coaching, and more time to build basics the right way.',
+        'That is why we encourage families to add weeks early while more schedule options are still open.',
+        ...generalCommonClose,
+      ],
+    },
+    fourWeek: {
+      heading: 'Keep The General Camp Plan Growing',
+      subject: 'Would More General Camp Weeks Help Your Camper Grow Even More This Summer?',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Review More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `We are excited for ${camperLabel} to join us this summer, and we wanted to check in with one simple question: what usually creates the best summer results for a young beginner?`,
+        '',
+        'More consistency, more repetition, and more time in a positive coaching environment. That is how campers build stronger skills and confidence.',
+        '',
+        'If your camper thrives with structure and movement, extra full weeks often make the whole summer smoother, more productive, and more rewarding.',
+        ...generalCommonClose,
+      ],
+    },
+    eightWeek: {
+      heading: 'One More General Camp Planning Check-In',
+      subject: 'One More General Camp Planning Check-In Before More Weeks Fill',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Extend Summer Schedule',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Thank you again for enrolling ${camperLabel}. We are excited to welcome your family, and we wanted to send one more encouraging note before more summer weeks fill up.`,
+        '',
+        'What helps a camper leave summer stronger: one good week, or a longer stretch of structure, friendships, and visible progress? We believe more consistent training time makes the difference.',
+        '',
+        'If you are already happy with your current plan, wonderful. If you have been thinking about adding more weeks, this is a great time to do it while the best-fit weeks are still available.',
+        ...generalCommonClose,
+      ],
+    },
+  }
+
+  const bootcampStageMap = {
+    zeroWeek: {
+      heading: 'Competition Boot Camp Registration Confirmed',
+      subject: 'Your Competition Boot Camp Registration Is Confirmed',
+      preview: `${CAMP_NAME} paid confirmation`,
+      ctaLabel: 'Add More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Wonderful news - ${camperLabel} is confirmed for Competition Boot Camp, and we are excited to welcome your family this summer.`,
+        '',
+        'How do you help an athlete build sharper taolu technique, stronger tumbling, and better competition confidence before fall?',
+        'We solve that with focused technical reps, detailed coaching corrections, performance mindset work, and a boot-camp schedule that helps athletes keep building real momentum.',
+        '',
+        'Your registration is confirmed and your spot is secure. If your athlete would benefit from more weeks of reps, corrections, and team momentum, this is a great time to add them while schedule options are still open.',
+        ...bootcampCommonClose,
+      ],
+    },
+    twoWeek: {
+      heading: 'Competition Boot Camp Momentum Check-In',
+      subject: 'You’re Signed Up for Boot Camp. Want Even More Taolu Progress This Summer?',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Add More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Thank you again for signing up ${camperLabel} for Competition Boot Camp. We are excited to have your family enrolled and cannot wait to see you this summer.`,
+        '',
+        'How do you help an athlete build sharper taolu technique, stronger tumbling, and better competition confidence before fall?',
+        'We solve that with focused technical reps, detailed coaching corrections, performance mindset work, and a boot-camp schedule that helps athletes keep building real momentum.',
+        '',
+        'Many families begin with a few weeks, then realize their athlete benefits from more consistency, more corrections, and more time with the team.',
+        'That is why we encourage families to add weeks early while more schedule options are still open.',
+        ...bootcampCommonClose,
+      ],
+    },
+    fourWeek: {
+      heading: 'Keep The Boot Camp Plan Growing',
+      subject: 'Would More Boot Camp Weeks Help Your Athlete Progress Faster?',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Review More Weeks',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `We are excited for ${camperLabel} to join us this summer, and we wanted to check in with one simple question: what usually creates the best competition progress?`,
+        '',
+        'More repetition, more corrections, and more time under focused coaching. That is how athletes clean up technique, improve tumbling, and gain stronger competition confidence.',
+        '',
+        'If your athlete is aiming for taolu competition progress, extra Boot Camp weeks can make a very noticeable difference.',
+        ...bootcampCommonClose,
+      ],
+    },
+    eightWeek: {
+      heading: 'One More Boot Camp Planning Check-In',
+      subject: 'One More Boot Camp Planning Check-In Before More Weeks Fill',
+      preview: `${CAMP_NAME} paid family follow-up`,
+      ctaLabel: 'Extend Summer Schedule',
+      ctaHref: 'https://summer.newushu.com/register',
+      lines: [
+        `Hi ${firstName},`,
+        '',
+        `Thank you again for enrolling ${camperLabel}. We are excited to welcome your family, and we wanted to send one more encouraging note before more summer weeks fill up.`,
+        '',
+        'What helps an athlete feel more ready for performance season: one or two solid weeks, or a longer runway of technical reps, tumbling work, and focused coaching? We believe the stronger runway wins.',
+        '',
+        'If you are already happy with your current plan, wonderful. If you have been thinking about adding more weeks, this is a great time to do it while the best-fit weeks are still available.',
+        ...bootcampCommonClose,
+      ],
+    },
+  }
+
+  const stageMap = isBootcampTrack ? bootcampStageMap : generalStageMap
+  return stageMap[stage?.id] || stageMap.zeroWeek
 }
 
 async function getRunSubmissionPayload(runId) {
@@ -1089,28 +1708,29 @@ async function getRunSubmissionPayload(runId) {
   return data?.event_payload || null
 }
 
-async function getRunEventTypes(runId) {
+async function getRunJourneyEvents(runId) {
   const { data, error } = await supabaseServer
     .from('email_journey_events')
-    .select('event_type')
+    .select('event_type, event_payload, event_at')
     .eq('run_id', runId)
     .order('event_at', { ascending: false })
-    .limit(100)
+    .limit(200)
 
   if (error) {
     throw new Error(error.message)
   }
 
-  return new Set((data || []).map((row) => row.event_type).filter(Boolean))
+  return Array.isArray(data) ? data : []
 }
 
-async function sendReservationStepEmail({ run = null, email = '', payload, stepNumber }) {
+async function buildReservationStepPreview({ run = null, email = '', payload, stepNumber }) {
   const recipientEmail = String(email || run?.email || '').trim().toLowerCase()
   if (!recipientEmail) {
     throw new Error('Recipient email is required.')
   }
   const config = await getMergedAdminConfigForJourneys()
-  const currentDetails = buildCurrentReservationDetails(payload, config)
+  const attachedRegistration = run?.id ? await findRegistrationForRun(run) : null
+  const currentDetails = buildCurrentReservationDetails(payload, config, attachedRegistration)
   const effectivePayload = {
     ...payload,
     summaryLines: currentDetails.summaryLines,
@@ -1161,29 +1781,46 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
     logoUrl: branding?.welcomeLogoUrl || '',
     heroImageUrl: pickJourneyImage(branding?.landingCarouselImageUrls, stepNumber - 1),
   })
-  const attachInvoicePdf = SHOULD_ATTACH_RESERVATION_PDF && summaryLines.length > 0
-  const attachmentLines = [
-    ...summaryLines,
-  ]
-  const attachments = attachInvoicePdf
-    ? [
-        {
-          filename: 'camp-payment-summary.pdf',
-          contentType: 'application/pdf',
-          contentBase64: buildPaymentSummaryPdfBase64({
-            title: `${CAMP_NAME} Payment Summary`,
-            campName: CAMP_NAME,
-            guardianName: effectivePayload?.guardianName || firstName,
-            recipientEmail,
-            submittedLabel: new Date(submittedAtIso).toLocaleString('en-US'),
-            reservationDeadlineLabel,
-            amountDueLabel: formatCurrency(amountDue),
-            paymentMethods: PAYMENT_METHODS_TEXT.split('\n'),
-            summaryLines: attachmentLines,
-          }),
-        },
-      ]
-    : []
+  return {
+    recipientEmail,
+    effectivePayload,
+    submittedAtIso,
+    reservationDeadlineLabel,
+    amountDue,
+    content,
+    html,
+    attachments:
+      SHOULD_ATTACH_RESERVATION_PDF && summaryLines.length > 0
+        ? [
+            {
+              filename: 'camp-payment-summary.pdf',
+              contentType: 'application/pdf',
+              contentBase64: buildPaymentSummaryPdfBase64({
+                title: `${CAMP_NAME} Payment Summary`,
+                campName: CAMP_NAME,
+                guardianName: effectivePayload?.guardianName || firstName,
+                recipientEmail,
+                submittedLabel: new Date(submittedAtIso).toLocaleString('en-US'),
+                reservationDeadlineLabel,
+                amountDueLabel: formatCurrency(amountDue),
+                paymentMethods: PAYMENT_METHODS_TEXT.split('\n'),
+                summaryLines: [...summaryLines],
+              }),
+            },
+          ]
+        : [],
+  }
+}
+
+async function sendReservationStepEmail({ run = null, email = '', payload, stepNumber }) {
+  const preview = await buildReservationStepPreview({ run, email, payload, stepNumber })
+  const recipientEmail = preview.recipientEmail
+  const content = preview.content
+  const html = appendOpenTrackingPixel(
+    preview.html,
+    buildOpenTrackingUrl({ runId: run?.id, stepNumber })
+  )
+  const attachments = preview.attachments
   let sendResult = await sendWithSes({
     toEmail: recipientEmail,
     subject: content.subject,
@@ -1219,7 +1856,7 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
       event_payload: {
         previewOnly: sendResult.previewOnly,
         error: sendResult.error,
-        amountDue,
+        amountDue: preview.amountDue,
         attachedPdf: attachments.length > 0 && !usedAttachmentFallback,
         attemptedPdfAttachment: attachments.length > 0,
         usedAttachmentFallback,
@@ -1550,6 +2187,7 @@ function buildRepairPayloadFromRegistration(record, config, weeksById) {
     applyLimitedDiscount,
   })
   const selectedWeekIds = Array.from(new Set(students.flatMap((student) => Object.keys(student?.schedule || {}).filter(Boolean))))
+  const selectedCampTypes = getSelectedCampTypesFromRegistration(registration)
   const campWeeks = selectedWeekIds
     .map((weekId) => weeksById[weekId])
     .filter(Boolean)
@@ -1564,6 +2202,8 @@ function buildRepairPayloadFromRegistration(record, config, weeksById) {
     summaryLines: snapshot.summaryLines,
     amountDue: snapshot.amountDue,
     campWeeks,
+    selectedCampTypes,
+    registration,
     paymentPageLink: buildPaymentPageHref({
       registrationType: String(rawMeta?.registrationType || '').trim(),
       guardianName: registration.parentName || '',
@@ -1580,7 +2220,106 @@ function buildRepairPayloadFromRegistration(record, config, weeksById) {
   }
 }
 
-async function sendPaidPrepEmail({ run, payload, stage }) {
+async function findRegistrationForRun(run) {
+  const runId = Number(run?.id || 0)
+  const normalizedEmail = String(run?.email || '').trim().toLowerCase()
+  let registrationId = 0
+
+  if (runId > 0) {
+    const { data: attachmentEvent } = await supabaseServer
+      .from('email_journey_events')
+      .select('event_payload, event_at')
+      .eq('run_id', runId)
+      .eq('event_type', 'reservation_run_attached')
+      .order('event_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const payload =
+      typeof attachmentEvent?.event_payload === 'object' && attachmentEvent?.event_payload
+        ? attachmentEvent.event_payload
+        : parseMaybeJson(attachmentEvent?.event_payload, {}) || {}
+    registrationId = Number(payload?.registrationId || 0)
+  }
+
+  if (registrationId > 0) {
+    const { data: registration } = await supabaseServer
+      .from('registrations')
+      .select('id, guardian_email, created_at, medical_notes, accounting_entries')
+      .eq('id', registrationId)
+      .maybeSingle()
+    if (registration?.id) {
+      return registration
+    }
+  }
+
+  if (!normalizedEmail) {
+    return null
+  }
+
+  const { data: registrations } = await supabaseServer
+    .from('registrations')
+    .select('id, guardian_email, created_at, medical_notes, accounting_entries')
+    .ilike('guardian_email', normalizedEmail)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  const candidates = Array.isArray(registrations) ? registrations : []
+  if (candidates.length === 0) {
+    return null
+  }
+  return candidates.sort(
+    (a, b) => Math.abs(new Date(a?.created_at || 0).getTime() - new Date(run?.created_at || 0).getTime()) -
+      Math.abs(new Date(b?.created_at || 0).getTime() - new Date(run?.created_at || 0).getTime())
+  )[0] || null
+}
+
+function shouldStopRegistrationEmailsForRegistration(record, config, weeksById) {
+  const rawMeta = parseMaybeJson(record?.medical_notes, {}) || {}
+  const registration = rawMeta?.registration || {}
+  const students = Array.isArray(registration.students) ? registration.students : []
+  if (students.length === 0) {
+    return { shouldStop: false, tuitionPaidPct: 0 }
+  }
+
+  const snapshot = buildRegistrationSummarySnapshot({
+    registration,
+    tuition: config.tuition,
+    weeksById,
+    applyLimitedDiscount: isLimitedDiscountActiveForDate(config?.tuition?.discountEndDate, record?.created_at),
+  })
+  const lunchCount = students.reduce(
+    (sum, student) =>
+      sum +
+      Object.entries(student?.lunch || {}).filter(
+        ([key, value]) => Boolean(value) && !String(key || '').endsWith(':Thu')
+      ).length,
+    0
+  )
+  const lunchTotal = lunchCount * Number(config?.tuition?.lunchPrice || 0)
+  const accountingEntries = Array.isArray(record?.accounting_entries) ? record.accounting_entries : []
+  const manualDiscountTotal = accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.manual_discount || 0)), 0)
+  const tuitionBeforeManualDiscount = Math.max(0, Number(snapshot.amountDue || 0) - lunchTotal)
+  const tuitionAfterManualDiscount = Math.max(0, tuitionBeforeManualDiscount - manualDiscountTotal)
+  const hasSplitValues = accountingEntries.some((entry) => entry?.tuition_paid_amount != null || entry?.lunch_paid_amount != null)
+  const legacyPaidAmount = accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.paid_amount || 0)), 0)
+  const tuitionPaidAmount = hasSplitValues
+    ? accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.tuition_paid_amount || 0)), 0)
+    : Math.min(legacyPaidAmount, tuitionAfterManualDiscount)
+  const lunchPaidAmount = hasSplitValues
+    ? accountingEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry?.lunch_paid_amount || 0)), 0)
+    : Math.max(0, legacyPaidAmount - tuitionPaidAmount)
+  const tuitionPaidPct = tuitionAfterManualDiscount > 0 ? tuitionPaidAmount / tuitionAfterManualDiscount : 0
+  const totalOwed = Math.max(0, tuitionAfterManualDiscount - tuitionPaidAmount) + Math.max(0, lunchTotal - lunchPaidAmount)
+
+  return {
+    shouldStop:
+      (tuitionAfterManualDiscount > 0 && tuitionPaidPct >= 0.95) ||
+      (Number(snapshot.amountDue || 0) > 0 && totalOwed <= 0),
+    tuitionPaidPct,
+  }
+}
+
+async function buildPaidPrepPreview({ payload, stage }) {
   const firstName = splitFirstName(
     payload?.guardianName || payload?.primaryCamperName || payload?.camperNames?.[0] || ''
   )
@@ -1604,6 +2343,108 @@ async function sendPaidPrepEmail({ run, payload, stage }) {
       ['sevenDay', 'fiveDay', 'threeDay', 'oneDay'].indexOf(stage?.id || 'sevenDay')
     ),
   })
+  return {
+    content,
+    bodyText,
+    html,
+  }
+}
+
+async function sendPaidPrepEmail({ run, payload, stage }) {
+  const preview = await buildPaidPrepPreview({ payload, stage })
+  const content = preview.content
+  const bodyText = preview.bodyText
+  const html = appendOpenTrackingPixel(
+    preview.html,
+    buildOpenTrackingUrl({
+      runId: run?.id,
+      stepKey:
+        stage?.id === 'sevenDay' ? 'paid_7d' :
+        stage?.id === 'fiveDay' ? 'paid_5d' :
+        stage?.id === 'threeDay' ? 'paid_3d' : 'paid_1d',
+    })
+  )
+
+  const sendResult = await sendWithSes({
+    toEmail: run.email,
+    subject: content.subject,
+    bodyText,
+    html,
+    attachments: [],
+  })
+
+  await supabaseServer.from('email_journey_events').insert({
+    run_id: run.id,
+    profile_id: run.profile_id,
+    email: run.email,
+    step_number: null,
+    event_type: sendResult.sent ? stage.eventType : `${stage.eventType}_preview`,
+    subject: content.subject,
+    body_preview: bodyText.slice(0, 400),
+    event_payload: {
+      previewOnly: sendResult.previewOnly,
+      error: sendResult.error,
+      stageId: stage.id,
+      weekStart: stage.weekStart || '',
+    },
+  })
+
+  if (!sendResult.sent && !sendResult.previewOnly) {
+    throw new Error(sendResult.error || 'Email send failed')
+  }
+
+  return {
+    sent: sendResult.sent,
+    previewOnly: sendResult.previewOnly,
+    error: sendResult.error,
+  }
+}
+
+async function buildPaidEnrollmentFollowupPreview({ payload, stage }) {
+  const firstName = splitFirstName(
+    payload?.guardianName || payload?.primaryCamperName || payload?.camperNames?.[0] || ''
+  )
+  const summaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
+  const content = buildPaidEnrollmentFollowupContent({ firstName, stage, payload })
+  const bodyText = [...getUpsellOfferLines(payload), '', ...content.lines].join('\n')
+  const branding = await getEmailBranding()
+  const html = buildEmailHtml({
+    heading: content.heading,
+    preview: content.preview,
+    bodyLines: content.lines,
+    summaryLines,
+    amountDue: 0,
+    payload,
+    ctaLabel: content.ctaLabel,
+    ctaHref: content.ctaHref,
+    showPaymentMethods: false,
+    logoUrl: branding?.welcomeLogoUrl || '',
+    heroImageUrl: pickJourneyImage(
+      branding?.landingCarouselImageUrls,
+      ['zeroWeek', 'twoWeek', 'fourWeek', 'eightWeek'].indexOf(stage?.id || 'zeroWeek')
+    ),
+  })
+  return {
+    content,
+    bodyText,
+    html,
+  }
+}
+
+async function sendPaidEnrollmentFollowupEmail({ run, payload, stage }) {
+  const preview = await buildPaidEnrollmentFollowupPreview({ payload, stage })
+  const content = preview.content
+  const bodyText = preview.bodyText
+  const html = appendOpenTrackingPixel(
+    preview.html,
+    buildOpenTrackingUrl({
+      runId: run?.id,
+      stepKey:
+        stage?.id === 'zeroWeek' ? 'paid_0w' :
+        stage?.id === 'twoWeek' ? 'paid_2w' :
+        stage?.id === 'fourWeek' ? 'paid_4w' : 'paid_8w',
+    })
+  )
 
   const sendResult = await sendWithSes({
     toEmail: run.email,
@@ -1741,10 +2582,100 @@ async function processDueReservationJourneys() {
   let emailed = 0
   let canceled = 0
   let paidPrepSent = 0
+  const stepCounts = {
+    r1: 0,
+    r2: 0,
+    r3: 0,
+    r4: 0,
+    r5: 0,
+    a2: 0,
+    a4: 0,
+    a8: 0,
+    p1: 0,
+    p2: 0,
+    p3: 0,
+    p4: 0,
+  }
+  const mergedConfig = await getMergedAdminConfigForJourneys()
+  const weeksById = buildWeeksByIdForJourneys(mergedConfig)
+  const processedUnpaidKeys = new Set()
+  const processedPaidKeys = new Set()
 
   for (const run of unpaidRuns || []) {
     processed += 1
     try {
+      const attachedRegistration = await findRegistrationForRun(run)
+      const processingKey = attachedRegistration?.id
+        ? `registration:${Number(attachedRegistration.id)}`
+        : `email:${String(run?.email || '').trim().toLowerCase()}`
+      if (processedUnpaidKeys.has(processingKey)) {
+        await supabaseServer.from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id,
+          email: run.email,
+          step_number: null,
+          event_type: 'reservation_duplicate_run_skipped',
+          subject: 'Duplicate reservation run skipped',
+          body_preview: 'Skipped because another due unpaid reservation run for this registration/email was already processed in the same batch.',
+          event_payload: { processingKey, phase: 'unpaid' },
+        })
+        continue
+      }
+      processedUnpaidKeys.add(processingKey)
+
+      if (attachedRegistration && isArchivedRegistrationRecord(attachedRegistration)) {
+        await supabaseServer
+          .from('email_journey_runs')
+          .update({
+            status: 'closed_archived',
+            next_send_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', run.id)
+        await supabaseServer.from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id,
+          email: run.email,
+          step_number: null,
+          event_type: 'reservation_archived_registration_skipped',
+          subject: 'Archived registration skipped',
+          body_preview: 'Skipped because the attached registration is archived in accounting.',
+          event_payload: {
+            registrationId: Number(attachedRegistration.id || 0),
+            phase: 'unpaid',
+          },
+        })
+        continue
+      }
+
+      if (attachedRegistration) {
+        const paymentState = shouldStopRegistrationEmailsForRegistration(attachedRegistration, mergedConfig, weeksById)
+        if (paymentState.shouldStop) {
+          await supabaseServer
+            .from('email_journey_runs')
+            .update({
+              status: 'paid',
+              next_send_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', run.id)
+          await supabaseServer.from('email_journey_events').insert({
+            run_id: run.id,
+            profile_id: run.profile_id,
+            email: run.email,
+            step_number: null,
+            event_type: 'reservation_step_auto_skipped',
+            subject: 'Registration reminders paused',
+            body_preview: `Tuition reached ${(paymentState.tuitionPaidPct * 100).toFixed(1)}% paid. Registration reminders were skipped.`,
+            event_payload: {
+              reason: 'tuition_95_percent_paid',
+              tuitionPaidPct: paymentState.tuitionPaidPct,
+            },
+          })
+          continue
+        }
+      }
+
       const payload = await getRunSubmissionPayload(run.id)
       if (!payload?.submittedAt) {
         await supabaseServer
@@ -1773,6 +2704,7 @@ async function processDueReservationJourneys() {
       await insertReservationAutoSkippedEvents(run, Number(run.current_step || 0) + 1, dueStep)
       await sendJourneyEmail({ run, payload, stepNumber: dueStep })
       emailed += 1
+      stepCounts[`r${dueStep}`] = Number(stepCounts[`r${dueStep}`] || 0) + 1
 
       const nextStatus = dueStep >= 5 ? 'canceled_unpaid' : 'active'
       if (nextStatus === 'canceled_unpaid') {
@@ -1815,21 +2747,79 @@ async function processDueReservationJourneys() {
   for (const run of paidRuns || []) {
     processed += 1
     try {
+      const attachedRegistration = await findRegistrationForRun(run)
+      const processingKey = attachedRegistration?.id
+        ? `registration:${Number(attachedRegistration.id)}`
+        : `email:${String(run?.email || '').trim().toLowerCase()}`
+      if (processedPaidKeys.has(processingKey)) {
+        await supabaseServer.from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id,
+          email: run.email,
+          step_number: null,
+          event_type: 'reservation_duplicate_run_skipped',
+          subject: 'Duplicate reservation run skipped',
+          body_preview: 'Skipped because another due paid reservation run for this registration/email was already processed in the same batch.',
+          event_payload: { processingKey, phase: 'paid' },
+        })
+        continue
+      }
+      processedPaidKeys.add(processingKey)
+
+      if (attachedRegistration && isArchivedRegistrationRecord(attachedRegistration)) {
+        await supabaseServer
+          .from('email_journey_runs')
+          .update({
+            status: 'closed_archived',
+            next_send_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', run.id)
+        await supabaseServer.from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id,
+          email: run.email,
+          step_number: null,
+          event_type: 'reservation_archived_registration_skipped',
+          subject: 'Archived registration skipped',
+          body_preview: 'Skipped because the attached registration is archived in accounting.',
+          event_payload: {
+            registrationId: Number(attachedRegistration.id || 0),
+            phase: 'paid',
+          },
+        })
+        continue
+      }
+
       const payload = await getRunSubmissionPayload(run.id)
       if (!payload) {
         continue
       }
 
-      const eventTypes = await getRunEventTypes(run.id)
-      const dueStage = getPaidPrepDueStage(payload, eventTypes)
+      const eventRows = await getRunJourneyEvents(run.id)
+      const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
+      const dueStage = getNextPaidJourneyStage(payload, sentKeys, eventRows)
       if (dueStage) {
-        await sendPaidPrepEmail({ run, payload, stage: dueStage })
+        if (String(dueStage.id || '').endsWith('Day')) {
+          await sendPaidPrepEmail({ run, payload, stage: dueStage })
+        } else {
+          await sendPaidEnrollmentFollowupEmail({ run, payload, stage: dueStage })
+        }
         paidPrepSent += 1
         emailed += 1
+        const stageKey =
+          dueStage.id === 'zeroWeek' ? 'a0' :
+          dueStage.id === 'twoWeek' ? 'a2' :
+          dueStage.id === 'fourWeek' ? 'a4' :
+          dueStage.id === 'eightWeek' ? 'a8' :
+          dueStage.id === 'sevenDay' ? 'p1' :
+          dueStage.id === 'fiveDay' ? 'p2' :
+          dueStage.id === 'threeDay' ? 'p3' : 'p4'
+        stepCounts[stageKey] = Number(stepCounts[stageKey] || 0) + 1
       }
 
-      const refreshedEventTypes = dueStage ? await getRunEventTypes(run.id) : eventTypes
-      const nextSendAt = getNextPaidPrepSendAt(payload, refreshedEventTypes)
+      const refreshedEventRows = dueStage ? await getRunJourneyEvents(run.id) : eventRows
+      const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows)
 
       await supabaseServer
         .from('email_journey_runs')
@@ -1853,7 +2843,7 @@ async function processDueReservationJourneys() {
     }
   }
 
-  return { processed, emailed, canceled, paidPrepSent }
+  return { processed, emailed, canceled, paidPrepSent, stepCounts }
 }
 
 async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber = 0 }) {
@@ -1880,21 +2870,60 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
   }
 
   const normalizedStepKey = String(stepKey || '').trim()
-  if (normalizedStepKey === 'paid_7d' || normalizedStepKey === 'paid_5d' || normalizedStepKey === 'paid_3d' || normalizedStepKey === 'paid_1d') {
+  if (
+    normalizedStepKey === 'paid_7d' ||
+    normalizedStepKey === 'paid_5d' ||
+    normalizedStepKey === 'paid_3d' ||
+    normalizedStepKey === 'paid_1d'
+  ) {
     const stageIdMap = {
       paid_7d: 'sevenDay',
       paid_5d: 'fiveDay',
       paid_3d: 'threeDay',
       paid_1d: 'oneDay',
     }
-    const schedule = getPaidPrepSchedule(payload)
-    const stage = schedule?.stages?.[stageIdMap[normalizedStepKey]]
+    const eventRows = await getRunJourneyEvents(run.id)
+    const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
+    const stage = getPreviewPaidPrepStage(payload, sentKeys, stageIdMap[normalizedStepKey])
     if (!stage) {
       throw new Error('Paid prep stage not available for this run.')
     }
     const sendResult = await sendPaidPrepEmail({ run, payload, stage })
-    const refreshedEventTypes = await getRunEventTypes(run.id)
-    const nextSendAt = getNextPaidPrepSendAt(payload, refreshedEventTypes)
+    const refreshedEventRows = await getRunJourneyEvents(run.id)
+    const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows))
+    await supabaseServer
+      .from('email_journey_runs')
+      .update({
+        next_send_at: nextSendAt,
+        last_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', run.id)
+    return {
+      emailed: 1,
+      runId: run.id,
+      stepKey: normalizedStepKey,
+      sent: Boolean(sendResult?.sent),
+      previewOnly: Boolean(sendResult?.previewOnly),
+    }
+  }
+
+  if (normalizedStepKey === 'paid_0w' || normalizedStepKey === 'paid_2w' || normalizedStepKey === 'paid_4w' || normalizedStepKey === 'paid_8w') {
+    const stageIdMap = {
+      paid_0w: 'zeroWeek',
+      paid_2w: 'twoWeek',
+      paid_4w: 'fourWeek',
+      paid_8w: 'eightWeek',
+    }
+    const eventRows = await getRunJourneyEvents(run.id)
+    const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
+    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
+    if (!stage) {
+      throw new Error('Paid follow-up stage not available for this run.')
+    }
+    const sendResult = await sendPaidEnrollmentFollowupEmail({ run, payload, stage })
+    const refreshedEventRows = await getRunJourneyEvents(run.id)
+    const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows)
     await supabaseServer
       .from('email_journey_runs')
       .update({
@@ -1935,6 +2964,92 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
   }
 }
 
+async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 }) {
+  if (Number(runId || 0) <= 0) {
+    throw new Error('A reservation run is required.')
+  }
+
+  const { data: run, error: runError } = await supabaseServer
+    .from('email_journey_runs')
+    .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at')
+    .eq('id', Number(runId))
+    .maybeSingle()
+
+  if (runError) {
+    throw new Error(runError.message)
+  }
+  if (!run) {
+    throw new Error('Reservation run not found.')
+  }
+
+  const payload = await getRunSubmissionPayload(run.id)
+  if (!payload) {
+    throw new Error('Reservation payload not found for this run.')
+  }
+
+  const normalizedStepKey = String(stepKey || '').trim()
+  if (
+    normalizedStepKey === 'paid_7d' ||
+    normalizedStepKey === 'paid_5d' ||
+    normalizedStepKey === 'paid_3d' ||
+    normalizedStepKey === 'paid_1d'
+  ) {
+    const stageIdMap = {
+      paid_7d: 'sevenDay',
+      paid_5d: 'fiveDay',
+      paid_3d: 'threeDay',
+      paid_1d: 'oneDay',
+    }
+    const eventRows = await getRunJourneyEvents(run.id)
+    const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
+    const stage = getNextSpecificPaidPrepStage(payload, sentKeys, stageIdMap[normalizedStepKey])
+    if (!stage) {
+      throw new Error('Paid prep stage not available for this run.')
+    }
+    const preview = await buildPaidPrepPreview({ payload, stage })
+    return {
+      runId: run.id,
+      stepKey: normalizedStepKey,
+      subject: preview.content.subject,
+      bodyText: preview.bodyText,
+      html: preview.html,
+    }
+  }
+
+  if (normalizedStepKey === 'paid_0w' || normalizedStepKey === 'paid_2w' || normalizedStepKey === 'paid_4w' || normalizedStepKey === 'paid_8w') {
+    const stageIdMap = {
+      paid_0w: 'zeroWeek',
+      paid_2w: 'twoWeek',
+      paid_4w: 'fourWeek',
+      paid_8w: 'eightWeek',
+    }
+    const eventRows = await getRunJourneyEvents(run.id)
+    const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
+    const stage = getSpecificPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
+    if (!stage) {
+      throw new Error('Paid follow-up stage not available for this run.')
+    }
+    const preview = await buildPaidEnrollmentFollowupPreview({ payload, stage })
+    return {
+      runId: run.id,
+      stepKey: normalizedStepKey,
+      subject: preview.content.subject,
+      bodyText: preview.bodyText,
+      html: preview.html,
+    }
+  }
+
+  const targetStep = Math.max(1, Math.min(5, Number(stepNumber || 1)))
+  const preview = await buildReservationStepPreview({ run, payload, stepNumber: targetStep })
+  return {
+    runId: run.id,
+    stepNumber: targetStep,
+    subject: preview.content.subject,
+    bodyText: preview.content.bodyText,
+    html: preview.html,
+  }
+}
+
 async function repairMissingReservationRuns() {
   const config = await getMergedAdminConfigForJourneys()
   const weeksById = buildWeeksByIdForJourneys(config)
@@ -1954,6 +3069,10 @@ async function repairMissingReservationRuns() {
   for (const record of registrations || []) {
     const email = String(record?.guardian_email || '').trim().toLowerCase()
     if (!isValidEmail(email)) {
+      skipped += 1
+      continue
+    }
+    if (isArchivedRegistrationRecord(record)) {
       skipped += 1
       continue
     }
@@ -2065,6 +3184,9 @@ async function createRunForEmail(email) {
 
   if (!registration) {
     return { created: false, warning: `No registration found for ${normalizedEmail}.` }
+  }
+  if (isArchivedRegistrationRecord(registration)) {
+    return { created: false, warning: `Registration for ${normalizedEmail} is archived in accounting, so no run was created.` }
   }
 
   const attachedRun = await findAttachedReservationRun(registration?.id, normalizedEmail)
@@ -2347,6 +3469,19 @@ export async function POST(request) {
       return Response.json({ ok: true, action, ...result }, { status: 200 })
     }
 
+    if (action === 'preview_step') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await previewReservationStep({
+        runId: body?.runId,
+        stepKey: body?.stepKey,
+        stepNumber: body?.stepNumber,
+      })
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
     if (action === 'repair_missing_runs') {
       const authorized = await isAuthorizedAutomationRequest(request)
       if (!authorized) {
@@ -2389,7 +3524,7 @@ export async function POST(request) {
       return Response.json({ ok: true, action, ...result }, { status: 200 })
     }
 
-    return Response.json({ error: 'Invalid action. Use "enqueue", "process", "manual_send", "repair_missing_runs", "create_run_for_email", "attach_run_to_registration", or "set_tracker_visibility".' }, { status: 400 })
+    return Response.json({ error: 'Invalid action. Use "enqueue", "process", "manual_send", "preview_step", "repair_missing_runs", "create_run_for_email", "attach_run_to_registration", or "set_tracker_visibility".' }, { status: 400 })
   } catch (error) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
   }

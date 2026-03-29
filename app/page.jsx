@@ -1786,6 +1786,18 @@ export default function HomePage() {
     const camperAges = (Array.isArray(sourceRegistration.students) ? sourceRegistration.students : [])
       .map((student) => calcAge(student?.dob))
       .filter((age) => Number.isFinite(age) && age > 0)
+    const selectedWeekIds = Array.from(
+      new Set(
+        (Array.isArray(sourceRegistration.students) ? sourceRegistration.students : []).flatMap((student) =>
+          Object.keys(student?.schedule || {}).filter(Boolean)
+        )
+      )
+    )
+    const selectedWeekLabels = selectedWeekIds
+      .map((weekId) => weeksById[weekId])
+      .filter(Boolean)
+      .map((week) => formatWeekLabel(week))
+    const registrationSummaryLines = buildReservationSummaryLines(sourceRegistration)
 
     try {
       const response = await fetch('/api/leads/capture', {
@@ -1807,6 +1819,9 @@ export default function HomePage() {
             camperNames: (Array.isArray(sourceRegistration.students) ? sourceRegistration.students : [])
               .map((student, index) => String(student?.fullName || '').trim() || `Camper ${index + 1}`)
               .filter(Boolean),
+            selectedWeekLabels,
+            registrationSummaryLines,
+            registrationLink: `${getSiteBaseUrl()}/register`,
           },
         }),
       })

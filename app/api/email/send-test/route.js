@@ -2,6 +2,7 @@ import { sendWithSes } from '../../../../lib/emailProvider'
 import {
   buildLeadJourneyMessage,
   PAYMENT_METHODS_TEXT,
+  buildPaidEnrollmentJourneyMessage,
   buildReservationJourneyMessage,
 } from '../../../../lib/emailJourneyRenderer'
 import { buildPaymentSummaryPdfBase64 } from '../../../../lib/paymentSummaryPdf'
@@ -56,7 +57,60 @@ export async function POST(request) {
     let bodyText = ''
     let html = ''
 
-    if (flowKey === 'reservation' || flowKey === 'overnight') {
+    if (flowKey === 'reservation' || flowKey === 'overnight' || flowKey === 'paid-followup') {
+      if (flowKey === 'paid-followup') {
+        const renderedMessage = buildPaidEnrollmentJourneyMessage({
+          stepNumber,
+          logoUrl,
+          payload:
+            previewRegistrationType === 'bootcamp'
+              ? {
+                  registrationType: '',
+                  guardianName: 'Calvin Chen',
+                  camperNames: ['Ethan Chen'],
+                  location: 'Burlington',
+                  paymentMethod: 'Zelle',
+                  amountDue: 0,
+                  campWeeks: [
+                    { start: '2026-07-07', end: '2026-07-11' },
+                    { start: '2026-07-14', end: '2026-07-18' },
+                    { start: '2026-07-21', end: '2026-07-25' },
+                  ],
+                  summaryLines: [
+                    'Location: Burlington',
+                    'Parent/Guardian: Calvin Chen',
+                    'Contact: calvin@example.com',
+                    'Payment method: Zelle',
+                    'Ethan Chen: Competition Boot Camp, Jul 7-11, Jul 14-18, Jul 21-25',
+                    'Grand total: $2,340.00',
+                    'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:30 PM',
+                  ],
+                }
+              : {
+                  registrationType: '',
+                  guardianName: 'Calvin Chen',
+                  camperNames: ['Ethan Chen'],
+                  location: 'Burlington',
+                  paymentMethod: 'Zelle',
+                  amountDue: 0,
+                  campWeeks: [
+                    { start: '2026-07-07', end: '2026-07-11' },
+                    { start: '2026-07-14', end: '2026-07-18' },
+                  ],
+                  summaryLines: [
+                    'Location: Burlington',
+                    'Parent/Guardian: Calvin Chen',
+                    'Contact: calvin@example.com',
+                    'Payment method: Zelle',
+                    'Ethan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri',
+                    'Grand total: $1,680.00',
+                    'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:30 PM',
+                  ],
+                },
+        })
+        bodyText = renderedMessage.bodyText
+        html = renderedMessage.html
+      } else {
       const isOvernightPreview = flowKey === 'overnight' || previewRegistrationType === 'overnight-only'
       const renderedMessage = buildReservationJourneyMessage({
         stepNumber,
@@ -91,6 +145,7 @@ export async function POST(request) {
       })
       bodyText = renderedMessage.bodyText
       html = renderedMessage.html
+      }
     } else {
       const renderedMessage = buildLeadJourneyMessage({
         template,
@@ -105,6 +160,8 @@ export async function POST(request) {
           reservation_deadline: 'May 20, 5:00 PM EDT',
           registration_summary:
             'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
+          left_off_summary: 'Location: Burlington\nParent/Guardian: Calvin Chen\nPayment method: Zelle',
+          selected_weeks: 'Jul 7-11\nJul 14-18',
           amount_due: '$1,680.00',
           app_launch_date: 'June 20',
         },

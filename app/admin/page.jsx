@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildProgramWeekOptions, defaultAdminConfig, formatWeekLabel, resolveBootcampTuition } from '../../lib/campAdmin'
+import {
+  buildProgramWeekOptions,
+  defaultAdminConfig,
+  formatWeekLabel,
+  getSelectedWeeks,
+  resolveBootcampTuition,
+} from '../../lib/campAdmin'
 import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
 import {
   fetchAdminConfigFromSupabase,
@@ -11,9 +17,11 @@ import {
 } from '../../lib/campAdminApi'
 import {
   buildLeadJourneyMessage,
+  buildPaidEnrollmentJourneyMessage,
   PAYMENT_METHODS_TEXT,
   buildReservationJourneyMessage,
 } from '../../lib/emailJourneyRenderer'
+import { getWeekTierPromoDisplayLines, getWeekTierPromoForStudent } from '../../lib/campPricing'
 import {
   getMediaBucketName,
   listMediaLibrary,
@@ -448,6 +456,26 @@ const reservationJourneyBlueprint = [
     objective: '1 day before camp: tomorrow reminder and arrival prep.',
     cta: 'Confirm readiness for day 1',
   },
+  {
+    step: 'A0',
+    objective: 'Immediate paid confirmation once tuition reaches 95%+: confirm registration and invite added weeks.',
+    cta: 'Confirm registration and encourage more weeks',
+  },
+  {
+    step: 'A2',
+    objective: 'First paid-family follow-up after payment: encouraging thank-you and added-week nudge.',
+    cta: 'Push more weeks with Train More, Save More',
+  },
+  {
+    step: 'A4',
+    objective: 'Second paid-family follow-up after payment: reinforce value and encourage adding weeks.',
+    cta: 'Show how more weeks create stronger results',
+  },
+  {
+    step: 'A8',
+    objective: 'Later paid-family follow-up after payment: one more positive nudge before more weeks fill.',
+    cta: 'Invite schedule expansion while inventory remains',
+  },
 ]
 
 const reservationJourneyTemplates = [
@@ -514,7 +542,40 @@ const reservationJourneyTemplates = [
     body:
       'Hi {parent_name},\n\nCamp starts tomorrow. Final reminder to pack training clothes, water bottle, and anything else your camper needs.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you need any last-minute help.',
   },
+  {
+    dayLabel: 'Immediately After Payment',
+    title: 'A0 - Paid Registration Confirmed',
+    subject: 'Your Summer Camp Registration Is Confirmed',
+    body:
+      'Hi {parent_name},\n\nWonderful news. Your registration is confirmed and we are excited to welcome your family this summer.\n\nWhat helps campers grow the most over the summer? More consistency, more coaching, and more time in the right environment. That is why many families add more weeks once their first weeks are confirmed.\n\nTrain More, Save More and 2,500 points per full week both apply.\n\nReply if you want help adding more weeks.',
+  },
+  {
+    dayLabel: 'Paid Follow-Up',
+    title: 'A2 - Paid Family Follow-Up',
+    subject: 'You’re Signed Up. Want Even More Growth This Summer?',
+    body:
+      'Hi {parent_name},\n\nThank you again for signing up. We are excited to welcome your family this summer.\n\nWhat creates the best summer results? More consistency, more coaching, and more time in the right environment. That is why we encourage families to add weeks early while more choices are open.\n\nTrain More, Save More and 2,500 points per full week both apply.\n\nReply if you want help adding more weeks.',
+  },
+  {
+    dayLabel: 'Paid Follow-Up',
+    title: 'A4 - Paid Family Momentum Check-In',
+    subject: 'Would More Camp Weeks Help Your Camper Grow Even More This Summer?',
+    body:
+      'Hi {parent_name},\n\nWe are excited for your family to join us this summer.\n\nHow do campers build stronger results? More repetition, more coaching, and more consistency. That is why many families add more weeks after they lock in the first part of their plan.\n\nTrain More, Save More and 2,500 points per full week both apply.\n\nReply if you want help reviewing the best next weeks.',
+  },
+  {
+    dayLabel: 'Paid Follow-Up',
+    title: 'A8 - Paid Family Final Nudge',
+    subject: 'One More Summer Camp Planning Check-In Before More Weeks Fill',
+    body:
+      'Hi {parent_name},\n\nThank you again for enrolling. We cannot wait to see your family this summer.\n\nWhat helps a camper leave summer stronger: one good week, or a longer stretch of structure and progress? We believe more consistent training time makes the difference.\n\nTrain More, Save More and 2,500 points per full week both apply.\n\nReply if you want help extending your schedule.',
+  },
 ]
+
+const paidEnrollmentJourneyTemplates = reservationJourneyTemplates.slice(-4)
+const reservationReminderJourneyTemplates = reservationJourneyTemplates.slice(0, 9)
+const paidEnrollmentJourneyBlueprint = reservationJourneyBlueprint.slice(-4)
+const reservationReminderJourneyBlueprint = reservationJourneyBlueprint.slice(0, 9)
 
 const premiumJourneyTemplates = [
   {
@@ -577,7 +638,15 @@ const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) 
           ? 'paid_5d'
           : index === 7
             ? 'paid_3d'
-            : 'paid_1d',
+      : index === 8
+        ? 'paid_1d'
+        : index === 9
+          ? 'paid_0w'
+        : index === 10
+          ? 'paid_2w'
+          : index === 11
+            ? 'paid_4w'
+            : 'paid_8w',
   stepNumber: index < 5 ? index + 1 : null,
   label:
     index < 5
@@ -588,7 +657,15 @@ const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) 
           ? 'P2'
         : index === 7
             ? 'P3'
-            : 'P4',
+      : index === 8
+        ? 'P4'
+      : index === 9
+          ? 'A0'
+        : index === 10
+          ? 'A2'
+        : index === 11
+          ? 'A4'
+          : 'A8',
   timingLabel:
     index === 0
       ? '0h'
@@ -606,7 +683,15 @@ const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) 
                   ? '-5d'
                   : index === 7
                     ? '-3d'
-                    : '-1d',
+                    : index === 8
+                      ? '-1d'
+                      : index === 9
+                        ? 'paid'
+                        : index === 10
+                        ? '+2w'
+                        : index === 11
+                          ? '+4w'
+                          : '+8w',
   description: item.objective,
 }))
 
@@ -618,8 +703,8 @@ function isValidAdminEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
 }
 
-function buildTrackerCell(status = 'pending', at = '') {
-  return { status, at }
+function buildTrackerCell(status = 'pending', at = '', note = '') {
+  return { status, at, note }
 }
 
 function isArchivedRegistrationRecord(record) {
@@ -661,6 +746,165 @@ function formatElapsedSince(value) {
   return `${minutes}m ago`
 }
 
+function getEmailEventFlowFilter(event = {}) {
+  const eventType = String(event?.event_type || '').toLowerCase()
+  const payload =
+    typeof event?.event_payload === 'object' && event?.event_payload
+      ? event.event_payload
+      : parseMaybeJson(event?.event_payload, {}) || {}
+  const registrationType = String(payload?.registrationType || '').trim().toLowerCase()
+  const subject = String(event?.subject || '').toLowerCase()
+
+  if (eventType.startsWith('lead_') || eventType.includes('_lead')) {
+    return 'lead'
+  }
+  if (registrationType === 'overnight-only' || subject.includes('overnight')) {
+    return 'overnight'
+  }
+  return 'registration'
+}
+
+function getEmailEventJourneyFilter(event = {}) {
+  const eventType = String(event?.event_type || '').toLowerCase()
+  const payload =
+    typeof event?.event_payload === 'object' && event?.event_payload
+      ? event.event_payload
+      : parseMaybeJson(event?.event_payload, {}) || {}
+  const stageId = String(payload?.stageId || '').toLowerCase()
+
+  if (eventType.includes('paid_prep') || ['sevenday', 'fiveday', 'threeday', 'oneday'].includes(stageId)) {
+    return 'p'
+  }
+  if (eventType.includes('paid_followup') || ['twoweek', 'fourweek', 'eightweek'].includes(stageId)) {
+    return 'a'
+  }
+  return 'other'
+}
+
+function getEmailEventDeliveryFilter(event = {}) {
+  const eventType = String(event?.event_type || '').toLowerCase()
+  if (eventType.endsWith('_sent')) {
+    return 'sent'
+  }
+  if (eventType.endsWith('_opened')) {
+    return 'opened'
+  }
+  return 'all'
+}
+
+function getEmailEventDisplayLabel(event = {}) {
+  const eventType = String(event?.event_type || '').trim().toLowerCase()
+  const stepNumber = Number(event?.step_number || 0)
+  const payload =
+    typeof event?.event_payload === 'object' && event?.event_payload
+      ? event.event_payload
+      : parseMaybeJson(event?.event_payload, {}) || {}
+  const stepKey = String(payload?.stepKey || '').trim().toLowerCase()
+
+  if (eventType === 'lead_journey_opened' && stepNumber > 0) {
+    return `Open receipt (L${stepNumber})`
+  }
+  if (eventType === 'reservation_email_opened' && stepNumber > 0) {
+    return `Open receipt (R${stepNumber})`
+  }
+  if (eventType === 'paid_prep_opened') {
+    const label =
+      stepKey === 'paid_7d' ? 'P1' :
+      stepKey === 'paid_5d' ? 'P2' :
+      stepKey === 'paid_3d' ? 'P3' :
+      stepKey === 'paid_1d' ? 'P4' : 'P'
+    return `Open receipt (${label})`
+  }
+  if (eventType === 'paid_followup_opened') {
+    const label =
+      stepKey === 'paid_0w' ? 'A0' :
+      stepKey === 'paid_2w' ? 'A2' :
+      stepKey === 'paid_4w' ? 'A4' :
+      stepKey === 'paid_8w' ? 'A8' : 'A'
+    return `Open receipt (${label})`
+  }
+  if (eventType === 'lead_journey_sent' && stepNumber > 0) {
+    return `Sent (L${stepNumber})`
+  }
+  if (eventType === 'reservation_email_sent' && stepNumber > 0) {
+    return `Sent (R${stepNumber})`
+  }
+  return event?.event_type || '-'
+}
+
+function getLatestOpenedTrackerStep(row, flow = 'reservation') {
+  const cells = Object.entries(row?.steps || {})
+    .map(([key, cell]) => ({ key, cell }))
+    .filter(({ cell }) => String(cell?.status || '').trim().toLowerCase() === 'opened' && cell?.at)
+    .sort((a, b) => new Date(b.cell?.at || 0).getTime() - new Date(a.cell?.at || 0).getTime())
+  const latest = cells[0]
+  if (!latest) {
+    return null
+  }
+  if (flow === 'lead') {
+    const stepNumber = Number(String(latest.key || '').replace('step_', '') || 0)
+    return {
+      label: stepNumber > 0 ? `L${stepNumber}` : 'Lead',
+      at: latest.cell.at,
+    }
+  }
+  const map = {
+    step_1: 'R1',
+    step_2: 'R2',
+    step_3: 'R3',
+    step_4: 'R4',
+    step_5: 'R5',
+    paid_7d: 'P1',
+    paid_5d: 'P2',
+    paid_3d: 'P3',
+    paid_1d: 'P4',
+    paid_0w: 'A0',
+    paid_2w: 'A2',
+    paid_4w: 'A4',
+    paid_8w: 'A8',
+  }
+  return {
+    label: map[latest.key] || latest.key,
+    at: latest.cell.at,
+  }
+}
+
+function formatTrackerCellTimestamp(value) {
+  if (!value) {
+    return ''
+  }
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toLocaleString('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function getLeadRunDisplayLabel(row) {
+  const status = String(row?.status || '').trim().toLowerCase()
+  const stepStatuses = Object.values(row?.steps || {}).map((cell) => String(cell?.status || '').trim().toLowerCase())
+  const hasRealStepActivity = stepStatuses.some((value) => ['sent', 'preview', 'scheduled', 'skipped', 'closed'].includes(value))
+
+  if (status === 'queued' && !hasRealStepActivity) {
+    return 'Enqueued'
+  }
+  if ((status === 'queued' || status === 'lead_active') && hasRealStepActivity) {
+    return 'Active'
+  }
+  if (status === 'lead_closed' && hasRealStepActivity) {
+    return 'Completed'
+  }
+  if (!status) {
+    return '-'
+  }
+  return status.replaceAll('_', ' ')
+}
+
 function addHoursToIso(value, hours) {
   const parsed = new Date(value || '')
   if (Number.isNaN(parsed.getTime())) {
@@ -675,6 +919,294 @@ function addDaysToIso(value, days) {
     return ''
   }
   return new Date(parsed.getTime() + days * 24 * 60 * 60 * 1000).toISOString()
+}
+
+const paidJourneyStageDefs = [
+  { key: 'paid_0w', daysAfterPayment: 0 },
+  { key: 'paid_2w', daysAfterPayment: 14 },
+  { key: 'paid_4w', daysAfterPayment: 28 },
+  { key: 'paid_8w', daysAfterPayment: 56 },
+  { key: 'paid_7d', daysBefore: 7 },
+  { key: 'paid_5d', daysBefore: 5 },
+  { key: 'paid_3d', daysBefore: 3 },
+  { key: 'paid_1d', daysBefore: 1 },
+]
+
+function getPaidJourneyStageScheduleAt(row, stage, firstWeekStart = '') {
+  if (stage?.daysAfterPayment != null) {
+    const anchorAt = String(row?.paidActivatedAt || '').trim()
+    const scheduledAt = addDaysToIso(anchorAt, stage.daysAfterPayment)
+    return scheduledAt ? new Date(scheduledAt) : null
+  }
+  if (!firstWeekStart || stage?.daysBefore == null) {
+    return null
+  }
+  const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
+  if (Number.isNaN(firstWeekStartDate.getTime())) {
+    return null
+  }
+  return addDays(firstWeekStartDate, -stage.daysBefore)
+}
+
+function parseLeadJourneyDayOffset(dayLabel, fallbackDays) {
+  const label = String(dayLabel || '').toLowerCase().trim()
+  if (!label || label.includes('immediate')) {
+    return 0
+  }
+  const dayMatch = label.match(/(\d+)/)
+  if (dayMatch) {
+    return Math.max(0, Number(dayMatch[1] || fallbackDays))
+  }
+  if (label.includes('evening') || label.includes('today')) {
+    return 0
+  }
+  return fallbackDays
+}
+
+function getPaidJourneyEntries(row, weekStarts = []) {
+  if (!row?.createdAt || row?.registrationType === 'overnight-only') {
+    return []
+  }
+
+  const entries = []
+  const normalizedWeekStarts = Array.isArray(weekStarts) ? weekStarts.filter(Boolean).sort((a, b) => a.localeCompare(b)) : []
+
+  for (const stage of paidJourneyStageDefs) {
+    if (stage.daysAfterPayment != null) {
+      const scheduledAt = addDaysToIso(String(row?.paidActivatedAt || '').trim(), stage.daysAfterPayment)
+      if (scheduledAt) {
+        entries.push({
+          key: stage.key,
+          label:
+            stage.key === 'paid_0w' ? 'A0' :
+            stage.key === 'paid_2w' ? 'A2' :
+            stage.key === 'paid_4w' ? 'A4' :
+            stage.key === 'paid_8w' ? 'A8' : stage.key,
+          scheduledAt,
+          instanceKey: `${stage.key}:global`,
+        })
+      }
+      continue
+    }
+
+    for (const weekStart of normalizedWeekStarts) {
+      const scheduledAtDate = getPaidJourneyStageScheduleAt(row, stage, weekStart)
+      if (!scheduledAtDate) {
+        continue
+      }
+      entries.push({
+        key: stage.key,
+        label:
+          stage.key === 'paid_7d' ? 'P1' :
+          stage.key === 'paid_5d' ? 'P2' :
+          stage.key === 'paid_3d' ? 'P3' : 'P4',
+        scheduledAt: scheduledAtDate.toISOString(),
+        instanceKey: `${stage.key}:${weekStart}`,
+        weekStart,
+      })
+    }
+  }
+
+  return entries.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+}
+
+function getPendingPaidJourneyEntries(row, weekStarts = []) {
+  const sentKeys = row?.paidSentInstanceKeys instanceof Set ? row.paidSentInstanceKeys : new Set()
+  return getPaidJourneyEntries(row, weekStarts).filter((entry) => !sentKeys.has(entry.instanceKey))
+}
+
+function getPaidEventInstanceKey(eventType = '', eventPayload = {}, row = null) {
+  const weekStart = String(eventPayload?.weekStart || '').trim() || row?.selectedWeekStarts?.[0] || ''
+  const eventTypeValue = String(eventType || '')
+  if (eventTypeValue === 'paid_prep_opened') {
+    switch (String(eventPayload?.stepKey || '').trim()) {
+      case 'paid_7d':
+        return { key: 'paid_7d', instanceKey: `paid_7d:${weekStart}` }
+      case 'paid_5d':
+        return { key: 'paid_5d', instanceKey: `paid_5d:${weekStart}` }
+      case 'paid_3d':
+        return { key: 'paid_3d', instanceKey: `paid_3d:${weekStart}` }
+      case 'paid_1d':
+        return { key: 'paid_1d', instanceKey: `paid_1d:${weekStart}` }
+      default:
+        return null
+    }
+  }
+  if (eventTypeValue === 'paid_followup_opened') {
+    switch (String(eventPayload?.stepKey || '').trim()) {
+      case 'paid_0w':
+        return { key: 'paid_0w', instanceKey: 'paid_0w:global' }
+      case 'paid_2w':
+        return { key: 'paid_2w', instanceKey: 'paid_2w:global' }
+      case 'paid_4w':
+        return { key: 'paid_4w', instanceKey: 'paid_4w:global' }
+      case 'paid_8w':
+        return { key: 'paid_8w', instanceKey: 'paid_8w:global' }
+      default:
+        return null
+    }
+  }
+  switch (eventTypeValue) {
+    case 'paid_prep_7d_sent':
+    case 'paid_prep_7d_sent_preview':
+      return { key: 'paid_7d', instanceKey: `paid_7d:${weekStart}` }
+    case 'paid_prep_5d_sent':
+    case 'paid_prep_5d_sent_preview':
+      return { key: 'paid_5d', instanceKey: `paid_5d:${weekStart}` }
+    case 'paid_prep_3d_sent':
+    case 'paid_prep_3d_sent_preview':
+      return { key: 'paid_3d', instanceKey: `paid_3d:${weekStart}` }
+    case 'paid_prep_1d_sent':
+    case 'paid_prep_1d_sent_preview':
+      return { key: 'paid_1d', instanceKey: `paid_1d:${weekStart}` }
+    case 'paid_followup_2w_sent':
+    case 'paid_followup_2w_sent_preview':
+      return { key: 'paid_2w', instanceKey: 'paid_2w:global' }
+    case 'paid_followup_0w_sent':
+    case 'paid_followup_0w_sent_preview':
+      return { key: 'paid_0w', instanceKey: 'paid_0w:global' }
+    case 'paid_followup_4w_sent':
+    case 'paid_followup_4w_sent_preview':
+      return { key: 'paid_4w', instanceKey: 'paid_4w:global' }
+    case 'paid_followup_8w_sent':
+    case 'paid_followup_8w_sent_preview':
+      return { key: 'paid_8w', instanceKey: 'paid_8w:global' }
+    default:
+      return null
+  }
+}
+
+function upgradeTrackerCellToOpened(cell, at = '') {
+  const status = String(cell?.status || '').trim().toLowerCase()
+  if (['sent', 'preview', 'opened', 'partial'].includes(status)) {
+    return buildTrackerCell('opened', at || cell?.at || '', cell?.note || '')
+  }
+  return cell
+}
+
+function getWeekStartFromSelectionKey(selectionKey, weekById = {}) {
+  const directMatch = weekById?.[selectionKey]?.start || ''
+  if (directMatch) {
+    return directMatch
+  }
+  const raw = String(selectionKey || '').trim()
+  const dateMatch = raw.match(/(\d{4}-\d{2}-\d{2})$/)
+  return dateMatch ? dateMatch[1] : ''
+}
+
+function getSelectedWeekStartsFromRegistration(sourceRegistration = {}, weekById = {}) {
+  return Array.from(
+    new Set(
+      (Array.isArray(sourceRegistration?.students) ? sourceRegistration.students : [])
+        .flatMap((student) => Object.keys(student?.schedule || {}).filter(Boolean))
+        .map((weekKey) => getWeekStartFromSelectionKey(weekKey, weekById))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b))
+}
+
+function formatCalendarMonthTitle(value) {
+  return value.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+function formatJourneyCalendarEntryDate(value) {
+  const parsed = new Date(value || '')
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return parsed.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatJourneyCalendarWeekNote(weekStart) {
+  const parsed = new Date(`${String(weekStart || '').trim()}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+  return `Week of ${parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}
+
+function buildPaidJourneyEntryNote(entry) {
+  if (!entry) {
+    return ''
+  }
+  const parts = []
+  if (entry.weekStart) {
+    parts.push(formatJourneyCalendarWeekNote(entry.weekStart))
+  }
+  const when = formatJourneyCalendarEntryDate(entry.scheduledAt)
+  if (when) {
+    parts.push(when)
+  }
+  return parts.join(' · ')
+}
+
+function buildJourneyCalendarMonths(entries = []) {
+  const normalizedEntries = (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      const date = new Date(entry?.scheduledAt || '')
+      if (Number.isNaN(date.getTime())) {
+        return null
+      }
+      const dateKey = date.toISOString().slice(0, 10)
+      return { ...entry, date, dateKey }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+
+  if (normalizedEntries.length === 0) {
+    return []
+  }
+
+  const startMonth = new Date(normalizedEntries[0].date.getFullYear(), normalizedEntries[0].date.getMonth(), 1)
+  const endMonth = new Date(normalizedEntries[normalizedEntries.length - 1].date.getFullYear(), normalizedEntries[normalizedEntries.length - 1].date.getMonth(), 1)
+  const months = []
+
+  for (let cursor = new Date(startMonth); cursor.getTime() <= endMonth.getTime(); cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)) {
+    const year = cursor.getFullYear()
+    const month = cursor.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const leadingBlanks = (firstDay.getDay() + 6) % 7
+    const entriesByDate = normalizedEntries.reduce((acc, entry) => {
+      if (entry.date.getFullYear() !== year || entry.date.getMonth() !== month) {
+        return acc
+      }
+      if (!acc[entry.dateKey]) {
+        acc[entry.dateKey] = []
+      }
+      acc[entry.dateKey].push(entry)
+      return acc
+    }, {})
+
+    const cells = []
+    for (let index = 0; index < leadingBlanks; index += 1) {
+      cells.push({ empty: true, key: `blank-${year}-${month}-${index}` })
+    }
+    for (let day = 1; day <= lastDay.getDate(); day += 1) {
+      const date = new Date(year, month, day)
+      const dateKey = date.toISOString().slice(0, 10)
+      cells.push({
+        empty: false,
+        key: dateKey,
+        day,
+        dateKey,
+        entries: entriesByDate[dateKey] || [],
+      })
+    }
+
+    months.push({
+      key: `${year}-${month + 1}`,
+      title: formatCalendarMonthTitle(firstDay),
+      cells,
+    })
+  }
+
+  return months
 }
 
 function buildLeadCriteria(row, isRegistered) {
@@ -708,11 +1240,15 @@ function buildLeadCriteria(row, isRegistered) {
     lines.push('Blocked: this email already exists in registrations')
     return lines
   }
+  const latestOpened = getLatestOpenedTrackerStep(row, 'lead')
+  if (latestOpened) {
+    lines.push(`Open receipt: ${latestOpened.label} at ${formatTrackerDateTime(latestOpened.at)}`)
+  }
   if (!nextColumn) {
     lines.push('All lead steps already handled')
     return lines
   }
-  const dueAt = addDaysToIso(row.createdAt, dueOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+  const dueAt = String(row?.nextSendAt || '').trim() || addDaysToIso(row.createdAt, dueOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
   if (!dueAt) {
     lines.push(`Next step: ${nextColumn.label}`)
     return lines
@@ -742,7 +1278,21 @@ function buildReservationCriteria(row) {
     return lines
   }
   if (statusValue === 'paid') {
-    lines.push('Paid: prep emails follow first camp-week timing')
+    const nextEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0]
+    const latestOpened = getLatestOpenedTrackerStep(row, 'reservation')
+    if (latestOpened) {
+      lines.push(`Open receipt: ${latestOpened.label} at ${formatTrackerDateTime(latestOpened.at)}`)
+    }
+    if (!nextEntry) {
+      lines.push('Paid: all scheduled paid follow-ups and pre-camp prep emails are handled')
+      return lines
+    }
+    const scheduledAt = new Date(nextEntry.scheduledAt)
+    const dueNow = !Number.isNaN(scheduledAt.getTime()) && scheduledAt.getTime() <= Date.now()
+    const note = buildPaidJourneyEntryNote(nextEntry)
+    lines.push(
+      `${dueNow ? 'Next due' : 'Next paid step'}: ${nextEntry.label}${note ? ` at ${note}` : ''}`
+    )
     return lines
   }
   if (!row?.runId) {
@@ -752,6 +1302,10 @@ function buildReservationCriteria(row) {
       lines.push('Registration saved, but no active journey run was attached, so this row will not autosend from the tracker')
     }
     return lines
+  }
+  const latestOpened = getLatestOpenedTrackerStep(row, 'reservation')
+  if (latestOpened) {
+    lines.push(`Open receipt: ${latestOpened.label} at ${formatTrackerDateTime(latestOpened.at)}`)
   }
   const dueOffsetsHours = [0, 12, 36, 66, 72]
   const nextColumn = reservationTrackerColumns
@@ -775,7 +1329,7 @@ function buildReservationCriteria(row) {
   return lines
 }
 
-function getReservationCriteriaState(row, reservationFirstWeekStartById = {}) {
+function getReservationCriteriaState(row) {
   if (!row?.createdAt || String(row?.status || '').startsWith('test_')) {
     return ''
   }
@@ -788,32 +1342,14 @@ function getReservationCriteriaState(row, reservationFirstWeekStartById = {}) {
 
   if (String(row?.status || '') === 'paid') {
     const registrationId = Number(row?.registrationId || 0)
-    if (registrationId <= 0) {
+    if (registrationId <= 0 || row?.registrationType === 'overnight-only') {
       return ''
     }
-    const firstWeekStart = reservationFirstWeekStartById[registrationId] || ''
-    if (!firstWeekStart) {
+    const nextEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0]
+    if (!nextEntry) {
       return ''
     }
-    const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
-    if (Number.isNaN(firstWeekStartDate.getTime())) {
-      return ''
-    }
-    const startBoundary = addDays(firstWeekStartDate, 1)
-    if (now > startBoundary.getTime()) {
-      return ''
-    }
-    const stageDefs = [
-      { key: 'paid_7d', daysBefore: 7 },
-      { key: 'paid_5d', daysBefore: 5 },
-      { key: 'paid_3d', daysBefore: 3 },
-      { key: 'paid_1d', daysBefore: 1 },
-    ]
-    const nextStage = stageDefs.find((stage) => !isPaidPrepHandled(row.steps?.[stage.key]?.status))
-    if (!nextStage) {
-      return ''
-    }
-    const scheduledAt = addDays(firstWeekStartDate, -nextStage.daysBefore).getTime()
+    const scheduledAt = new Date(nextEntry.scheduledAt).getTime()
     if (scheduledAt <= now) {
       return 'due'
     }
@@ -848,6 +1384,8 @@ function getTrackerCellLabel(cell) {
   switch (cell?.status) {
     case 'sent':
       return 'Sent'
+    case 'opened':
+      return 'Opened'
     case 'preview':
       return 'Preview'
     case 'queued':
@@ -862,17 +1400,51 @@ function getTrackerCellLabel(cell) {
       return 'Paid'
     case 'skipped':
       return 'Auto-skipped'
+    case 'partial':
+      return 'Partial'
     default:
       return '-'
   }
 }
 
 function isTrackerStepHandled(status = '') {
-  return ['sent', 'preview', 'closed', 'skipped'].includes(String(status || ''))
+  return ['sent', 'opened', 'preview', 'closed', 'skipped'].includes(String(status || ''))
 }
 
-function isPaidPrepHandled(status = '') {
-  return String(status || '') === 'sent'
+function buildJourneyProcessStepChips(stepCounts = {}, flow = 'reservation') {
+  const normalized = typeof stepCounts === 'object' && stepCounts ? stepCounts : {}
+  const order =
+    flow === 'lead'
+      ? [
+          ['step_1', 'L1'],
+          ['step_2', 'L2'],
+          ['step_3', 'L3'],
+          ['step_4', 'L4'],
+          ['step_5', 'L5'],
+        ]
+      : [
+          ['r1', 'R1'],
+          ['r2', 'R2'],
+          ['r3', 'R3'],
+          ['r4', 'R4'],
+          ['r5', 'R5'],
+          ['a0', 'A0'],
+          ['a2', 'A2'],
+          ['a4', 'A4'],
+          ['a8', 'A8'],
+          ['p1', 'P1'],
+          ['p2', 'P2'],
+          ['p3', 'P3'],
+          ['p4', 'P4'],
+        ]
+
+  return order
+    .map(([key, label]) => ({
+      key,
+      label,
+      count: Number(normalized[key] || 0),
+    }))
+    .filter((item) => item.count > 0)
 }
 
 const adminTabBlueprint = [
@@ -897,6 +1469,14 @@ const mediaSubtabBlueprint = [
 ]
 
 const accountingPaymentMethods = ['venmo', 'zelle', 'paypal', 'cash', 'check']
+const ACCOUNTING_ADMIN_COPY_EMAIL = 'calvin@newushu.com'
+const accountingEditorDayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+const accountingEditorNextMode = {
+  NONE: 'FULL',
+  FULL: 'AM',
+  AM: 'PM',
+  PM: 'NONE',
+}
 
 function parseMaybeJson(value, fallback = null) {
   try {
@@ -912,6 +1492,23 @@ function parseDiscountDate(value) {
   }
   const parsed = new Date(`${value}T23:59:59`)
   return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getGeneralProgramForLocation(programConfig, locationValue) {
+  const loc = String(locationValue || '').trim()
+  if (loc === 'acton') {
+    return {
+      ...programConfig,
+      selectedWeeks: Array.isArray(programConfig?.actonSelectedWeeks) ? programConfig.actonSelectedWeeks : [],
+    }
+  }
+  if (loc === 'wellesley') {
+    return {
+      ...programConfig,
+      selectedWeeks: Array.isArray(programConfig?.wellesleySelectedWeeks) ? programConfig.wellesleySelectedWeeks : [],
+    }
+  }
+  return programConfig
 }
 
 function addDays(date, days) {
@@ -966,8 +1563,121 @@ function formatCalendarDate(value) {
   })
 }
 
+function isIncludedLunchDay(dayKey) {
+  return String(dayKey || '') === 'Thu'
+}
+
+function normalizeAccountingEditorDayKey(dayKey) {
+  const raw = String(dayKey || '').trim().toLowerCase()
+  if (raw.startsWith('mon')) return 'Mon'
+  if (raw.startsWith('tue')) return 'Tue'
+  if (raw.startsWith('wed')) return 'Wed'
+  if (raw.startsWith('thu')) return 'Thu'
+  if (raw.startsWith('fri')) return 'Fri'
+  return String(dayKey || '').trim()
+}
+
+function getLunchWeeksForStudent(student, weeksById) {
+  const rows = []
+  for (const [weekId, entry] of Object.entries(student?.schedule || {})) {
+    const week = weeksById?.[weekId]
+    const programKey = week?.programKey || entry?.programKey
+    if (programKey === 'overnight') {
+      continue
+    }
+
+    const sourceDays =
+      Array.isArray(week?.days) && week.days.length > 0
+        ? week.days
+        : accountingEditorDayKeys.map((dayKey) => ({
+            key: dayKey,
+            date: '',
+          }))
+    const dayMetaByKey = sourceDays.reduce((acc, day) => {
+      acc[normalizeAccountingEditorDayKey(day?.key)] = {
+        ...day,
+        key: normalizeAccountingEditorDayKey(day?.key),
+      }
+      return acc
+    }, {})
+
+    const selectedDays = Object.entries(entry?.days || {})
+      .filter(([, mode]) => mode && mode !== 'NONE')
+      .map(([dayKey, mode]) => {
+        const normalizedDayKey = normalizeAccountingEditorDayKey(dayKey)
+        const dayMeta = dayMetaByKey[normalizedDayKey] || {}
+        return {
+          dayKey: normalizedDayKey,
+          date: dayMeta.date || '',
+          mode,
+          key: `${weekId}:${normalizedDayKey}`,
+        }
+      })
+      .sort((a, b) => accountingEditorDayKeys.indexOf(a.dayKey) - accountingEditorDayKeys.indexOf(b.dayKey))
+
+    if (selectedDays.length > 0) {
+      rows.push({
+        weekId,
+        week:
+          week || {
+            id: weekId,
+            start: '',
+            end: '',
+            programLabel: 'Camp Week',
+            days: sourceDays,
+          },
+        selectedDays,
+      })
+    }
+  }
+  return rows.sort((a, b) => (a.week.start || a.weekId).localeCompare(b.week.start || b.weekId))
+}
+
 function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100
+}
+
+function pluralize(label, count) {
+  return `${count} ${label}${count === 1 ? '' : 's'}`
+}
+
+function getWeekSelectionSummary(entry, week) {
+  if (!entry || !week) {
+    return ''
+  }
+
+  const weekDayKeysRaw = Array.isArray(week.days) ? week.days.map((day) => day.key).filter(Boolean) : []
+  const weekDayKeys = weekDayKeysRaw.length > 0 ? weekDayKeysRaw : accountingEditorDayKeys
+  const fullWeekSelected = weekDayKeys.every((day) => (entry.days?.[day] || 'NONE') === 'FULL')
+  if (fullWeekSelected) {
+    return 'Registered: Full Week'
+  }
+
+  const counts = { FULL: 0, AM: 0, PM: 0 }
+  for (const day of weekDayKeys) {
+    const mode = entry.days?.[day] || 'NONE'
+    if (mode !== 'NONE') {
+      counts[mode] += 1
+    }
+  }
+
+  const selectedDayTotal = counts.FULL + counts.AM + counts.PM
+  if (selectedDayTotal === 0) {
+    return ''
+  }
+
+  const parts = []
+  if (counts.FULL > 0) {
+    parts.push(pluralize('Full Day', counts.FULL))
+  }
+  if (counts.AM > 0) {
+    parts.push(pluralize('AM Day', counts.AM))
+  }
+  if (counts.PM > 0) {
+    parts.push(pluralize('PM Day', counts.PM))
+  }
+
+  return `Registered: ${pluralize('Day', selectedDayTotal)}${parts.length ? ` (${parts.join(', ')})` : ''}`
 }
 
 function buildOvernightAccountingInvoice(weeksSelected, regularWeekPrice, discountedWeekPrice, discountActive) {
@@ -988,6 +1698,48 @@ function buildOvernightAccountingInvoice(weeksSelected, regularWeekPrice, discou
     secondWeekRate: Math.max(0, activeDiscountedRate - 100),
     regularSubtotal,
     total,
+  }
+}
+
+function deriveAccountingPaymentState({ entry = {}, tuitionTotal = 0, lunchTotal = 0, manualDiscount = 0 }) {
+  const normalizedLunchTotal = roundMoney(Math.max(0, Number(lunchTotal || 0)))
+  const tuitionBase = Math.max(0, Number(tuitionTotal || 0) - normalizedLunchTotal)
+  const tuitionAfterManualDiscount = roundMoney(Math.max(0, tuitionBase - Math.max(0, Number(manualDiscount || 0))))
+  const hasSplitValues = entry?.tuition_paid_amount != null || entry?.lunch_paid_amount != null
+  const legacyPaidAmount = Math.max(0, Number(entry?.paid_amount || 0))
+
+  let tuitionPaidAmount = hasSplitValues
+    ? Math.max(0, Number(entry?.tuition_paid_amount || 0))
+    : Math.min(legacyPaidAmount, tuitionAfterManualDiscount)
+  tuitionPaidAmount = roundMoney(Math.min(tuitionAfterManualDiscount, tuitionPaidAmount))
+
+  let lunchPaidAmount = hasSplitValues
+    ? Math.max(0, Number(entry?.lunch_paid_amount || 0))
+    : Math.max(0, legacyPaidAmount - tuitionPaidAmount)
+  lunchPaidAmount = roundMoney(Math.min(normalizedLunchTotal, lunchPaidAmount))
+
+  const totalPaidAmount = roundMoney(tuitionPaidAmount + lunchPaidAmount)
+  const tuitionOwedAmount = roundMoney(Math.max(0, tuitionAfterManualDiscount - tuitionPaidAmount))
+  const lunchOwedAmount = roundMoney(Math.max(0, normalizedLunchTotal - lunchPaidAmount))
+  const totalAfterManualDiscount = roundMoney(tuitionAfterManualDiscount + normalizedLunchTotal)
+  const totalOwedAmount = roundMoney(tuitionOwedAmount + lunchOwedAmount)
+  const tuitionPaidPct = tuitionAfterManualDiscount > 0 ? tuitionPaidAmount / tuitionAfterManualDiscount : 0
+
+  return {
+    tuitionBase: roundMoney(tuitionBase),
+    tuitionAfterManualDiscount,
+    lunchTotal: normalizedLunchTotal,
+    totalAfterManualDiscount,
+    tuitionPaidAmount,
+    lunchPaidAmount,
+    totalPaidAmount,
+    tuitionOwedAmount,
+    lunchOwedAmount,
+    totalOwedAmount,
+    tuitionPaidPct,
+    shouldStopRegistrationEmails:
+      (tuitionAfterManualDiscount > 0 && tuitionPaidPct >= 0.95) ||
+      (totalAfterManualDiscount > 0 && totalOwedAmount <= 0),
   }
 }
 
@@ -1285,18 +2037,30 @@ function buildCamperPricing({
   totals.lunchCost = totals.paidLunchCount * Number(lunchPrice || 0)
   const regularTuitionSubtotal = totals.regularGeneral + totals.regularBootcamp + totals.regularOvernight
   const tuitionSubtotal = totals.general + totals.bootcamp + totals.overnight
+  const weekTierPromo = student
+    ? getWeekTierPromoForStudent(student, weekById, tuition, {
+        applyLimitedDiscount: discountActive,
+      })
+    : { eligible: false, amount: 0, breakdown: [] }
+  const weekTierPromoAmount = roundMoney(Math.max(0, Number(weekTierPromo.amount || 0)))
+  const weekTierPromoLines = getWeekTierPromoDisplayLines(weekTierPromo)
+  const tuitionSubtotalAfterPromo = Math.max(0, tuitionSubtotal - weekTierPromoAmount)
   const hasNonOvernightTuition = Number(totals.general || 0) > 0 || Number(totals.bootcamp || 0) > 0
   const siblingDiscountPct =
     siblingDiscountEligible && hasNonOvernightTuition ? Number(tuition.siblingDiscountPct || 0) : 0
   const siblingAfterLimitedDiscount =
-    siblingDiscountPct > 0 ? (Number(totals.general || 0) + Number(totals.bootcamp || 0)) * (siblingDiscountPct / 100) : 0
-  const tuitionAfterSibling = Math.max(0, tuitionSubtotal - siblingAfterLimitedDiscount)
+    siblingDiscountPct > 0
+      ? Math.max(0, Number(tuitionSubtotalAfterPromo || 0) - Number(totals.overnight || 0)) * (siblingDiscountPct / 100)
+      : 0
+  const tuitionAfterSibling = Math.max(0, tuitionSubtotalAfterPromo - siblingAfterLimitedDiscount)
   const totalWithSibling = tuitionAfterSibling + totals.lunchCost
 
   totals.regularTotal = roundMoney(regularTuitionSubtotal + totals.lunchCost)
   totals.tuitionSubtotal = roundMoney(tuitionSubtotal)
-  totals.subtotal = roundMoney(tuitionSubtotal + totals.lunchCost)
-  totals.siblingDiscount = roundMoney(tuitionSubtotal - tuitionAfterSibling)
+  totals.weekTierPromoAmount = weekTierPromoAmount
+  totals.weekTierPromoLines = weekTierPromoLines
+  totals.subtotal = roundMoney(tuitionSubtotalAfterPromo + totals.lunchCost)
+  totals.siblingDiscount = roundMoney(siblingAfterLimitedDiscount)
   totals.total = roundMoney(totalWithSibling)
   totals.siblingDiscountPct = siblingDiscountPct
   totals.general = roundMoney(totals.general)
@@ -1317,7 +2081,10 @@ export default function AdminPage() {
   const [activeJourneyTab, setActiveJourneyTab] = useState(0)
   const [activeJourneyFlow, setActiveJourneyFlow] = useState('lead')
   const [activeReservationJourneyTab, setActiveReservationJourneyTab] = useState(0)
+  const [activePaidEnrollmentJourneyTab, setActivePaidEnrollmentJourneyTab] = useState(0)
+  const [paidEnrollmentPreviewTrack, setPaidEnrollmentPreviewTrack] = useState('general')
   const [activeReservationTrackerView, setActiveReservationTrackerView] = useState('standard')
+  const [activeTrackingSubtab, setActiveTrackingSubtab] = useState('lead')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [loadingLibrary, setLoadingLibrary] = useState(false)
@@ -1349,6 +2116,35 @@ export default function AdminPage() {
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [updatingAccountingKey, setUpdatingAccountingKey] = useState('')
   const [sendingInvoiceKey, setSendingInvoiceKey] = useState('')
+  const [invoicePreviewState, setInvoicePreviewState] = useState({
+    open: false,
+    title: '',
+    html: '',
+  })
+  const [journeyCellPreviewState, setJourneyCellPreviewState] = useState({
+    open: false,
+    title: '',
+    subject: '',
+    html: '',
+  })
+  const [journeyCalendarState, setJourneyCalendarState] = useState({
+    open: false,
+    title: '',
+    entries: [],
+  })
+  const [invoiceSendDialog, setInvoiceSendDialog] = useState({
+    open: false,
+    row: null,
+    sendAdminCopy: true,
+  })
+  const [accountingEditState, setAccountingEditState] = useState({
+    open: false,
+    row: null,
+    sourceRecordId: 0,
+    registration: null,
+    expandedWeekKey: '',
+    expandedLunchWeekKey: '',
+  })
   const [testEmail, setTestEmail] = useState('')
   const [sendingTestStep, setSendingTestStep] = useState(0)
   const [aiReplyInput, setAiReplyInput] = useState({
@@ -1361,6 +2157,10 @@ export default function AdminPage() {
   const [aiReplyLoading, setAiReplyLoading] = useState(false)
   const [selectedReplyId, setSelectedReplyId] = useState(0)
   const [replyFilterEmail, setReplyFilterEmail] = useState('')
+  const [eventFlowFilter, setEventFlowFilter] = useState('all')
+  const [eventJourneyFilter, setEventJourneyFilter] = useState('all')
+  const [eventDeliveryFilter, setEventDeliveryFilter] = useState('all')
+  const [previewingEventRowKey, setPreviewingEventRowKey] = useState('')
   const [updatingRunId, setUpdatingRunId] = useState(0)
   const [processingJourneyEmails, setProcessingJourneyEmails] = useState(false)
   const [repairingReservationRuns, setRepairingReservationRuns] = useState(false)
@@ -1369,6 +2169,7 @@ export default function AdminPage() {
   const [settingTrackerVisibilityKey, setSettingTrackerVisibilityKey] = useState('')
   const [selectedRunAssignmentByRow, setSelectedRunAssignmentByRow] = useState({})
   const [sendingJourneyCellKey, setSendingJourneyCellKey] = useState('')
+  const [previewingJourneyCellKey, setPreviewingJourneyCellKey] = useState('')
   const [expandedReservationDebugKey, setExpandedReservationDebugKey] = useState('')
   const [accountingOverlay, setAccountingOverlay] = useState({
     key: '',
@@ -1411,7 +2212,7 @@ export default function AdminPage() {
         .limit(30),
       supabase
         .from('email_journey_events')
-        .select('id, run_id, email, step_number, event_type, event_at')
+        .select('id, run_id, email, step_number, event_type, event_at, subject, event_payload')
         .order('event_at', { ascending: false })
         .limit(400),
     ])
@@ -1682,16 +2483,44 @@ export default function AdminPage() {
         : emailReplies,
     [emailReplies, replyFilterEmail]
   )
+  const filteredEmailEvents = useMemo(
+    () =>
+      emailEvents.filter((event) => {
+        if (eventDeliveryFilter !== 'all' && getEmailEventDeliveryFilter(event) !== eventDeliveryFilter) {
+          return false
+        }
+        if (eventFlowFilter !== 'all' && getEmailEventFlowFilter(event) !== eventFlowFilter) {
+          return false
+        }
+        if (eventJourneyFilter !== 'all' && getEmailEventJourneyFilter(event) !== eventJourneyFilter) {
+          return false
+        }
+        return true
+      }),
+    [emailEvents, eventDeliveryFilter, eventFlowFilter, eventJourneyFilter]
+  )
+  const chronologicalEmailEvents = useMemo(
+    () =>
+      [...emailEvents].sort((a, b) => {
+        const timeDiff = new Date(a?.event_at || 0).getTime() - new Date(b?.event_at || 0).getTime()
+        if (timeDiff !== 0) {
+          return timeDiff
+        }
+        return Number(a?.id || 0) - Number(b?.id || 0)
+      }),
+    [emailEvents]
+  )
   const leadJourneyTrackerRows = useMemo(() => {
     const registeredEmails = new Set(
       registrationRecords
+        .filter((item) => !isArchivedRegistrationRecord(item))
         .map((item) => normalizeAdminEmail(item?.guardian_email))
         .filter(Boolean)
     )
     const trackerMap = new Map()
     const leadRunMap = new Map()
     const leadRunIds = new Set(
-      emailEvents
+      chronologicalEmailEvents
         .filter((event) => {
           const eventType = String(event?.event_type || '')
           return (
@@ -1728,6 +2557,7 @@ export default function AdminPage() {
           runId: null,
           source: '',
           createdAt: '',
+          nextSendAt: '',
           status: '',
           isRegistered: registeredEmails.has(normalized),
           criteria: [],
@@ -1744,7 +2574,7 @@ export default function AdminPage() {
       row.createdAt = lead?.created_at || row.createdAt
     }
 
-    for (const event of emailEvents) {
+    for (const event of chronologicalEmailEvents) {
       const email = normalizeAdminEmail(event?.email)
       const row = ensureRow(email)
       if (!row) continue
@@ -1764,6 +2594,8 @@ export default function AdminPage() {
       const key = `step_${stepNumber}`
       if (eventType === 'lead_journey_sent' || eventType === 'test_sent_lead') {
         row.steps[key] = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'lead_journey_opened') {
+        row.steps[key] = upgradeTrackerCellToOpened(row.steps[key], event?.event_at)
       } else if ((eventType === 'lead_journey_preview' || eventType === 'test_preview_only_lead') && row.steps[key].status !== 'sent') {
         row.steps[key] = buildTrackerCell('preview', event?.event_at)
       } else if (eventType === 'lead_step_auto_skipped' && row.steps[key].status === 'pending') {
@@ -1778,6 +2610,7 @@ export default function AdminPage() {
       if (!row) continue
       row.runId = Number(run?.id || 0) || row.runId
       row.status = run?.status || row.status
+      row.nextSendAt = String(run?.next_send_at || '').trim() || row.nextSendAt
       const currentStep = Number(run?.current_step || 0)
       if (currentStep === 0 && row.steps.step_1.status === 'pending') {
         row.steps.step_1 = buildTrackerCell(run?.status === 'error' ? 'error' : 'queued', run?.next_send_at || '')
@@ -1789,7 +2622,14 @@ export default function AdminPage() {
     return Array.from(trackerMap.values())
       .map((row) => ({ ...row, criteria: buildLeadCriteria(row, row.isRegistered) }))
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-  }, [emailEvents, emailJourneyRuns, leadProfiles, registrationRecords])
+  }, [chronologicalEmailEvents, emailJourneyRuns, leadProfiles, registrationRecords])
+  const weekById = useMemo(() => {
+    const map = {}
+    for (const week of [...weekOptions.general, ...weekOptions.bootcamp, ...weekOptions.overnight]) {
+      map[week.id] = week
+    }
+    return map
+  }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
   const reservationJourneyTrackerRows = useMemo(() => {
     const rows = []
     const rowByKey = new Map()
@@ -1808,7 +2648,7 @@ export default function AdminPage() {
 
     const getDistance = (left, right) => Math.abs(new Date(left || 0).getTime() - new Date(right || 0).getTime())
 
-    for (const event of emailEvents) {
+    for (const event of chronologicalEmailEvents) {
       const eventType = String(event?.event_type || '')
       if (eventType !== 'reservation_run_attached') {
         const isVisibilityEvent =
@@ -1877,6 +2717,7 @@ export default function AdminPage() {
         email,
         guardianName: registration?.guardian_name || '',
         createdAt: registration?.created_at || '',
+        paidActivatedAt: '',
         status: '',
         registrationType: String(
           (parseMaybeJson(registration?.medical_notes, {}) || {})?.registrationType || ''
@@ -1884,9 +2725,16 @@ export default function AdminPage() {
         hidden: Boolean(hiddenStateByRegistrationId[Number(registration.id)]?.hidden),
         attachmentEventAt: '',
         attachmentReason: '',
+        selectedWeekStarts: [],
+        paidSentInstanceKeys: new Set(),
+        paidPreviewInstanceKeys: new Set(),
+        paidOpenedInstanceKeys: new Set(),
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
+      const rawMeta = parseMaybeJson(registration?.medical_notes, {}) || {}
+      const sourceRegistration = rawMeta?.registration || {}
+      row.selectedWeekStarts = getSelectedWeekStartsFromRegistration(sourceRegistration, weekById)
       const manuallyAssignedRunId = manualRunIdByRegistrationId[row.registrationId]
       if (manuallyAssignedRunId > 0) {
         const matchedRun = liveNonLeadRuns.find((item) => Number(item?.id || 0) === manuallyAssignedRunId)
@@ -1943,11 +2791,16 @@ export default function AdminPage() {
         email,
         guardianName: '',
         createdAt: run?.created_at || '',
+        paidActivatedAt: '',
         status: run?.status || '',
         registrationType: '',
         hidden: Boolean(hiddenStateByRunId[runId]?.hidden),
         attachmentEventAt: '',
         attachmentReason: '',
+        selectedWeekStarts: [],
+        paidSentInstanceKeys: new Set(),
+        paidPreviewInstanceKeys: new Set(),
+        paidOpenedInstanceKeys: new Set(),
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -1958,11 +2811,14 @@ export default function AdminPage() {
         if (archivedRegistrationIds.has(Number(matchingRegistration.id))) {
           continue
         }
+        const matchingMeta = parseMaybeJson(matchingRegistration?.medical_notes, {}) || {}
+        const matchingSourceRegistration = matchingMeta?.registration || {}
         row.guardianName = matchingRegistration?.guardian_name || ''
         row.registrationId = Number(matchingRegistration.id)
         row.registrationType = String(
-          (parseMaybeJson(matchingRegistration?.medical_notes, {}) || {})?.registrationType || ''
+          matchingMeta?.registrationType || ''
         ).trim()
+        row.selectedWeekStarts = getSelectedWeekStartsFromRegistration(matchingSourceRegistration, weekById)
       }
       rows.push(row)
       rowByKey.set(key, row)
@@ -1981,11 +2837,16 @@ export default function AdminPage() {
         email,
         guardianName: '',
         createdAt: run?.created_at || '',
+        paidActivatedAt: '',
         status: run?.status || '',
         registrationType: '',
         hidden: Boolean(hiddenStateByRunId[runId]?.hidden),
         attachmentEventAt: '',
         attachmentReason: '',
+        selectedWeekStarts: [],
+        paidSentInstanceKeys: new Set(),
+        paidPreviewInstanceKeys: new Set(),
+        paidOpenedInstanceKeys: new Set(),
         criteria: [],
         steps: Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, buildTrackerCell()])),
       }
@@ -2007,7 +2868,7 @@ export default function AdminPage() {
       return candidates.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0] || null
     }
 
-    for (const event of emailEvents) {
+    for (const event of chronologicalEmailEvents) {
       const row = resolveRowForEvent(event)
       if (!row) continue
       const eventType = String(event?.event_type || '')
@@ -2015,6 +2876,15 @@ export default function AdminPage() {
       const eventPayload =
         typeof event?.event_payload === 'object' && event?.event_payload ? event.event_payload : parseMaybeJson(event?.event_payload, {}) || {}
       const summaryLines = Array.isArray(eventPayload?.summaryLines) ? eventPayload.summaryLines : []
+      if ((!Array.isArray(row.selectedWeekStarts) || row.selectedWeekStarts.length === 0) && Array.isArray(eventPayload?.campWeeks)) {
+        row.selectedWeekStarts = Array.from(
+          new Set(
+            eventPayload.campWeeks
+              .map((week) => String(week?.start || '').trim())
+              .filter(Boolean)
+          )
+        ).sort((a, b) => a.localeCompare(b))
+      }
       if (!row.registrationType) {
         if (String(eventPayload?.registrationType || '').trim()) {
           row.registrationType = String(eventPayload.registrationType).trim()
@@ -2028,8 +2898,31 @@ export default function AdminPage() {
         row.attachmentEventAt = event?.event_at || row.attachmentEventAt
         row.attachmentReason = String(eventPayload?.reason || '').trim() || row.attachmentReason
       }
+      if (
+        eventType === 'payment_marked_paid' ||
+        (eventType === 'reservation_step_auto_skipped' && String(eventPayload?.reason || '') === 'tuition_95_percent_paid')
+      ) {
+        const candidatePaidAt = String(event?.event_at || '').trim()
+        if (candidatePaidAt) {
+          if (!row.paidActivatedAt || new Date(candidatePaidAt).getTime() < new Date(row.paidActivatedAt).getTime()) {
+            row.paidActivatedAt = candidatePaidAt
+          }
+        }
+      }
+      const paidInstance = getPaidEventInstanceKey(eventType, eventPayload, row)
+      if (paidInstance?.instanceKey) {
+        if (eventType.endsWith('_sent')) {
+          row.paidSentInstanceKeys.add(paidInstance.instanceKey)
+        } else if (eventType.endsWith('_opened')) {
+          row.paidOpenedInstanceKeys.add(paidInstance.instanceKey)
+        } else if (eventType.endsWith('_preview')) {
+          row.paidPreviewInstanceKeys.add(paidInstance.instanceKey)
+        }
+      }
       if ((eventType === 'reservation_email_sent' || eventType === 'test_sent_reservation') && stepNumber >= 1 && stepNumber <= 5) {
         row.steps[`step_${stepNumber}`] = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'reservation_email_opened' && stepNumber >= 1 && stepNumber <= 5) {
+        row.steps[`step_${stepNumber}`] = upgradeTrackerCellToOpened(row.steps[`step_${stepNumber}`], event?.event_at)
       } else if ((eventType === 'reservation_email_preview' || eventType === 'test_preview_only_reservation') && stepNumber >= 1 && stepNumber <= 5) {
         if (row.steps[`step_${stepNumber}`].status !== 'sent') {
           row.steps[`step_${stepNumber}`] = buildTrackerCell('preview', event?.event_at)
@@ -2040,12 +2933,52 @@ export default function AdminPage() {
         }
       } else if (eventType === 'paid_prep_7d_sent') {
         row.steps.paid_7d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_opened' && paidInstance?.key === 'paid_7d') {
+        row.steps.paid_7d = upgradeTrackerCellToOpened(row.steps.paid_7d, event?.event_at)
+      } else if (eventType === 'paid_prep_7d_sent_preview' && row.steps.paid_7d.status !== 'sent') {
+        row.steps.paid_7d = buildTrackerCell('preview', event?.event_at)
       } else if (eventType === 'paid_prep_5d_sent') {
         row.steps.paid_5d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_opened' && paidInstance?.key === 'paid_5d') {
+        row.steps.paid_5d = upgradeTrackerCellToOpened(row.steps.paid_5d, event?.event_at)
+      } else if (eventType === 'paid_prep_5d_sent_preview' && row.steps.paid_5d.status !== 'sent') {
+        row.steps.paid_5d = buildTrackerCell('preview', event?.event_at)
       } else if (eventType === 'paid_prep_3d_sent') {
         row.steps.paid_3d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_opened' && paidInstance?.key === 'paid_3d') {
+        row.steps.paid_3d = upgradeTrackerCellToOpened(row.steps.paid_3d, event?.event_at)
+      } else if (eventType === 'paid_prep_3d_sent_preview' && row.steps.paid_3d.status !== 'sent') {
+        row.steps.paid_3d = buildTrackerCell('preview', event?.event_at)
       } else if (eventType === 'paid_prep_1d_sent') {
         row.steps.paid_1d = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_prep_opened' && paidInstance?.key === 'paid_1d') {
+        row.steps.paid_1d = upgradeTrackerCellToOpened(row.steps.paid_1d, event?.event_at)
+      } else if (eventType === 'paid_prep_1d_sent_preview' && row.steps.paid_1d.status !== 'sent') {
+        row.steps.paid_1d = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'paid_followup_0w_sent') {
+        row.steps.paid_0w = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_followup_opened' && paidInstance?.key === 'paid_0w') {
+        row.steps.paid_0w = upgradeTrackerCellToOpened(row.steps.paid_0w, event?.event_at)
+      } else if (eventType === 'paid_followup_0w_sent_preview' && row.steps.paid_0w.status !== 'sent') {
+        row.steps.paid_0w = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'paid_followup_2w_sent') {
+        row.steps.paid_2w = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_followup_opened' && paidInstance?.key === 'paid_2w') {
+        row.steps.paid_2w = upgradeTrackerCellToOpened(row.steps.paid_2w, event?.event_at)
+      } else if (eventType === 'paid_followup_2w_sent_preview' && row.steps.paid_2w.status !== 'sent') {
+        row.steps.paid_2w = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'paid_followup_4w_sent') {
+        row.steps.paid_4w = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_followup_opened' && paidInstance?.key === 'paid_4w') {
+        row.steps.paid_4w = upgradeTrackerCellToOpened(row.steps.paid_4w, event?.event_at)
+      } else if (eventType === 'paid_followup_4w_sent_preview' && row.steps.paid_4w.status !== 'sent') {
+        row.steps.paid_4w = buildTrackerCell('preview', event?.event_at)
+      } else if (eventType === 'paid_followup_8w_sent') {
+        row.steps.paid_8w = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'paid_followup_opened' && paidInstance?.key === 'paid_8w') {
+        row.steps.paid_8w = upgradeTrackerCellToOpened(row.steps.paid_8w, event?.event_at)
+      } else if (eventType === 'paid_followup_8w_sent_preview' && row.steps.paid_8w.status !== 'sent') {
+        row.steps.paid_8w = buildTrackerCell('preview', event?.event_at)
       }
     }
 
@@ -2056,8 +2989,34 @@ export default function AdminPage() {
       const currentStep = Number(run?.current_step || 0)
       const statusValue = String(run?.status || '')
       if (statusValue === 'paid') {
-        if (row.steps.paid_7d.status === 'pending') {
-          row.steps.paid_7d = buildTrackerCell('paid', run?.updated_at || run?.last_sent_at || '')
+        const paidEntries = getPaidJourneyEntries(row, row.selectedWeekStarts)
+        const nextPendingEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0] || null
+        const openedKeys = row?.paidOpenedInstanceKeys instanceof Set ? row.paidOpenedInstanceKeys : new Set()
+        for (const stage of paidJourneyStageDefs) {
+          const stageEntries = paidEntries.filter((entry) => entry.key === stage.key)
+          const sentCount = stageEntries.filter((entry) => row.paidSentInstanceKeys.has(entry.instanceKey)).length
+          const previewCount = stageEntries.filter((entry) => row.paidPreviewInstanceKeys.has(entry.instanceKey)).length
+          const openedCount = stageEntries.filter((entry) => openedKeys.has(entry.instanceKey)).length
+          if (stageEntries.length === 0) {
+            continue
+          }
+          if (openedCount > 0) {
+            row.steps[stage.key] = buildTrackerCell('opened', run?.updated_at || run?.last_sent_at || '')
+          } else if (sentCount >= stageEntries.length) {
+            row.steps[stage.key] = buildTrackerCell('sent', run?.updated_at || run?.last_sent_at || '')
+          } else if (sentCount > 0 || previewCount > 0) {
+            row.steps[stage.key] = buildTrackerCell('partial', run?.updated_at || run?.last_sent_at || '')
+          } else {
+            row.steps[stage.key] = buildTrackerCell('pending', '')
+          }
+        }
+        const nextPaidStage = nextPendingEntry ? paidJourneyStageDefs.find((stage) => stage.key === nextPendingEntry.key) : null
+        if (nextPaidStage) {
+          row.steps[nextPaidStage.key] = buildTrackerCell(
+            'paid',
+            run?.updated_at || run?.last_sent_at || '',
+            buildPaidJourneyEntryNote(nextPendingEntry)
+          )
         }
       } else if (statusValue === 'test_sent_reservation' && currentStep >= 1 && currentStep <= 5 && row.steps[`step_${currentStep}`].status === 'pending') {
         row.steps[`step_${currentStep}`] = buildTrackerCell('sent', run?.last_sent_at || run?.updated_at || run?.created_at || '')
@@ -2074,7 +3033,7 @@ export default function AdminPage() {
     return rows
       .map((row) => ({ ...row, criteria: buildReservationCriteria(row) }))
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-  }, [emailEvents, emailJourneyRuns, registrationRecords])
+  }, [chronologicalEmailEvents, emailJourneyRuns, registrationRecords, weekById])
   const availableReservationRunsByRowKey = useMemo(() => {
     const attachedRunIds = new Set(
       reservationJourneyTrackerRows
@@ -2148,13 +3107,31 @@ export default function AdminPage() {
     }
     return map
   }, [reservationJourneyTrackerRows])
-  const weekById = useMemo(() => {
+  const reservationJourneyStatusByRegistrationId = useMemo(() => {
+    const runById = new Map(
+      (Array.isArray(emailJourneyRuns) ? emailJourneyRuns : [])
+        .filter((run) => Number(run?.id || 0) > 0)
+        .map((run) => [Number(run.id), run])
+    )
     const map = {}
-    for (const week of [...weekOptions.general, ...weekOptions.bootcamp, ...weekOptions.overnight]) {
-      map[week.id] = week
+    for (const row of reservationJourneyTrackerRows) {
+      const registrationId = Number(row?.registrationId || 0)
+      if (registrationId <= 0) {
+        continue
+      }
+      const run = runById.get(Number(row?.runId || 0)) || null
+      const currentStep = Number(run?.current_step || 0)
+      const status = String(row?.status || run?.status || '').trim()
+      map[registrationId] = {
+        status,
+        currentStep,
+        r5SentUnpaid:
+          status === 'canceled_unpaid' ||
+          (currentStep >= 5 && status !== 'paid'),
+      }
     }
     return map
-  }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
+  }, [emailJourneyRuns, reservationJourneyTrackerRows])
   const weekNumberById = useMemo(() => {
     const map = {}
     weekOptions.general.forEach((week, index) => {
@@ -2168,6 +3145,61 @@ export default function AdminPage() {
     })
     return map
   }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
+  const accountingEditRegistrationWeeks = useMemo(() => {
+    const location = String(accountingEditState.registration?.location || '').trim()
+    const generalProgram = getGeneralProgramForLocation(config.programs.general, location)
+    const generalWeeks = getSelectedWeeks('general', generalProgram)
+    const bootcampWeeks = getSelectedWeeks('bootcamp', config.programs.bootcamp)
+    const dayCampMap = new Map()
+
+    for (const week of generalWeeks) {
+      const id = `daycamp:${week.start}`
+      dayCampMap.set(id, {
+        id,
+        start: week.start,
+        end: week.end,
+        programKey: 'daycamp',
+        programLabel: 'Camp Week',
+        days: Array.isArray(week.days)
+          ? week.days.map((day) => ({
+              ...day,
+              key: normalizeAccountingEditorDayKey(day?.key),
+            }))
+          : [],
+        availableCampTypes: ['general'],
+      })
+    }
+
+    for (const week of bootcampWeeks) {
+      const id = `daycamp:${week.start}`
+      const existing = dayCampMap.get(id)
+      if (existing) {
+        existing.availableCampTypes = existing.availableCampTypes.includes('bootcamp')
+          ? existing.availableCampTypes
+          : [...existing.availableCampTypes, 'bootcamp']
+      }
+    }
+
+    return Array.from(dayCampMap.values()).sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')))
+  }, [accountingEditState.registration?.location, config.programs.bootcamp, config.programs.general])
+  const accountingEditWeeksById = useMemo(
+    () =>
+      accountingEditRegistrationWeeks.reduce((acc, week) => {
+        acc[week.id] = week
+        return acc
+      }, {}),
+    [accountingEditRegistrationWeeks]
+  )
+  const accountingEditStudent = useMemo(() => {
+    if (!accountingEditState.registration || !accountingEditState.row) {
+      return null
+    }
+    return accountingEditState.registration.students?.[accountingEditState.row.camperIndex] || null
+  }, [accountingEditState.registration, accountingEditState.row])
+  const accountingEditLunchWeeks = useMemo(
+    () => (accountingEditStudent ? getLunchWeeksForStudent(accountingEditStudent, accountingEditWeeksById) : []),
+    [accountingEditStudent, accountingEditWeeksById]
+  )
   const accountingRows = useMemo(() => {
     const rows = []
     for (const record of registrationRecords) {
@@ -2221,9 +3253,12 @@ export default function AdminPage() {
           accountingEntries.find((item) => String(item?.camper_name || '').trim() === camperName) ||
           {}
         const manualDiscount = Math.max(0, Number(entry.manual_discount || 0))
-        const paidAmount = Math.max(0, Number(entry.paid_amount || 0))
-        const totalAfterManualDiscount = Math.max(0, Number(pricing.total || 0) - manualDiscount)
-        const owedAmount = Math.max(0, totalAfterManualDiscount - paidAmount)
+        const paymentState = deriveAccountingPaymentState({
+          entry,
+          tuitionTotal: pricing.total,
+          lunchTotal: pricing.lunchCost,
+          manualDiscount,
+        })
         const selectedWeekIds = Array.from(new Set(pricing.weekIds))
         const weekChipDetails = pricing.weekDetails.map((item) => ({
           chipLabel: `${weekNumberById[item.weekId]?.label || item.label} · ${item.isFullWeek ? 'Full Week' : 'Partial'}`,
@@ -2263,17 +3298,25 @@ export default function AdminPage() {
             }
           }
         }
+        if (Number(pricing.weekTierPromoAmount || 0) > 0) {
+          for (const promoLine of pricing.weekTierPromoLines || []) {
+            totalBreakdownLines.push(`${promoLine.label}: -${money(promoLine.amount)}`)
+          }
+        }
         if (Number(pricing.siblingDiscount || 0) > 0) {
           totalBreakdownLines.push(
             `Sibling discount (${pricing.siblingDiscountPct}%): -${money(pricing.siblingDiscount)}`
           )
         }
         totalBreakdownLines.push(`Lunch added after sibling discount: ${money(pricing.lunchCost)}`)
+        totalBreakdownLines.push(`Calculated tuition before manual discount: ${money(paymentState.tuitionBase)}`)
         totalBreakdownLines.push(`Calculated total: ${money(pricing.total)}`)
         if (manualDiscount > 0) {
           totalBreakdownLines.push(`Manual discount: -${money(manualDiscount)}`)
         }
-        totalBreakdownLines.push(`Displayed total: ${money(totalAfterManualDiscount)}`)
+        totalBreakdownLines.push(`Tuition after manual discount: ${money(paymentState.tuitionAfterManualDiscount)}`)
+        totalBreakdownLines.push(`Lunch total: ${money(paymentState.lunchTotal)}`)
+        totalBreakdownLines.push(`Displayed total: ${money(paymentState.totalAfterManualDiscount)}`)
         rows.push({
           key: `${record.id}-${index}`,
           registrationId: record.id,
@@ -2292,6 +3335,10 @@ export default function AdminPage() {
           lunchDaysCount: pricing.paidLunchCount,
           lunchCost: pricing.lunchCost,
           regularPriceTotal: pricing.regularTotal,
+          tuitionBeforeManualDiscount: paymentState.tuitionBase,
+          tuitionAfterManualDiscount: paymentState.tuitionAfterManualDiscount,
+          weekTierPromoAmount: pricing.weekTierPromoAmount,
+          weekTierPromoLines: pricing.weekTierPromoLines,
           generalCost: pricing.general,
           bootcampCost: pricing.bootcamp,
           overnightCost: pricing.overnight,
@@ -2301,16 +3348,23 @@ export default function AdminPage() {
           totalBreakdownLines,
           invoiceCalendarLines,
           manualDiscount,
-          totalAfterManualDiscount,
-          paidAmount,
-          owedAmount,
+          totalAfterManualDiscount: paymentState.totalAfterManualDiscount,
+          paidAmount: paymentState.totalPaidAmount,
+          owedAmount: paymentState.totalOwedAmount,
+          tuitionPaidAmount: paymentState.tuitionPaidAmount,
+          lunchPaidAmount: paymentState.lunchPaidAmount,
+          tuitionOwedAmount: paymentState.tuitionOwedAmount,
+          lunchOwedAmount: paymentState.lunchOwedAmount,
+          tuitionPaidPct: paymentState.tuitionPaidPct,
+          shouldStopRegistrationEmails: paymentState.shouldStopRegistrationEmails,
           paymentMethod: accountingPaymentMethods.includes(paymentMethod) ? paymentMethod : '',
           archived: Boolean(entry.archived),
+          r5SentUnpaid: Boolean(reservationJourneyStatusByRegistrationId[record.id]?.r5SentUnpaid) && !paymentState.shouldStopRegistrationEmails,
         })
       })
     }
     return rows
-  }, [config.tuition, registrationRecords, weekById, weekNumberById])
+  }, [config.tuition, registrationRecords, reservationJourneyStatusByRegistrationId, weekById, weekNumberById])
   const activeAccountingRows = useMemo(
     () => accountingRows.filter((row) => !row.archived && row.registrationType !== 'overnight-only'),
     [accountingRows]
@@ -2356,32 +3410,16 @@ export default function AdminPage() {
       String(a.week?.start || '').localeCompare(String(b.week?.start || ''))
     )
   }, [overnightAccountingRows, weekById, weekOptions.overnight])
-  const registrationFirstWeekStartById = useMemo(() => {
-    const map = {}
-    for (const row of accountingRows) {
-      const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0) continue
-      const candidateStarts = (Array.isArray(row.selectedWeekIds) ? row.selectedWeekIds : [])
-        .map((weekId) => weekById[weekId]?.start || '')
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b))
-      const firstStart = candidateStarts[0] || ''
-      if (!firstStart) continue
-      if (!map[registrationId] || firstStart < map[registrationId]) {
-        map[registrationId] = firstStart
-      }
-    }
-    return map
-  }, [accountingRows, weekById])
   const leadDueCounts = useMemo(() => {
     const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
-    const dayOffsets = [0, 1, 3, 5, 7]
+    const now = Date.now()
     for (const row of leadJourneyTrackerRows) {
       if (row.isRegistered || !row.createdAt || String(row.status || '').startsWith('test_')) continue
       const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
       if (!nextColumn) continue
-      const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
-      if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
+      const dueAt = String(row?.nextSendAt || '').trim()
+      const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+      if (!Number.isNaN(dueTime) && dueTime <= now) {
         counts[nextColumn.key] += 1
       }
     }
@@ -2389,14 +3427,13 @@ export default function AdminPage() {
   }, [leadJourneyTrackerRows])
   const leadUpcomingCounts = useMemo(() => {
     const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
-    const dayOffsets = [0, 1, 3, 5, 7]
     const now = Date.now()
     const upcomingBoundary = now + 24 * 60 * 60 * 1000
     for (const row of leadJourneyTrackerRows) {
       if (row.isRegistered || !row.createdAt || String(row.status || '').startsWith('test_')) continue
       const nextColumn = leadTrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
       if (!nextColumn) continue
-      const dueAt = addDaysToIso(row.createdAt, dayOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+      const dueAt = String(row?.nextSendAt || '').trim()
       const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
       if (!Number.isNaN(dueTime) && dueTime > now && dueTime <= upcomingBoundary) {
         counts[nextColumn.key] += 1
@@ -2413,27 +3450,10 @@ export default function AdminPage() {
       if (row.hidden || registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
-        const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
-        if (!firstWeekStart) continue
-        const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
-        if (Number.isNaN(firstWeekStartDate.getTime())) continue
-        const startBoundary = addDays(firstWeekStartDate, 1)
-        if (Date.now() > startBoundary.getTime()) continue
-        const stageDefs = [
-          { key: 'paid_7d', daysBefore: 7 },
-          { key: 'paid_5d', daysBefore: 5 },
-          { key: 'paid_3d', daysBefore: 3 },
-          { key: 'paid_1d', daysBefore: 1 },
-        ]
-        for (const stage of stageDefs) {
-          if (isPaidPrepHandled(row.steps[stage.key]?.status)) {
-            continue
-          }
-          const scheduledAt = addDays(firstWeekStartDate, -stage.daysBefore)
-          if (now >= scheduledAt.getTime()) {
-            map[registrationId] = stage.key
-          }
-          break
+        if (row.registrationType === 'overnight-only') continue
+        const nextEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0]
+        if (nextEntry && now >= new Date(nextEntry.scheduledAt).getTime()) {
+          map[registrationId] = nextEntry.key
         }
         continue
       }
@@ -2452,7 +3472,7 @@ export default function AdminPage() {
       }
     }
     return map
-  }, [registrationFirstWeekStartById, reservationJourneyTrackerRows])
+  }, [reservationJourneyTrackerRows])
   const reservationUpcomingKeyByRegistrationId = useMemo(() => {
     const map = {}
     const unpaidHourOffsets = [0, 12, 36, 66, 72]
@@ -2463,27 +3483,11 @@ export default function AdminPage() {
       if (row.hidden || registrationId <= 0 || !row.createdAt || String(row.status || '').startsWith('test_')) continue
 
       if (String(row.status || '') === 'paid') {
-        const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
-        if (!firstWeekStart) continue
-        const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
-        if (Number.isNaN(firstWeekStartDate.getTime())) continue
-        const startBoundary = addDays(firstWeekStartDate, 1)
-        if (now > startBoundary.getTime()) continue
-        const stageDefs = [
-          { key: 'paid_7d', daysBefore: 7 },
-          { key: 'paid_5d', daysBefore: 5 },
-          { key: 'paid_3d', daysBefore: 3 },
-          { key: 'paid_1d', daysBefore: 1 },
-        ]
-        for (const stage of stageDefs) {
-          if (isPaidPrepHandled(row.steps[stage.key]?.status)) {
-            continue
-          }
-          const scheduledAt = addDays(firstWeekStartDate, -stage.daysBefore).getTime()
-          if (scheduledAt > now && scheduledAt <= upcomingBoundary) {
-            map[registrationId] = stage.key
-          }
-          break
+        if (row.registrationType === 'overnight-only') continue
+        const nextEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0]
+        const scheduledAt = nextEntry ? new Date(nextEntry.scheduledAt).getTime() : NaN
+        if (!Number.isNaN(scheduledAt) && scheduledAt > now && scheduledAt <= upcomingBoundary) {
+          map[registrationId] = nextEntry.key
         }
         continue
       }
@@ -2503,7 +3507,7 @@ export default function AdminPage() {
       }
     }
     return map
-  }, [registrationFirstWeekStartById, reservationJourneyTrackerRows])
+  }, [reservationJourneyTrackerRows])
   const reservationDueCounts = useMemo(() => {
     const counts = Object.fromEntries(reservationTrackerColumns.map((column) => [column.key, 0]))
     for (const dueKey of Object.values(reservationDueKeyByRegistrationId)) {
@@ -2534,6 +3538,22 @@ export default function AdminPage() {
       total: lead + reservation,
     }
   }, [leadDueCounts, leadUpcomingCounts, reservationDueCounts, reservationUpcomingCounts])
+  const standardReservationDueCount = useMemo(
+    () =>
+      standardReservationJourneyTrackerRows.reduce(
+        (sum, row) => sum + (row?.registrationId && reservationDueKeyByRegistrationId[Number(row.registrationId)] ? 1 : 0),
+        0
+      ),
+    [reservationDueKeyByRegistrationId, standardReservationJourneyTrackerRows]
+  )
+  const overnightReservationDueCount = useMemo(
+    () =>
+      overnightReservationJourneyTrackerRows.reduce(
+        (sum, row) => sum + (row?.registrationId && reservationDueKeyByRegistrationId[Number(row.registrationId)] ? 1 : 0),
+        0
+      ),
+    [overnightReservationJourneyTrackerRows, reservationDueKeyByRegistrationId]
+  )
   const accountingDueEmailCount = useMemo(() => {
     const activeRegistrationIds = new Set(
       activeAccountingRows.map((row) => Number(row.registrationId || 0)).filter((value) => value > 0)
@@ -2569,8 +3589,7 @@ export default function AdminPage() {
     if (!nextColumn || nextColumn.key !== column.key) {
       return ''
     }
-    const dueOffsets = [0, 1, 3, 5, 7]
-    const dueAt = addDaysToIso(row.createdAt, dueOffsets[Math.max(0, nextColumn.stepNumber - 1)] || 0)
+    const dueAt = String(row?.nextSendAt || '').trim()
     const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
     if (Number.isNaN(dueTime)) {
       return ''
@@ -2599,32 +3618,17 @@ export default function AdminPage() {
 
     if (String(row.status || '') === 'paid') {
       const registrationId = Number(row.registrationId || 0)
-      if (registrationId <= 0) {
+      if (registrationId <= 0 || row.registrationType === 'overnight-only') {
         return ''
       }
-      const firstWeekStart = registrationFirstWeekStartById[registrationId] || ''
-      if (!firstWeekStart) {
+      const nextEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0]
+      if (!nextEntry || nextEntry.key !== column.key) {
         return ''
       }
-      const firstWeekStartDate = new Date(`${firstWeekStart}T12:00:00`)
-      if (Number.isNaN(firstWeekStartDate.getTime())) {
+      const scheduledAt = new Date(nextEntry.scheduledAt).getTime()
+      if (!scheduledAt) {
         return ''
       }
-      const startBoundary = addDays(firstWeekStartDate, 1)
-      if (now > startBoundary.getTime()) {
-        return ''
-      }
-      const stageDefs = [
-        { key: 'paid_7d', daysBefore: 7 },
-        { key: 'paid_5d', daysBefore: 5 },
-        { key: 'paid_3d', daysBefore: 3 },
-        { key: 'paid_1d', daysBefore: 1 },
-      ]
-      const nextStage = stageDefs.find((stage) => !isPaidPrepHandled(row.steps[stage.key]?.status))
-      if (!nextStage || nextStage.key !== column.key) {
-        return ''
-      }
-      const scheduledAt = addDays(firstWeekStartDate, -nextStage.daysBefore).getTime()
       if (scheduledAt <= now) {
         return 'due'
       }
@@ -2761,9 +3765,32 @@ export default function AdminPage() {
   }, [config])
   const activeLeadJourneyTemplate = config.emailJourney[activeJourneyTab] || config.emailJourney[0]
   const activeReservationTemplate =
-    reservationJourneyTemplates[activeReservationJourneyTab] || reservationJourneyTemplates[0]
+    reservationReminderJourneyTemplates[activeReservationJourneyTab] || reservationReminderJourneyTemplates[0]
+  const activePaidEnrollmentTemplate =
+    paidEnrollmentJourneyTemplates[activePaidEnrollmentJourneyTab] || paidEnrollmentJourneyTemplates[0]
   const isLeadJourneyFlow = activeJourneyFlow === 'lead'
   const isOvernightJourneyFlow = activeJourneyFlow === 'overnight'
+  const isPaidFollowupJourneyFlow = activeJourneyFlow === 'paid-followup'
+  const activeJourneyPreviewTemplates = isLeadJourneyFlow
+    ? config.emailJourney
+    : isPaidFollowupJourneyFlow
+      ? paidEnrollmentJourneyTemplates
+      : reservationReminderJourneyTemplates
+  const activeJourneyPreviewIndex = isLeadJourneyFlow
+    ? activeJourneyTab
+    : isPaidFollowupJourneyFlow
+      ? activePaidEnrollmentJourneyTab
+      : activeReservationJourneyTab
+  const activeJourneyTemplate = isLeadJourneyFlow
+    ? activeLeadJourneyTemplate
+    : isPaidFollowupJourneyFlow
+      ? activePaidEnrollmentTemplate
+      : activeReservationTemplate
+  const activeJourneyBlueprintItems = isLeadJourneyFlow
+    ? emailJourneyBlueprint
+    : isPaidFollowupJourneyFlow
+      ? paidEnrollmentJourneyBlueprint
+      : reservationReminderJourneyBlueprint
 
   function getLevelUpScreenshotCaption(index) {
     return (
@@ -2874,6 +3901,8 @@ export default function AdminPage() {
         '{registration_summary}',
         '- Camper: Ethan (age 9)\n- Program: General Camp\n- Weeks: Jul 7-11, Jul 14-18\n- Lunch: Mon/Wed/Fri'
       )
+      .replaceAll('{left_off_summary}', 'Location: Burlington\nParent/Guardian: Calvin Chen\nPayment method: Zelle')
+      .replaceAll('{selected_weeks}', 'Jul 7-11\nJul 14-18')
       .replaceAll('{amount_due}', '$1,680.00')
       .replaceAll('{app_launch_date}', 'June 20')
   }
@@ -2890,6 +3919,8 @@ export default function AdminPage() {
       reservation_deadline: 'May 20, 5:00 PM EDT',
       registration_summary:
         'Location: Burlington\nParent/Guardian: Calvin Chen\nContact: calvin@example.com\nPayment method: Zelle\nEthan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri\nGrand total: $1,680.00',
+      left_off_summary: 'Location: Burlington\nParent/Guardian: Calvin Chen\nPayment method: Zelle',
+      selected_weeks: 'Jul 7-11\nJul 14-18',
       amount_due: '$1,680.00',
       app_launch_date: 'June 20',
     }
@@ -2948,6 +3979,39 @@ export default function AdminPage() {
   }
 
   function buildJourneyPreviewHtmlFromTemplate(stepIndex, template, flowKey = 'lead') {
+    if (flowKey === 'paid-followup') {
+      return buildPaidEnrollmentJourneyMessage({
+        stepNumber: stepIndex + 1,
+        logoUrl: config.media?.welcomeLogoUrl || '',
+        landingCarouselImageUrls: config.media?.landingCarouselImageUrls || [],
+        payload:
+          paidEnrollmentPreviewTrack === 'bootcamp'
+            ? {
+                registrationType: '',
+                guardianName: 'Calvin Chen',
+                camperNames: ['Ethan Chen'],
+                location: 'Burlington',
+                paymentMethod: 'Zelle',
+                amountDue: 0,
+                campWeeks: [
+                  { start: '2026-07-07', end: '2026-07-11' },
+                  { start: '2026-07-14', end: '2026-07-18' },
+                  { start: '2026-07-21', end: '2026-07-25' },
+                ],
+                summaryLines: [
+                  'Location: Burlington',
+                  'Parent/Guardian: Calvin Chen',
+                  'Contact: calvin@example.com',
+                  'Payment method: Zelle',
+                  'Ethan Chen: Competition Boot Camp, Jul 7-11, Jul 14-18, Jul 21-25',
+                  'Grand total: $2,340.00',
+                  'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:30 PM',
+                ],
+              }
+            : buildReservationPreviewPayload('standard'),
+      }).html
+    }
+
     if (flowKey === 'reservation' || flowKey === 'overnight') {
       return buildReservationJourneyMessage({
         stepNumber: stepIndex + 1,
@@ -2989,7 +4053,12 @@ export default function AdminPage() {
           toEmail: recipient,
           stepNumber: stepIndex + 1,
           flowKey,
-          previewRegistrationType: flowKey === 'overnight' ? 'overnight-only' : 'standard',
+          previewRegistrationType:
+            flowKey === 'overnight'
+              ? 'overnight-only'
+              : flowKey === 'paid-followup'
+                ? paidEnrollmentPreviewTrack
+                : 'standard',
           template: {
             subject: renderJourneyTemplate(template.subject),
             body: renderJourneyTemplate(template.body),
@@ -3156,6 +4225,7 @@ export default function AdminPage() {
           sent: leadResult?.emailed || 0,
           queued: leadResult?.queued || 0,
           checked: leadResult?.processed || 0,
+          stepCounts: leadResult?.stepCounts || {},
           candidates: leadResult?.debug?.queue?.candidates || 0,
           skippedRegistered: leadResult?.debug?.queue?.skippedRegistered || 0,
           skippedActive: leadResult?.debug?.queue?.skippedActive || 0,
@@ -3168,6 +4238,7 @@ export default function AdminPage() {
         reservation: {
           sent: reservationResult?.emailed || 0,
           checked: reservationResult?.processed || 0,
+          stepCounts: reservationResult?.stepCounts || {},
         },
       })
       setSavedMessage('Processed due emails.')
@@ -3485,6 +4556,253 @@ export default function AdminPage() {
     setSendingJourneyCellKey('')
   }
 
+  async function previewJourneyCell({ flow, row, column }) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for journey previews.')
+      return
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      return
+    }
+
+    const rowKey = row?.runId || row?.registrationId || row?.email || 'unknown'
+    const previewKey = `${flow}-${rowKey}-${column.key}`
+    setPreviewingJourneyCellKey(previewKey)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const body =
+        flow === 'lead'
+          ? {
+              action: 'preview_step',
+              email: row?.email,
+              runId: row?.runId || null,
+              stepNumber: column?.stepNumber,
+            }
+          : {
+              action: 'preview_step',
+              runId: row?.runId,
+              stepKey: column?.key,
+              stepNumber: column?.stepNumber,
+            }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Preview failed.')
+      }
+
+      setJourneyCellPreviewState({
+        open: true,
+        title: `${row?.email || 'Email'} • ${column?.label || 'Step'}`,
+        subject: String(result?.subject || ''),
+        html: String(result?.html || ''),
+      })
+    } catch (error) {
+      setErrorMessage(error?.message || 'Preview failed.')
+    }
+
+    setPreviewingJourneyCellKey('')
+  }
+
+  async function previewEmailEventRow(eventRow) {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for journey previews.')
+      return
+    }
+
+    const eventType = String(eventRow?.event_type || '').trim()
+    const stepNumber = Number(eventRow?.step_number || 0)
+    const runId = Number(eventRow?.run_id || 0)
+    const eventKey = `event-${eventRow?.id || `${runId}-${eventType}-${stepNumber}`}`
+    const eventPayload =
+      typeof eventRow?.event_payload === 'object' && eventRow?.event_payload
+        ? eventRow.event_payload
+        : parseMaybeJson(eventRow?.event_payload, {}) || {}
+
+    const buildReservationStepKey = () => {
+      switch (eventType) {
+        case 'paid_prep_7d_sent':
+        case 'paid_prep_7d_sent_preview':
+        case 'paid_prep_opened':
+          return 'paid_7d'
+        case 'paid_prep_5d_sent':
+        case 'paid_prep_5d_sent_preview':
+          return 'paid_5d'
+        case 'paid_prep_3d_sent':
+        case 'paid_prep_3d_sent_preview':
+          return 'paid_3d'
+        case 'paid_prep_1d_sent':
+        case 'paid_prep_1d_sent_preview':
+          return 'paid_1d'
+        case 'paid_followup_opened':
+          return String(eventPayload?.stepKey || '').trim()
+        case 'paid_followup_0w_sent':
+        case 'paid_followup_0w_sent_preview':
+          return 'paid_0w'
+        case 'paid_followup_2w_sent':
+        case 'paid_followup_2w_sent_preview':
+          return 'paid_2w'
+        case 'paid_followup_4w_sent':
+        case 'paid_followup_4w_sent_preview':
+          return 'paid_4w'
+        case 'paid_followup_8w_sent':
+        case 'paid_followup_8w_sent_preview':
+          return 'paid_8w'
+        default:
+          return ''
+      }
+    }
+
+    const isLeadEvent =
+      eventType.startsWith('lead_journey_') ||
+      eventType === 'test_sent_lead' ||
+      eventType === 'test_preview_only_lead'
+    const isReservationEvent =
+      eventType === 'reservation_email_sent' ||
+      eventType === 'reservation_email_preview' ||
+      eventType === 'test_sent_reservation' ||
+      eventType === 'test_preview_only_reservation' ||
+      eventType.startsWith('paid_prep_') ||
+      eventType.startsWith('paid_followup_')
+
+    if (!isLeadEvent && !isReservationEvent) {
+      setErrorMessage('This event row does not have a viewable email preview.')
+      return
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      return
+    }
+
+    setPreviewingEventRowKey(eventKey)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      const flow = isLeadEvent ? 'lead' : 'reservation'
+      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const reservationStepKey = buildReservationStepKey()
+      const body =
+        flow === 'lead'
+          ? {
+              action: 'preview_step',
+              email: eventRow?.email,
+              runId: runId || null,
+              stepNumber: Math.max(1, stepNumber || 1),
+            }
+          : {
+              action: 'preview_step',
+              runId,
+              stepKey: reservationStepKey || undefined,
+              stepNumber: reservationStepKey ? undefined : Math.max(1, stepNumber || 1),
+            }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Preview failed.')
+      }
+
+      setJourneyCellPreviewState({
+        open: true,
+        title: `${eventRow?.email || 'Email'} • ${eventType}`,
+        subject: String(result?.subject || ''),
+        html: String(result?.html || ''),
+      })
+    } catch (error) {
+      setErrorMessage(error?.message || 'Preview failed.')
+    }
+
+    setPreviewingEventRowKey('')
+  }
+
+  function buildLeadCalendarEntries(row) {
+    const fallbackDays = [0, 2, 4, 6, 8]
+    return leadTrackerColumns
+      .map((column, index) => {
+        const dayLabel = config.emailJourney[index]?.dayLabel || ''
+        const scheduledAt = addDaysToIso(row?.createdAt, parseLeadJourneyDayOffset(dayLabel, fallbackDays[index] || index * 2))
+        if (!scheduledAt) {
+          return null
+        }
+        return {
+          label: column.label,
+          scheduledAt,
+          status: row?.steps?.[column.key]?.status || 'pending',
+        }
+      })
+      .filter(Boolean)
+  }
+
+  function buildReservationCalendarEntries(row) {
+    if (String(row?.status || '') === 'paid') {
+      const sentKeys = row?.paidSentInstanceKeys instanceof Set ? row.paidSentInstanceKeys : new Set()
+      const previewKeys = row?.paidPreviewInstanceKeys instanceof Set ? row.paidPreviewInstanceKeys : new Set()
+      const openedKeys = row?.paidOpenedInstanceKeys instanceof Set ? row.paidOpenedInstanceKeys : new Set()
+      return getPaidJourneyEntries(row, row.selectedWeekStarts).map((entry) => ({
+        label: entry.label,
+        scheduledAt: entry.scheduledAt,
+        status: openedKeys.has(entry.instanceKey) ? 'opened' : sentKeys.has(entry.instanceKey) ? 'sent' : previewKeys.has(entry.instanceKey) ? 'preview' : 'pending',
+        note: entry.weekStart ? formatJourneyCalendarWeekNote(entry.weekStart) : 'After signup follow-up',
+      }))
+    }
+
+    const unpaidHourOffsets = [0, 12, 36, 66, 72]
+    return reservationTrackerColumns
+      .filter((column) => String(column.key || '').startsWith('step_'))
+      .map((column) => {
+        const scheduledAt = addHoursToIso(row?.createdAt, unpaidHourOffsets[Math.max(0, (column.stepNumber || 1) - 1)] || 0)
+        if (!scheduledAt) {
+          return null
+        }
+        return {
+          label: column.label,
+          scheduledAt,
+          status: row?.steps?.[column.key]?.status || 'pending',
+        }
+      })
+      .filter(Boolean)
+  }
+
+  function openJourneyCalendar({ flow, row }) {
+    const entries = flow === 'lead' ? buildLeadCalendarEntries(row) : buildReservationCalendarEntries(row)
+    setJourneyCalendarState({
+      open: true,
+      title: `${row?.email || 'Journey'} Calendar`,
+      entries,
+    })
+  }
+
   async function syncReservationPaymentForRun(runId, markPaid) {
     const normalizedRunId = Number(runId || 0)
     if (normalizedRunId <= 0 || !supabaseEnabled || !supabase) {
@@ -3528,6 +4846,8 @@ export default function AdminPage() {
             camper_name: row.camperName,
             archived: false,
             paid_amount: 0,
+            tuition_paid_amount: 0,
+            lunch_paid_amount: 0,
             manual_discount: 0,
             payment_method: '',
           }
@@ -3537,9 +4857,14 @@ export default function AdminPage() {
       camper_index: row.camperIndex,
       camper_name: row.camperName,
       paid_amount: Math.max(0, Number(updates.paid_amount ?? base.paid_amount ?? 0)),
+      tuition_paid_amount: Math.max(0, Number(updates.tuition_paid_amount ?? base.tuition_paid_amount ?? 0)),
+      lunch_paid_amount: Math.max(0, Number(updates.lunch_paid_amount ?? base.lunch_paid_amount ?? 0)),
       manual_discount: Math.max(0, Number(updates.manual_discount ?? base.manual_discount ?? 0)),
       payment_method: String(updates.payment_method ?? base.payment_method ?? '').trim().toLowerCase(),
       archived: Boolean(updates.archived ?? base.archived ?? false),
+    }
+    if (updates.tuition_paid_amount != null || updates.lunch_paid_amount != null) {
+      next.paid_amount = roundMoney(Number(next.tuition_paid_amount || 0) + Number(next.lunch_paid_amount || 0))
     }
     if (!accountingPaymentMethods.includes(next.payment_method)) {
       next.payment_method = ''
@@ -3565,8 +4890,13 @@ export default function AdminPage() {
       return false
     }
 
-    const nextOwed = Math.max(0, Number(row.totalAfterManualDiscount || 0) - Number(next.paid_amount || 0))
-    const shouldMarkPaid = nextOwed <= 0 && next.archived === false
+    const normalizedPaymentState = deriveAccountingPaymentState({
+      entry: next,
+      tuitionTotal: Number(row.tuitionBeforeManualDiscount || 0) + Number(row.lunchCost || 0),
+      lunchTotal: Number(row.lunchCost || 0),
+      manualDiscount: Number(next.manual_discount || 0),
+    })
+    const shouldMarkPaid = normalizedPaymentState.shouldStopRegistrationEmails && next.archived === false
     await syncReservationPaymentForRun(reservationRunIdByRegistrationId[row.registrationId], shouldMarkPaid)
     setRegistrationRecords((current) =>
       current.map((item) =>
@@ -3585,6 +4915,12 @@ export default function AdminPage() {
       [row.key]: {
         manualDiscount:
           updates.manualDiscount ?? current[row.key]?.manualDiscount ?? Number(row.manualDiscount || 0),
+        tuitionPaidAmount:
+          updates.tuitionPaidAmount ?? current[row.key]?.tuitionPaidAmount ?? String(row.tuitionPaidAmount ?? 0),
+        lunchPaidAmount:
+          updates.lunchPaidAmount ?? current[row.key]?.lunchPaidAmount ?? String(row.lunchPaidAmount ?? 0),
+        paymentMethod:
+          updates.paymentMethod ?? current[row.key]?.paymentMethod ?? String(row.paymentMethod || ''),
         archived: updates.archived ?? current[row.key]?.archived ?? Boolean(row.archived),
       },
     }))
@@ -3597,6 +4933,9 @@ export default function AdminPage() {
     }
     const hasChanges =
       Number(draft.manualDiscount || 0) !== Number(row.manualDiscount || 0) ||
+      Number(draft.tuitionPaidAmount || 0) !== Number(row.tuitionPaidAmount || 0) ||
+      Number(draft.lunchPaidAmount || 0) !== Number(row.lunchPaidAmount || 0) ||
+      String(draft.paymentMethod || '') !== String(row.paymentMethod || '') ||
       Boolean(draft.archived) !== Boolean(row.archived)
     if (!hasChanges) {
       setAccountingDrafts((current) => {
@@ -3608,6 +4947,9 @@ export default function AdminPage() {
     }
     const ok = await updateAccountingEntryField(row, {
       manual_discount: Number(draft.manualDiscount || 0),
+      tuition_paid_amount: Number(draft.tuitionPaidAmount || 0),
+      lunch_paid_amount: Number(draft.lunchPaidAmount || 0),
+      payment_method: String(draft.paymentMethod || ''),
       archived: Boolean(draft.archived),
     })
     if (ok) {
@@ -3695,24 +5037,12 @@ export default function AdminPage() {
     return true
   }
 
-  async function sendAccountingInvoice(row) {
-    const toEmail = String(row.parentEmail || '').trim()
-    if (!/\S+@\S+\.\S+/.test(toEmail)) {
-      setErrorMessage('Parent email is required to send invoice.')
-      return
-    }
-    const key = `${row.registrationId}-${row.camperIndex}`
-    setSendingInvoiceKey(key)
-    setSavedMessage('')
-    setErrorMessage('')
-
+  function buildAccountingSummaryDocumentForRow(row) {
     const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
     const rawMeta = sourceRecord ? parseMaybeJson(sourceRecord.medical_notes, {}) || {} : {}
     const payload = rawMeta?.registration || {}
     if (!payload || !Array.isArray(payload.students) || payload.students.length === 0) {
-      setErrorMessage('Registration summary payload not found for this row.')
-      setSendingInvoiceKey('')
-      return
+      throw new Error('Registration summary payload not found for this row.')
     }
 
     const summaryRegistration = {
@@ -3721,7 +5051,21 @@ export default function AdminPage() {
       contactEmail: payload.contactEmail || row.parentEmail,
       paymentMethod: row.paymentMethod || payload.paymentMethod || '',
     }
-    const summaryDocument = buildRegistrationSummaryDocument({
+    const accountingSummary = {
+      title: `Current Accounting Snapshot for ${row.camperName || 'Camper'}`,
+      rows: [
+        { label: 'Tuition after discounts', value: money(row.tuitionAfterManualDiscount) },
+        { label: 'Lunch total', value: money(row.lunchCost) },
+        { label: 'Registration total', value: money(row.totalCost) },
+        { label: 'Paid tuition', value: money(row.tuitionPaidAmount) },
+        { label: 'Paid lunch', value: money(row.lunchPaidAmount) },
+        { label: 'Total paid', value: money(row.paidAmount) },
+        { label: 'Current balance due', value: money(row.owedAmount) },
+        { label: 'Preferred payment method', value: String(row.paymentMethod || payload.paymentMethod || '').toUpperCase() || 'Select in portal' },
+      ],
+    }
+
+    return buildRegistrationSummaryDocument({
       registration: summaryRegistration,
       tuition: config.tuition,
       weeksById: weekById,
@@ -3736,13 +5080,327 @@ export default function AdminPage() {
       ),
       businessName: config.tuition.businessName || 'New England Wushu',
       businessAddress: config.tuition.businessAddress || '',
+      accountingSummary,
     })
+  }
+
+  function openAccountingInvoicePreview(row) {
+    try {
+      const summaryDocument = buildAccountingSummaryDocumentForRow(row)
+      setInvoicePreviewState({
+        open: true,
+        title: `${row.camperName} Invoice Preview`,
+        html: summaryDocument.html,
+      })
+      setErrorMessage('')
+    } catch (error) {
+      setErrorMessage(error?.message || 'Invoice preview failed.')
+    }
+  }
+
+  function openAccountingInvoiceSendDialog(row) {
+    const toEmail = String(row.parentEmail || '').trim()
+    if (!/\S+@\S+\.\S+/.test(toEmail)) {
+      setErrorMessage('Parent email is required to send invoice.')
+      return
+    }
+    setInvoiceSendDialog({
+      open: true,
+      row,
+      sendAdminCopy: true,
+    })
+    setErrorMessage('')
+  }
+
+  function openAccountingEditor(row) {
+    const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
+    const rawMeta = sourceRecord ? parseMaybeJson(sourceRecord.medical_notes, {}) || {} : {}
+    const payload = rawMeta?.registration || {}
+    const students = Array.isArray(payload.students) ? payload.students : []
+    if (!sourceRecord || students.length === 0 || !students[row.camperIndex]) {
+      setErrorMessage('Saved registration data was not found for this camper.')
+      return
+    }
+
+    setAccountingEditState({
+      open: true,
+      row,
+      sourceRecordId: Number(sourceRecord.id),
+      registration: {
+        ...payload,
+        students: students.map((student) => ({
+          ...student,
+          schedule: typeof student?.schedule === 'object' && student.schedule ? student.schedule : {},
+          lunch: typeof student?.lunch === 'object' && student.lunch ? student.lunch : {},
+        })),
+      },
+      expandedWeekKey: '',
+      expandedLunchWeekKey: '',
+    })
+    setErrorMessage('')
+  }
+
+  function setAccountingEditorStudentWeek(week, updater) {
+    setAccountingEditState((current) => {
+      if (!current.registration || !current.row) {
+        return current
+      }
+      const studentIndex = Number(current.row.camperIndex || 0)
+      const students = Array.isArray(current.registration.students) ? current.registration.students : []
+      const student = students[studentIndex]
+      if (!student) {
+        return current
+      }
+      const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
+      const currentEntry = student.schedule?.[week.id] || {
+        weekId: week.id,
+        programKey: week.programKey,
+        campType: week.programKey === 'daycamp' ? '' : week.programKey,
+        days: weekDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
+      }
+      const updatedEntry = updater(currentEntry)
+      const dayModes = weekDayKeys.map((day) => updatedEntry.days?.[day] || 'NONE')
+      const hasAnyDay = dayModes.some((mode) => mode !== 'NONE')
+      const nextSchedule = { ...(student.schedule || {}) }
+      const nextLunch = { ...(student.lunch || {}) }
+
+      if (hasAnyDay) {
+        nextSchedule[week.id] = updatedEntry
+      } else {
+        delete nextSchedule[week.id]
+        for (const day of weekDayKeys) {
+          delete nextLunch[`${week.id}:${day}`]
+        }
+      }
+
+      for (const day of weekDayKeys) {
+        if ((updatedEntry.days?.[day] || 'NONE') === 'NONE') {
+          delete nextLunch[`${week.id}:${day}`]
+        }
+      }
+
+      const nextStudents = students.map((item, index) =>
+        index === studentIndex
+          ? {
+              ...item,
+              schedule: nextSchedule,
+              lunch: nextLunch,
+            }
+          : item
+      )
+
+      return {
+        ...current,
+        registration: {
+          ...current.registration,
+          students: nextStudents,
+        },
+      }
+    })
+  }
+
+  function setAccountingEditorCampType(week, campType) {
+    setAccountingEditState((current) => {
+      if (!current.registration || !current.row) {
+        return current
+      }
+      const studentIndex = Number(current.row.camperIndex || 0)
+      const students = Array.isArray(current.registration.students) ? current.registration.students : []
+      const student = students[studentIndex]
+      if (!student) {
+        return current
+      }
+      const existing = student.schedule?.[week.id] || {
+        weekId: week.id,
+        programKey: week.programKey,
+        campType: '',
+        days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
+      }
+      const nextStudents = students.map((item, index) =>
+        index === studentIndex
+          ? {
+              ...item,
+              schedule: {
+                ...(item.schedule || {}),
+                [week.id]: {
+                  ...existing,
+                  campType,
+                },
+              },
+            }
+          : item
+      )
+      return {
+        ...current,
+        registration: {
+          ...current.registration,
+          students: nextStudents,
+        },
+      }
+    })
+  }
+
+  function toggleAccountingEditorFullWeek(week) {
+    if (!accountingEditStudent) {
+      return
+    }
+    const selectedCampType = accountingEditStudent.schedule?.[week.id]?.campType || ''
+    if (!selectedCampType) {
+      setErrorMessage('Select General or Boot Camp for this week first.')
+      return
+    }
+    const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
+    setAccountingEditorStudentWeek(week, (entry) => {
+      const alreadyFull = weekDayKeys.every((day) => (entry.days?.[day] || 'NONE') === 'FULL')
+      return {
+        ...entry,
+        days: weekDayKeys.reduce((acc, day) => ({ ...acc, [day]: alreadyFull ? 'NONE' : 'FULL' }), {}),
+      }
+    })
+  }
+
+  function cycleAccountingEditorDay(week, day) {
+    if (!accountingEditStudent) {
+      return
+    }
+    const selectedCampType = accountingEditStudent.schedule?.[week.id]?.campType || ''
+    if (!selectedCampType) {
+      setErrorMessage('Select General or Boot Camp for this week first.')
+      return
+    }
+    setAccountingEditorStudentWeek(week, (entry) => {
+      const currentMode = entry.days?.[day] || 'NONE'
+      return {
+        ...entry,
+        days: {
+          ...entry.days,
+          [day]: accountingEditorNextMode[currentMode],
+        },
+      }
+    })
+  }
+
+  function toggleAccountingEditorLunch(weekId, dayKey) {
+    if (!accountingEditStudent || isIncludedLunchDay(dayKey)) {
+      return
+    }
+    const lunchKey = `${weekId}:${dayKey}`
+    setAccountingEditState((current) => {
+      if (!current.registration || !current.row) {
+        return current
+      }
+      const studentIndex = Number(current.row.camperIndex || 0)
+      const students = Array.isArray(current.registration.students) ? current.registration.students : []
+      const student = students[studentIndex]
+      if (!student) {
+        return current
+      }
+      const nextStudents = students.map((item, index) =>
+        index === studentIndex
+          ? {
+              ...item,
+              lunch: {
+                ...(item.lunch || {}),
+                [lunchKey]: !item.lunch?.[lunchKey],
+              },
+            }
+          : item
+      )
+      return {
+        ...current,
+        registration: {
+          ...current.registration,
+          students: nextStudents,
+        },
+      }
+    })
+  }
+
+  async function saveAccountingEditor() {
+    if (!accountingEditState.open || !accountingEditState.registration || !accountingEditState.row) {
+      return
+    }
+    const key = `${accountingEditState.row.registrationId}-${accountingEditState.row.camperIndex}`
+    setUpdatingAccountingKey(key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(accountingEditState.sourceRecordId))
+    if (!sourceRecord) {
+      setErrorMessage('Registration row not found.')
+      setUpdatingAccountingKey('')
+      return
+    }
+
+    const rawMeta = parseMaybeJson(sourceRecord.medical_notes, {}) || {}
+    const response = await supabase
+      .from('registrations')
+      .update({
+        medical_notes: JSON.stringify({
+          ...rawMeta,
+          registration: accountingEditState.registration,
+        }),
+      })
+      .eq('id', sourceRecord.id)
+
+    if (response.error) {
+      setErrorMessage(`Registration edit failed: ${response.error.message}`)
+      setUpdatingAccountingKey('')
+      return
+    }
+
+    setRegistrationRecords((current) =>
+      current.map((item) =>
+        Number(item.id) === Number(sourceRecord.id)
+          ? {
+              ...item,
+              medical_notes: JSON.stringify({
+                ...rawMeta,
+                registration: accountingEditState.registration,
+              }),
+            }
+          : item
+      )
+    )
+    setAccountingEditState({
+      open: false,
+      row: null,
+      sourceRecordId: 0,
+      registration: null,
+      expandedWeekKey: '',
+      expandedLunchWeekKey: '',
+    })
+    setSavedMessage('Registration selections updated.')
+    setUpdatingAccountingKey('')
+  }
+
+  async function sendAccountingInvoice(row, options = {}) {
+    const toEmail = String(row.parentEmail || '').trim()
+    if (!/\S+@\S+\.\S+/.test(toEmail)) {
+      setErrorMessage('Parent email is required to send invoice.')
+      return
+    }
+    const key = `${row.registrationId}-${row.camperIndex}`
+    setSendingInvoiceKey(key)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    let summaryDocument = null
+    try {
+      summaryDocument = options.summaryDocument || buildAccountingSummaryDocumentForRow(row)
+    } catch (error) {
+      setErrorMessage(error?.message || 'Registration summary payload not found for this row.')
+      setSendingInvoiceKey('')
+      return
+    }
+    const ccEmails = options.sendAdminCopy ? [ACCOUNTING_ADMIN_COPY_EMAIL] : []
 
     const response = await fetch('/api/email/accounting-invoice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         toEmail,
+        ccEmails,
         parentName: row.parentName,
         camperName: row.camperName,
         paymentMethod: row.paymentMethod,
@@ -3758,8 +5416,13 @@ export default function AdminPage() {
       setSendingInvoiceKey('')
       return
     }
-    setSavedMessage(result?.previewOnly ? 'Invoice preview generated. Configure SES to send live.' : `Invoice sent to ${toEmail}.`)
+    setSavedMessage(
+      result?.previewOnly
+        ? 'Invoice preview generated. Configure SES to send live.'
+        : `Invoice sent to ${toEmail}${ccEmails.length > 0 ? ` with a copy to ${ccEmails.join(', ')}` : ''}.`
+    )
     setSendingInvoiceKey('')
+    setInvoiceSendDialog({ open: false, row: null, sendAdminCopy: true })
   }
 
   async function generateAiReplyDraft() {
@@ -6750,7 +8413,7 @@ export default function AdminPage() {
       <section className="card section">
         <h2>Email Journey Builder</h2>
         <p className="subhead">
-          Three automation views: survey leads, standard submitted-registration reminders, and overnight submitted-registration reminders.
+          Four automation views: survey leads, standard submitted-registration reminders, paid-family follow-ups, and overnight submitted-registration reminders.
         </p>
         <div className="journeyFlowTabs" role="tablist" aria-label="Journey flow type">
           <button
@@ -6770,6 +8433,15 @@ export default function AdminPage() {
             onClick={() => setActiveJourneyFlow('reservation')}
           >
             Submitted Registration 72h
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeJourneyFlow === 'paid-followup'}
+            className={`journeyFlowTabBtn ${activeJourneyFlow === 'paid-followup' ? 'active' : ''}`}
+            onClick={() => setActiveJourneyFlow('paid-followup')}
+          >
+            Paid Follow-Up
           </button>
           <button
             type="button"
@@ -6802,21 +8474,21 @@ export default function AdminPage() {
               className="button secondary"
               onClick={() =>
                 sendTestEmailForStep(
-                  isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
-                  isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  activeJourneyPreviewIndex,
+                  activeJourneyTemplate,
                   activeJourneyFlow
                 )
               }
               disabled={sendingTestStep > 0}
             >
-              {sendingTestStep === (isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+              {sendingTestStep === activeJourneyPreviewIndex + 1
                 ? 'Sending test...'
-                : `Send Test for Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+                : `Send Test for Step ${activeJourneyPreviewIndex + 1}`}
             </button>
           </div>
         </div>
         <div className="journeyGrid">
-          {(isLeadJourneyFlow ? emailJourneyBlueprint : reservationJourneyBlueprint).map((item) => (
+          {activeJourneyBlueprintItems.map((item) => (
             <article key={item.step} className="journeyCard">
               <p className="journeyDay">{item.step}</p>
               <h4>{item.objective}</h4>
@@ -6825,36 +8497,27 @@ export default function AdminPage() {
           ))}
         </div>
         <div className="surveySubTabs">
-          {(isLeadJourneyFlow ? config.emailJourney : reservationJourneyTemplates).map((item, index) => (
+          {activeJourneyPreviewTemplates.map((item, index) => (
             <button
               key={`${item.dayLabel}-${index}`}
               type="button"
-              className={`subTabBtn ${
-                isLeadJourneyFlow
-                  ? activeJourneyTab === index
-                    ? 'active'
-                    : ''
-                  : activeReservationJourneyTab === index
-                    ? 'active'
-                    : ''
-              }`}
+              className={`subTabBtn ${activeJourneyPreviewIndex === index ? 'active' : ''}`}
               onClick={() =>
                 isLeadJourneyFlow
                   ? setActiveJourneyTab(index)
+                  : isPaidFollowupJourneyFlow
+                    ? setActivePaidEnrollmentJourneyTab(index)
                   : setActiveReservationJourneyTab(index)
               }
             >
-              {isLeadJourneyFlow
-                ? `Step ${index + 1}`
-                : reservationJourneyBlueprint[index]?.step || `Step ${index + 1}`}
+              {activeJourneyBlueprintItems[index]?.step || `Step ${index + 1}`}
             </button>
           ))}
         </div>
         <article className="journeyCard adminJourneyCard">
           <p className="journeyDay">Selected Step</p>
           <h4>
-            {(isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate)?.title ||
-              `Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+            {activeJourneyTemplate?.title || `Step ${activeJourneyPreviewIndex + 1}`}
           </h4>
           <p className="subhead">
             Manual send checks all due journey thresholds and logs each email as it goes. If a step is overdue, it sends immediately on this run.
@@ -6904,6 +8567,17 @@ export default function AdminPage() {
               </label>
             </div>
           ) : null}
+          {isPaidFollowupJourneyFlow ? (
+            <div className="adminGrid">
+              <label>
+                Preview camp type
+                <select value={paidEnrollmentPreviewTrack} onChange={(event) => setPaidEnrollmentPreviewTrack(event.target.value)}>
+                  <option value="general">General Camp</option>
+                  <option value="bootcamp">Competition Boot Camp</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
           <div className="adminActions">
             <button
               type="button"
@@ -6913,46 +8587,42 @@ export default function AdminPage() {
             >
               {processingJourneyEmails ? 'Processing all due emails...' : 'Send All Due Journey Emails Now'}
             </button>
-            <span>
-              {(isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate)?.dayLabel || ''}
-            </span>
+            <span>{activeJourneyTemplate?.dayLabel || ''}</span>
             <button
               type="button"
               className="button secondary"
               onClick={() =>
                 sendTestEmailForStep(
-                  isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
-                  isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
+                  activeJourneyPreviewIndex,
+                  activeJourneyTemplate,
                   activeJourneyFlow
                 )
               }
               disabled={sendingTestStep > 0}
             >
-              {sendingTestStep === (isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1)
+              {sendingTestStep === activeJourneyPreviewIndex + 1
                 ? 'Sending test...'
-                : `Send Test for Step ${isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1}`}
+                : `Send Test for Step ${activeJourneyPreviewIndex + 1}`}
             </button>
           </div>
           <p className="subhead">
             {isLeadJourneyFlow
               ? 'Click step tabs to review premium survey-lead emails in live preview.'
+              : isPaidFollowupJourneyFlow
+                ? 'Click step tabs to preview the paid-family 2-week, 4-week, and 8-week emails. Switch between General Camp and Competition Boot Camp above.'
               : isOvernightJourneyFlow
                 ? 'Click step tabs to review the overnight registration reminder version in live preview.'
                 : 'Click step tabs to review premium submitted-registration reminder emails in live preview.'}
           </p>
         </article>
         <article className="journeyCard adminJourneyCard">
-          <p className="journeyDay">
-            Live Preview (Step {isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1})
-          </p>
+          <p className="journeyDay">Live Preview (Step {activeJourneyPreviewIndex + 1})</p>
           <iframe
-            title={`Journey email preview step ${
-              isLeadJourneyFlow ? activeJourneyTab + 1 : activeReservationJourneyTab + 1
-            }`}
+            title={`Journey email preview step ${activeJourneyPreviewIndex + 1}`}
             className="adminEmailPreviewFrame"
             srcDoc={buildJourneyPreviewHtmlFromTemplate(
-              isLeadJourneyFlow ? activeJourneyTab : activeReservationJourneyTab,
-              isLeadJourneyFlow ? activeLeadJourneyTemplate : activeReservationTemplate,
+              activeJourneyPreviewIndex,
+              activeJourneyTemplate,
               activeJourneyFlow
             )}
           />
@@ -7151,12 +8821,12 @@ export default function AdminPage() {
                   <th>Camper</th>
                   <th>Weeks</th>
                   <th>Lunch Days</th>
-                  <th>Regular Price</th>
-                  <th>Sibling Discount</th>
-                  <th>Total</th>
+                  <th>Tuition</th>
+                  <th>Lunch</th>
                   <th>Manual Discount</th>
-                  <th>Paid</th>
-                  <th>Owed</th>
+                  <th>Paid Tuition</th>
+                  <th>Paid Lunch</th>
+                  <th>Total Owed</th>
                   <th>Method</th>
                   <th>Actions</th>
                 </tr>
@@ -7173,14 +8843,21 @@ export default function AdminPage() {
                     const key = `${row.registrationId}-${row.camperIndex}`
                     const draft = accountingDrafts[row.key]
                     const manualDiscountValue = draft?.manualDiscount ?? row.manualDiscount
+                    const tuitionPaidValue = draft?.tuitionPaidAmount ?? String(row.tuitionPaidAmount ?? 0)
+                    const lunchPaidValue = draft?.lunchPaidAmount ?? String(row.lunchPaidAmount ?? 0)
+                    const paymentMethodValue = draft?.paymentMethod ?? row.paymentMethod
                     const archivedValue = draft?.archived ?? row.archived
                     const hasPendingAccountingChanges =
                       Number(manualDiscountValue || 0) !== Number(row.manualDiscount || 0) ||
+                      Number(tuitionPaidValue || 0) !== Number(row.tuitionPaidAmount || 0) ||
+                      Number(lunchPaidValue || 0) !== Number(row.lunchPaidAmount || 0) ||
+                      String(paymentMethodValue || '') !== String(row.paymentMethod || '') ||
                       Boolean(archivedValue) !== Boolean(row.archived)
                     return (
                       <tr key={`accounting-row-${key}`}>
                         <td>
                           <strong>{row.parentName}</strong>
+                          {row.r5SentUnpaid ? <div className="accountingAlertText">R5 sent, not paid</div> : null}
                           <div>{row.parentEmail || '-'}</div>
                           <div>{formatAdminDateTime(row.createdAt)}</div>
                         </td>
@@ -7206,19 +8883,24 @@ export default function AdminPage() {
                             ? renderAccountingDetailChip(`${key}-lunch`, 'Lunch Days', row.lunchDays, row.lunchDaysCount)
                             : '-'}
                         </td>
-                        <td>{money(row.regularPriceTotal)}</td>
-                        <td>
-                          {row.siblingDiscountAmount > 0
-                            ? `${money(row.siblingDiscountAmount)} (${row.siblingDiscountPct}%)`
-                            : '-'}
-                        </td>
                         <td>
                           {renderAccountingDetailChip(
-                            `${key}-total-breakdown`,
-                            money(row.totalAfterManualDiscount),
-                            row.totalBreakdownLines
+                            `${key}-tuition-breakdown`,
+                            money(row.tuitionAfterManualDiscount),
+                            [
+                              `Tuition before manual discount: ${money(row.tuitionBeforeManualDiscount)}`,
+                              ...(row.weekTierPromoLines || []).map((item) => `${item.label}: -${money(item.amount)}`),
+                              row.siblingDiscountAmount > 0
+                                ? `Sibling discount (${row.siblingDiscountPct}%): -${money(row.siblingDiscountAmount)}`
+                                : 'Sibling discount: -$0.00',
+                              row.manualDiscount > 0
+                                ? `Manual discount on tuition: -${money(row.manualDiscount)}`
+                                : 'Manual discount on tuition: -$0.00',
+                              `Tuition due after discounts: ${money(row.tuitionAfterManualDiscount)}`,
+                            ]
                           )}
                         </td>
+                        <td>{money(row.lunchCost)}</td>
                         <td>
                           <input
                             type="number"
@@ -7234,15 +8916,16 @@ export default function AdminPage() {
                         <td>
                           <div className="accountingPaidCell">
                             <input
-                              type="text"
-                              inputMode="decimal"
-                              value={String(row.paidAmount ?? '')}
-                              onChange={(event) => {
-                                const sanitized = String(event.target.value || '').replace(/[^\d.]/g, '')
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={tuitionPaidValue}
+                              onChange={(event) => updateAccountingDraft(row, { tuitionPaidAmount: event.target.value })}
+                              onBlur={() =>
                                 updateAccountingEntryField(row, {
-                                  paid_amount: Number(sanitized || 0),
+                                  tuition_paid_amount: Number(tuitionPaidValue || 0),
                                 })
-                              }}
+                              }
                               disabled={updatingAccountingKey === key}
                             />
                             <button
@@ -7250,22 +8933,66 @@ export default function AdminPage() {
                               className="accountingQuickFillBtn"
                               onClick={() =>
                                 updateAccountingEntryField(row, {
-                                  paid_amount: Number(row.totalAfterManualDiscount || 0),
+                                  tuition_paid_amount: Number(row.tuitionAfterManualDiscount || 0),
                                 })
                               }
-                              disabled={updatingAccountingKey === key || Number(row.owedAmount || 0) <= 0}
+                              disabled={updatingAccountingKey === key || Number(row.tuitionOwedAmount || 0) <= 0}
                             >
-                              Use Owed
+                              Use Tuition Due
                             </button>
                           </div>
                         </td>
-                        <td>{money(row.owedAmount)}</td>
+                        <td>
+                          <div className="accountingPaidCell">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={lunchPaidValue}
+                              onChange={(event) => updateAccountingDraft(row, { lunchPaidAmount: event.target.value })}
+                              onBlur={() =>
+                                updateAccountingEntryField(row, {
+                                  lunch_paid_amount: Number(lunchPaidValue || 0),
+                                })
+                              }
+                              disabled={updatingAccountingKey === key}
+                            />
+                            <button
+                              type="button"
+                              className="accountingQuickFillBtn"
+                              onClick={() =>
+                                updateAccountingEntryField(row, {
+                                  lunch_paid_amount: Number(row.lunchCost || 0),
+                                })
+                              }
+                              disabled={updatingAccountingKey === key || Number(row.lunchOwedAmount || 0) <= 0}
+                            >
+                              Use Lunch Due
+                            </button>
+                          </div>
+                        </td>
+                        <td>
+                          {renderAccountingDetailChip(
+                            `${key}-total-breakdown`,
+                            money(row.owedAmount),
+                            [
+                              ...row.totalBreakdownLines,
+                              `Paid tuition: ${money(row.tuitionPaidAmount)}`,
+                              `Paid lunch: ${money(row.lunchPaidAmount)}`,
+                              `Total paid: ${money(row.paidAmount)}`,
+                              `Tuition owed: ${money(row.tuitionOwedAmount)}`,
+                              `Lunch owed: ${money(row.lunchOwedAmount)}`,
+                              `Total owed: ${money(row.owedAmount)}`,
+                              row.shouldStopRegistrationEmails
+                                ? 'Registration reminder emails paused: tuition is at least 95% paid.'
+                                : 'Registration reminder emails remain active until tuition reaches 95% paid.',
+                            ]
+                          )}
+                        </td>
                         <td>
                           <select
-                            value={row.paymentMethod}
-                            onChange={(event) =>
-                              updateAccountingEntryField(row, { payment_method: event.target.value })
-                            }
+                            value={paymentMethodValue}
+                            onChange={(event) => updateAccountingDraft(row, { paymentMethod: event.target.value })}
                             disabled={updatingAccountingKey === key}
                           >
                             <option value="">Select</option>
@@ -7297,7 +9024,23 @@ export default function AdminPage() {
                             <button
                               type="button"
                               className="button secondary"
-                              onClick={() => sendAccountingInvoice(row)}
+                              onClick={() => openAccountingEditor(row)}
+                              disabled={updatingAccountingKey === key}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => openAccountingInvoicePreview(row)}
+                              disabled={sendingInvoiceKey === key}
+                            >
+                              View Invoice
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => openAccountingInvoiceSendDialog(row)}
                               disabled={sendingInvoiceKey === key}
                             >
                               {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
@@ -7325,12 +9068,12 @@ export default function AdminPage() {
                   <th>Camper</th>
                   <th>Weeks</th>
                   <th>Lunch Days</th>
-                  <th>Regular Price</th>
-                  <th>Sibling Discount</th>
-                  <th>Total</th>
+                  <th>Tuition</th>
+                  <th>Lunch</th>
                   <th>Manual Discount</th>
-                  <th>Paid</th>
-                  <th>Owed</th>
+                  <th>Paid Tuition</th>
+                  <th>Paid Lunch</th>
+                  <th>Total Owed</th>
                   <th>Method</th>
                   <th>Actions</th>
                 </tr>
@@ -7349,6 +9092,7 @@ export default function AdminPage() {
                       <tr key={`archived-accounting-row-${key}`}>
                         <td>
                           <strong>{row.parentName}</strong>
+                          {row.r5SentUnpaid ? <div className="accountingAlertText">R5 sent, not paid</div> : null}
                           <div>{row.parentEmail || '-'}</div>
                           <div>{formatAdminDateTime(row.createdAt)}</div>
                         </td>
@@ -7379,22 +9123,44 @@ export default function AdminPage() {
                               )
                             : '-'}
                         </td>
-                        <td>{money(row.regularPriceTotal)}</td>
                         <td>
-                          {row.siblingDiscountAmount > 0
-                            ? `${money(row.siblingDiscountAmount)} (${row.siblingDiscountPct}%)`
-                            : '-'}
+                          {renderAccountingDetailChip(
+                            `${key}-archived-tuition-breakdown`,
+                            money(row.tuitionAfterManualDiscount),
+                            [
+                              `Tuition before manual discount: ${money(row.tuitionBeforeManualDiscount)}`,
+                              ...(row.weekTierPromoLines || []).map((item) => `${item.label}: -${money(item.amount)}`),
+                              row.siblingDiscountAmount > 0
+                                ? `Sibling discount (${row.siblingDiscountPct}%): -${money(row.siblingDiscountAmount)}`
+                                : 'Sibling discount: -$0.00',
+                              row.manualDiscount > 0
+                                ? `Manual discount on tuition: -${money(row.manualDiscount)}`
+                                : 'Manual discount on tuition: -$0.00',
+                              `Tuition due after discounts: ${money(row.tuitionAfterManualDiscount)}`,
+                            ]
+                          )}
                         </td>
+                        <td>{money(row.lunchCost)}</td>
+                        <td>
+                          {money(row.manualDiscount)}
+                        </td>
+                        <td>{money(row.tuitionPaidAmount)}</td>
+                        <td>{money(row.lunchPaidAmount)}</td>
                         <td>
                           {renderAccountingDetailChip(
                             `${key}-archived-total-breakdown`,
-                            money(row.totalAfterManualDiscount),
-                            row.totalBreakdownLines
+                            money(row.owedAmount),
+                            [
+                              ...row.totalBreakdownLines,
+                              `Paid tuition: ${money(row.tuitionPaidAmount)}`,
+                              `Paid lunch: ${money(row.lunchPaidAmount)}`,
+                              `Total paid: ${money(row.paidAmount)}`,
+                              `Tuition owed: ${money(row.tuitionOwedAmount)}`,
+                              `Lunch owed: ${money(row.lunchOwedAmount)}`,
+                              `Total owed: ${money(row.owedAmount)}`,
+                            ]
                           )}
                         </td>
-                        <td>{money(row.manualDiscount)}</td>
-                        <td>{money(row.paidAmount)}</td>
-                        <td>{money(row.owedAmount)}</td>
                         <td>{row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}</td>
                         <td>
                           <div className="adminActions">
@@ -7409,7 +9175,23 @@ export default function AdminPage() {
                             <button
                               type="button"
                               className="button secondary"
-                              onClick={() => sendAccountingInvoice(row)}
+                              onClick={() => openAccountingEditor(row)}
+                              disabled={updatingAccountingKey === key}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => openAccountingInvoicePreview(row)}
+                              disabled={sendingInvoiceKey === key}
+                            >
+                              View Invoice
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => openAccountingInvoiceSendDialog(row)}
                               disabled={sendingInvoiceKey === key}
                             >
                               {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
@@ -7462,6 +9244,308 @@ export default function AdminPage() {
                     {item}
                   </span>
                 ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {invoicePreviewState.open ? (
+          <div
+            className="summaryOverlayBackdrop"
+            onClick={() => setInvoicePreviewState({ open: false, title: '', html: '' })}
+          >
+            <div
+              className="summaryOverlayPanel"
+              role="dialog"
+              aria-modal="true"
+              aria-label={invoicePreviewState.title || 'Invoice preview'}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="summaryOverlayBar">
+                <strong>{invoicePreviewState.title || 'Invoice Preview'}</strong>
+                <div className="summaryOverlayActions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setInvoicePreviewState({ open: false, title: '', html: '' })}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <iframe title={invoicePreviewState.title || 'Invoice preview'} srcDoc={invoicePreviewState.html} />
+            </div>
+          </div>
+        ) : null}
+        {invoiceSendDialog.open && invoiceSendDialog.row ? (
+          <div
+            className="summaryOverlayBackdrop"
+            onClick={() => setInvoiceSendDialog({ open: false, row: null, sendAdminCopy: true })}
+          >
+            <div
+              className="paymentOptionsOverlayPanel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Send invoice confirmation"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="paymentOptionsOverlayHeader">
+                <strong>Send Invoice</strong>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setInvoiceSendDialog({ open: false, row: null, sendAdminCopy: true })}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="paymentOptionCard">
+                <strong>
+                  Send this invoice to <span>{invoiceSendDialog.row.parentEmail}</span>?
+                </strong>
+                <p className="subhead">
+                  Camper: <strong>{invoiceSendDialog.row.camperName}</strong>
+                </p>
+                <label className="lunchConfirmNoneRow">
+                  <input
+                    type="checkbox"
+                    checked={invoiceSendDialog.sendAdminCopy}
+                    onChange={(event) =>
+                      setInvoiceSendDialog((current) => ({ ...current, sendAdminCopy: event.target.checked }))
+                    }
+                  />
+                  <span>Send copy to admin ({ACCOUNTING_ADMIN_COPY_EMAIL})</span>
+                </label>
+                <div className="adminActions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => setInvoiceSendDialog({ open: false, row: null, sendAdminCopy: true })}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() =>
+                      sendAccountingInvoice(invoiceSendDialog.row, {
+                        sendAdminCopy: invoiceSendDialog.sendAdminCopy,
+                      })
+                    }
+                    disabled={sendingInvoiceKey === `${invoiceSendDialog.row.registrationId}-${invoiceSendDialog.row.camperIndex}`}
+                  >
+                    {sendingInvoiceKey === `${invoiceSendDialog.row.registrationId}-${invoiceSendDialog.row.camperIndex}`
+                      ? 'Sending...'
+                      : 'Yes, Send Invoice'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {accountingEditState.open && accountingEditState.row && accountingEditStudent ? (
+          <div
+            className="summaryOverlayBackdrop"
+            onClick={() =>
+              setAccountingEditState({
+                open: false,
+                row: null,
+                sourceRecordId: 0,
+                registration: null,
+                expandedWeekKey: '',
+                expandedLunchWeekKey: '',
+              })
+            }
+          >
+            <div
+              className="summaryOverlayPanel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Edit registration selections"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="summaryOverlayBar">
+                <strong>Edit Registration: {accountingEditState.row.camperName}</strong>
+                <div className="summaryOverlayActions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() =>
+                      setAccountingEditState({
+                        open: false,
+                        row: null,
+                        sourceRecordId: 0,
+                        registration: null,
+                        expandedWeekKey: '',
+                        expandedLunchWeekKey: '',
+                      })
+                    }
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={saveAccountingEditor}
+                    disabled={updatingAccountingKey === `${accountingEditState.row.registrationId}-${accountingEditState.row.camperIndex}`}
+                  >
+                    {updatingAccountingKey === `${accountingEditState.row.registrationId}-${accountingEditState.row.camperIndex}`
+                      ? 'Saving...'
+                      : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+              <div style={{ overflow: 'auto', padding: '1rem' }}>
+                <p className="subhead">
+                  Editing saved registration selections for <strong>{accountingEditStudent.fullName || accountingEditState.row.camperName}</strong>.
+                  Current choices are preloaded, and you can add or remove weeks and lunch days before saving.
+                </p>
+                <div className="weekCardList">
+                  {accountingEditRegistrationWeeks.map((week, weekIndex) => {
+                    const entry = accountingEditStudent.schedule?.[week.id]
+                    const weekSelectionSummary = getWeekSelectionSummary(entry, week)
+                    const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
+                    const weekIsFull = weekDayKeys.every((day) => (entry?.days?.[day] || 'NONE') === 'FULL')
+                    const selectedCampType = entry?.campType || ''
+                    const panelKey = `${accountingEditState.row.key}:${week.id}`
+                    const expanded = accountingEditState.expandedWeekKey === panelKey
+                    const hasSelection = Object.values(entry?.days || {}).some((mode) => mode && mode !== 'NONE')
+
+                    return (
+                      <article key={`accounting-edit-week-${week.id}`} className="weekCard">
+                        <button
+                          type="button"
+                          className={`weekHead ${expanded ? 'selected' : ''} ${hasSelection ? 'hasSelection' : 'empty'}`}
+                          onClick={() =>
+                            setAccountingEditState((current) => ({
+                              ...current,
+                              expandedWeekKey: current.expandedWeekKey === panelKey ? '' : panelKey,
+                            }))
+                          }
+                        >
+                          <span className="weekHeadText">
+                            <strong>
+                              Week {weekIndex + 1}: {week.programLabel}
+                            </strong>
+                            <span>{formatWeekLabel(week)}</span>
+                            {weekSelectionSummary ? <span className="weekStatusChip">{weekSelectionSummary}</span> : null}
+                            <span className={`weekSelectionStateChip ${hasSelection ? 'selected' : 'empty'}`}>
+                              {hasSelection ? 'Registered' : 'Not selected yet'}
+                            </span>
+                          </span>
+                        </button>
+                        {expanded ? (
+                          <div className="weekBody">
+                            <div className="campTypeRow">
+                              {week.availableCampTypes?.includes('general') ? (
+                                <button
+                                  type="button"
+                                  className={`campTypeChip general ${selectedCampType === 'general' ? 'selected' : ''}`}
+                                  onClick={() => setAccountingEditorCampType(week, 'general')}
+                                >
+                                  General Camp
+                                </button>
+                              ) : null}
+                              {week.availableCampTypes?.includes('bootcamp') ? (
+                                <button
+                                  type="button"
+                                  className={`campTypeChip bootcamp ${selectedCampType === 'bootcamp' ? 'selected' : ''}`}
+                                  onClick={() => setAccountingEditorCampType(week, 'bootcamp')}
+                                >
+                                  Competition Boot Camp
+                                </button>
+                              ) : null}
+                            </div>
+                            <button
+                              type="button"
+                              className={`modeChip ${weekIsFull ? 'active full' : ''}`}
+                              onClick={() => toggleAccountingEditorFullWeek(week)}
+                            >
+                              Choose Full Week
+                            </button>
+                            <div className="chipRow">
+                              {accountingEditorDayKeys.map((day) => {
+                                const mode = entry?.days?.[day] || 'NONE'
+                                return (
+                                  <button
+                                    key={`accounting-edit-day-${week.id}-${day}`}
+                                    type="button"
+                                    className={`modeChip ${mode !== 'NONE' ? `active ${mode.toLowerCase()}` : ''}`}
+                                    onClick={() => cycleAccountingEditorDay(week, day)}
+                                    disabled={!selectedCampType}
+                                  >
+                                    {mode === 'NONE' ? day : `${day} ${mode === 'FULL' ? 'FULL DAY' : mode}`}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+                      </article>
+                    )
+                  })}
+                </div>
+                <h3>Lunch Days</h3>
+                <div className="weekCardList">
+                  {accountingEditLunchWeeks.length === 0 ? (
+                    <p className="subhead">No registered camp days yet for this camper.</p>
+                  ) : (
+                    accountingEditLunchWeeks.map((row, weekIndex) => {
+                      const panelKey = `${accountingEditState.row.key}:lunch:${row.weekId}`
+                      const expanded = accountingEditState.expandedLunchWeekKey === panelKey
+                      const weekIncludedLunchDays = row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length
+                      const weekPaidLunchDays = row.selectedDays.filter(
+                        (day) => !isIncludedLunchDay(day.dayKey) && Boolean(accountingEditStudent.lunch?.[day.key])
+                      ).length
+                      const weekRegisteredDays = row.selectedDays.length
+                      const weekProvidedLunchDays = weekIncludedLunchDays + weekPaidLunchDays
+                      const weekPackDays = Math.max(0, weekRegisteredDays - weekProvidedLunchDays)
+                      return (
+                        <article key={`accounting-edit-lunch-${row.weekId}`} className="weekCard">
+                          <button
+                            type="button"
+                            className={`weekHead ${expanded ? 'selected' : ''} ${weekPaidLunchDays > 0 ? 'lunchSelected' : 'needsAttention'}`}
+                            onClick={() =>
+                              setAccountingEditState((current) => ({
+                                ...current,
+                                expandedLunchWeekKey: current.expandedLunchWeekKey === panelKey ? '' : panelKey,
+                              }))
+                            }
+                          >
+                            <span className="weekHeadText">
+                              <strong>
+                                Week {weekIndex + 1}: {row.week.programLabel}
+                              </strong>
+                              <span>{formatWeekLabel(row.week)}</span>
+                              <span className="weekLunchSummaryLine">
+                                {`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Thu included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`}
+                              </span>
+                            </span>
+                          </button>
+                          {expanded ? (
+                            <div className="weekBody">
+                              <div className="chipRow">
+                                {row.selectedDays.map((day) => {
+                                  const isIncluded = isIncludedLunchDay(day.dayKey)
+                                  const hasLunch = Boolean(accountingEditStudent.lunch?.[day.key])
+                                  return (
+                                    <button
+                                      key={`accounting-edit-lunch-chip-${day.key}`}
+                                      type="button"
+                                      className={`modeChip lunchChip ${isIncluded ? 'full' : hasLunch ? 'yes' : 'no'}`}
+                                      onClick={() => toggleAccountingEditorLunch(row.weekId, day.dayKey)}
+                                    >
+                                      {isIncluded ? `${day.dayKey} BBQ INCLUDED` : `${day.dayKey} Lunch ${hasLunch ? 'YES' : 'NO'}`}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </article>
+                      )
+                    })
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -7810,7 +9894,10 @@ export default function AdminPage() {
           Track who has been sent emails, delivery activity, and incoming replies.
         </p>
         <p className="subhead">
-          Use <strong>Mark Paid</strong> to stop 72-hour unpaid reminders and activate paid-family prep emails at 7 days, 5 days, 3 days, and 1 day before camp.
+          Use <strong>Mark Paid</strong> to stop 72-hour unpaid reminders and activate paid-family follow-up emails after payment, plus pre-camp emails at 7 days, 5 days, 3 days, and 1 day before camp.
+        </p>
+        <p className="subhead">
+          Paid-family follow-up emails now anchor from the paid date, while pre-camp emails still anchor from each enrolled camp week.
         </p>
         <p className="subhead">
           Use <strong>Send Due Journey Emails Now</strong> to manually send any due lead-nurture or reservation emails. The processor checks threshold timing and only sends steps that are due and not already sent.
@@ -7867,8 +9954,52 @@ export default function AdminPage() {
           </label>
           <span>Unread replies: {emailReplies.filter((item) => item.is_unread).length}</span>
         </div>
+        <div className="adminSubTabs trackingSubTabs" role="tablist" aria-label="Tracking sections">
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'lead' ? 'active' : ''}`}
+            onClick={() => setActiveTrackingSubtab('lead')}
+          >
+            Lead ({trackingDueSummary.lead} due)
+          </button>
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'registration' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTrackingSubtab('registration')
+              setActiveReservationTrackerView((current) => (current === 'overnight' ? 'standard' : current))
+            }}
+          >
+            Registration ({standardReservationDueCount} due)
+          </button>
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'overnight' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTrackingSubtab('overnight')
+              setActiveReservationTrackerView('overnight')
+            }}
+          >
+            Overnight ({overnightReservationDueCount} due)
+          </button>
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'replies' ? 'active' : ''}`}
+            onClick={() => setActiveTrackingSubtab('replies')}
+          >
+            Replies ({filteredEmailReplies.length})
+          </button>
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'events' ? 'active' : ''}`}
+            onClick={() => setActiveTrackingSubtab('events')}
+          >
+            Events ({filteredEmailEvents.length})
+          </button>
+        </div>
 
         <div className="trackingStack">
+          {activeTrackingSubtab === 'lead' ? (
           <article className="previewCard trackerCard">
             <h3>Lead Journey Tracker</h3>
             <p className="subhead">Top table: survey and partial-registration leads who should receive the nurture sequence.</p>
@@ -7876,13 +10007,14 @@ export default function AdminPage() {
               <p className="subhead">No lead journeys yet.</p>
             ) : (
               <div className="tuitionTableWrap trackerTableWrap">
-                <table className="tuitionTable trackerTable">
+                <table className="tuitionTable trackerTable trackerTableCompact">
                   <thead>
                     <tr>
-                      <th className="trackerMetaCol">Email</th>
+                      <th className="trackerMetaCol trackerActionCol">Action</th>
+                      <th className="trackerMetaCol trackerEmailCol">Email</th>
                       <th className="trackerMetaCol">Source</th>
-                      <th className="trackerMetaCol">Run</th>
-                      <th className="trackerMetaCol">Criteria</th>
+                      <th className="trackerMetaCol trackerRunCol">Run</th>
+                      <th className="trackerMetaCol trackerCriteriaColHeader">Criteria</th>
                       {leadTrackerColumns.map((column) => (
                         <th key={column.key} title={column.description} className="trackerStepHeader">
                           <span>
@@ -7902,9 +10034,18 @@ export default function AdminPage() {
                   <tbody>
                     {leadJourneyTrackerRows.map((row) => (
                       <tr key={`lead-track-${row.email}`}>
-                        <td>{row.email}</td>
+                        <td className="trackerActionCol">
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => openJourneyCalendar({ flow: 'lead', row })}
+                          >
+                            View Calendar
+                          </button>
+                        </td>
+                        <td className="trackerEmailCol">{row.email}</td>
                         <td>{row.source || '-'}</td>
-                        <td>{row.status || '-'}</td>
+                        <td className="trackerRunCol">{getLeadRunDisplayLabel(row)}</td>
                         <td className="trackerCriteriaCell">
                           {row.criteria?.map((line) => (
                             <div key={`${row.email}-${line}`}>{line}</div>
@@ -7928,6 +10069,20 @@ export default function AdminPage() {
                                 >
                                   {getTrackerCellLabel(row.steps[column.key])}
                                 </span>
+                                {row.steps[column.key]?.at ? (
+                                  <small className="trackerCellTimestamp">{formatTrackerCellTimestamp(row.steps[column.key].at)}</small>
+                                ) : null}
+                                {row.steps[column.key]?.note ? (
+                                  <small className="trackerCellNote">{row.steps[column.key].note}</small>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="trackerCellSendBtn"
+                                  onClick={() => previewJourneyCell({ flow: 'lead', row, column })}
+                                  disabled={previewingJourneyCellKey === `lead-${row.runId || row.email}-${column.key}`}
+                                >
+                                  {previewingJourneyCellKey === `lead-${row.runId || row.email}-${column.key}` ? 'Loading...' : 'View Email'}
+                                </button>
                                 <button
                                   type="button"
                                   className="trackerCellSendBtn"
@@ -7951,11 +10106,13 @@ export default function AdminPage() {
               </div>
             )}
           </article>
+          ) : null}
 
+          {activeTrackingSubtab === 'registration' ? (
           <article className="previewCard trackerCard">
             <h3>Registered Journey Tracker</h3>
             <p className="subhead">
-              Bottom table: families who submitted registration and their reminder or paid-prep sequence. Overnight autosends appear in their own sub-tab.
+              Families who submitted registration and their reminder or paid-prep sequence.
             </p>
             <div className="adminSubTabs">
               <button
@@ -7964,13 +10121,6 @@ export default function AdminPage() {
                 onClick={() => setActiveReservationTrackerView('standard')}
               >
                 Submitted Registration 72h ({standardReservationJourneyTrackerRows.length})
-              </button>
-              <button
-                type="button"
-                className={`adminSubTabBtn ${activeReservationTrackerView === 'overnight' ? 'active' : ''}`}
-                onClick={() => setActiveReservationTrackerView('overnight')}
-              >
-                Overnight Registration 72h ({overnightReservationJourneyTrackerRows.length})
               </button>
               <button
                 type="button"
@@ -7989,9 +10139,7 @@ export default function AdminPage() {
             </div>
             {activeReservationJourneyTrackerRows.length === 0 ? (
               <p className="subhead">
-                {activeReservationTrackerView === 'overnight'
-                  ? 'No overnight registration journeys yet.'
-                  : activeReservationTrackerView === 'tests'
+                {activeReservationTrackerView === 'tests'
                     ? 'No test reservation runs yet.'
                     : activeReservationTrackerView === 'hidden'
                       ? 'No hidden reservation rows.'
@@ -7999,13 +10147,13 @@ export default function AdminPage() {
               </p>
             ) : (
               <div className="tuitionTableWrap trackerTableWrap">
-                <table className="tuitionTable trackerTable">
+                <table className="tuitionTable trackerTable trackerTableCompact">
                   <thead>
                     <tr>
-                      <th className="trackerMetaCol">Action</th>
-                      <th className="trackerMetaCol">Email</th>
-                      <th className="trackerMetaCol">Run</th>
-                      <th className="trackerMetaCol">Criteria</th>
+                      <th className="trackerMetaCol trackerActionCol">Action</th>
+                      <th className="trackerMetaCol trackerEmailCol">Email</th>
+                      <th className="trackerMetaCol trackerRunCol">Run</th>
+                      <th className="trackerMetaCol trackerCriteriaColHeader">Criteria</th>
                       {reservationTrackerColumns.map((column) => (
                         <th key={column.key} title={column.description} className="trackerStepHeader">
                           <span>
@@ -8028,12 +10176,12 @@ export default function AdminPage() {
                       const availableRuns = availableReservationRunsByRowKey[row.key] || []
                       const selectedRunId = selectedRunAssignmentByRow[row.key] || ''
                       const isAssigningThisRow = assigningRunKey === row.key
-                      const criteriaState = getReservationCriteriaState(row, registrationFirstWeekStartById)
+                      const criteriaState = getReservationCriteriaState(row)
                       const isUpdatingVisibility = settingTrackerVisibilityKey === row.key
                       const isDebugOpen = expandedReservationDebugKey === row.key
                       return [
                         <tr key={`reservation-track-${row.key}`}>
-                          <td>
+                          <td className="trackerActionCol">
                             <div className="trackerActionStack">
                               {row.runId && run ? (
                                 run.status === 'paid' ? (
@@ -8089,10 +10237,17 @@ export default function AdminPage() {
                               >
                                 {isDebugOpen ? 'Hide Debug' : 'Debug'}
                               </button>
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => openJourneyCalendar({ flow: 'reservation', row })}
+                              >
+                                View Calendar
+                              </button>
                             </div>
                           </td>
-                          <td>{row.email}</td>
-                          <td>
+                          <td className="trackerEmailCol">{row.email}</td>
+                          <td className="trackerRunCol">
                             {row.runId ? (
                               row.status || '-'
                             ) : availableRuns.length > 0 ? (
@@ -8140,6 +10295,17 @@ export default function AdminPage() {
                                   >
                                     {getTrackerCellLabel(row.steps[column.key])}
                                   </span>
+                                  {row.steps[column.key]?.at ? (
+                                    <small className="trackerCellTimestamp">{formatTrackerCellTimestamp(row.steps[column.key].at)}</small>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="trackerCellSendBtn"
+                                    onClick={() => previewJourneyCell({ flow: 'reservation', row, column })}
+                                    disabled={!row.runId || previewingJourneyCellKey === `reservation-${row.runId}-${column.key}`}
+                                  >
+                                    {!row.runId ? 'No run' : previewingJourneyCellKey === `reservation-${row.runId}-${column.key}` ? 'Loading...' : 'View Email'}
+                                  </button>
                                   <button
                                     type="button"
                                     className="trackerCellSendBtn"
@@ -8178,14 +10344,223 @@ export default function AdminPage() {
               </div>
             )}
           </article>
+          ) : null}
 
+          {activeTrackingSubtab === 'overnight' ? (
+          <article className="previewCard trackerCard">
+            <h3>Overnight Journey Tracker</h3>
+            <p className="subhead">Overnight registration runs and their 72-hour journey status.</p>
+            {overnightReservationJourneyTrackerRows.length === 0 ? (
+              <p className="subhead">No overnight registration journeys yet.</p>
+            ) : (
+              <div className="tuitionTableWrap trackerTableWrap">
+                <table className="tuitionTable trackerTable trackerTableCompact">
+                  <thead>
+                    <tr>
+                      <th className="trackerMetaCol trackerActionCol">Action</th>
+                      <th className="trackerMetaCol trackerEmailCol">Email</th>
+                      <th className="trackerMetaCol trackerRunCol">Run</th>
+                      <th className="trackerMetaCol trackerCriteriaColHeader">Criteria</th>
+                      {reservationTrackerColumns.map((column) => (
+                        <th key={column.key} title={column.description} className="trackerStepHeader">
+                          <span>
+                            {column.label}
+                            {reservationDueCounts[column.key] > 0 ? (
+                              <em className="trackerDueCountBadge">{reservationDueCounts[column.key]}</em>
+                            ) : null}
+                            {reservationUpcomingCounts[column.key] > 0 ? (
+                              <em className="trackerUpcomingCountBadge">{reservationUpcomingCounts[column.key]}</em>
+                            ) : null}
+                          </span>
+                          <small>{column.timingLabel}</small>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overnightReservationJourneyTrackerRows.map((row) => {
+                      const run = emailJourneyRuns.find((item) => Number(item?.id) === Number(row.runId))
+                      const availableRuns = availableReservationRunsByRowKey[row.key] || []
+                      const selectedRunId = selectedRunAssignmentByRow[row.key] || ''
+                      const isAssigningThisRow = assigningRunKey === row.key
+                      const criteriaState = getReservationCriteriaState(row)
+                      const isUpdatingVisibility = settingTrackerVisibilityKey === row.key
+                      const isDebugOpen = expandedReservationDebugKey === row.key
+                      return [
+                        <tr key={`overnight-track-${row.key}`}>
+                          <td className="trackerActionCol">
+                            <div className="trackerActionStack">
+                              {row.runId && run ? (
+                                run.status === 'paid' ? (
+                                  <button
+                                    type="button"
+                                    className="button secondary"
+                                    onClick={() => updateReservationRunPaymentStatus(run, false)}
+                                    disabled={updatingRunId === run.id}
+                                  >
+                                    {updatingRunId === run.id ? 'Updating...' : 'Mark Unpaid'}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="button secondary"
+                                    onClick={() => updateReservationRunPaymentStatus(run, true)}
+                                    disabled={updatingRunId === run.id}
+                                  >
+                                    {updatingRunId === run.id ? 'Updating...' : 'Mark Paid'}
+                                  </button>
+                                )
+                              ) : availableRuns.length > 0 ? (
+                                <button
+                                  type="button"
+                                  className="button secondary"
+                                  onClick={() => attachExistingRunToRegistration(row)}
+                                  disabled={isAssigningThisRow || !selectedRunId}
+                                >
+                                  {isAssigningThisRow ? 'Attaching...' : 'Attach Run'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="button secondary"
+                                  onClick={() => assignRunForEmail(row.email)}
+                                  disabled={assigningRunEmail === row.email}
+                                >
+                                  {assigningRunEmail === row.email ? 'Assigning...' : 'Create Run'}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => setTrackerRowVisibility(row, !row.hidden)}
+                                disabled={isUpdatingVisibility}
+                              >
+                                {isUpdatingVisibility ? 'Updating...' : row.hidden ? 'Unhide' : 'Hide'}
+                              </button>
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => setExpandedReservationDebugKey((current) => (current === row.key ? '' : row.key))}
+                              >
+                                {isDebugOpen ? 'Hide Debug' : 'Debug'}
+                              </button>
+                              <button
+                                type="button"
+                                className="button secondary"
+                                onClick={() => openJourneyCalendar({ flow: 'reservation', row })}
+                              >
+                                View Calendar
+                              </button>
+                            </div>
+                          </td>
+                          <td className="trackerEmailCol">{row.email}</td>
+                          <td className="trackerRunCol">
+                            {row.runId ? (
+                              row.status || '-'
+                            ) : availableRuns.length > 0 ? (
+                              <select
+                                value={selectedRunId}
+                                onChange={(event) =>
+                                  setSelectedRunAssignmentByRow((current) => ({
+                                    ...current,
+                                    [row.key]: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Select run</option>
+                                {availableRuns.map((option) => (
+                                  <option key={`assign-run-${row.key}-${option.id}`} value={option.id}>
+                                    #{option.id} · {normalizeAdminEmail(option.email) || 'no email'} · {option.status || 'active'} ·{' '}
+                                    {formatTrackerDateTime(option.created_at) || option.created_at || 'unknown time'}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              '-'
+                            )}
+                          </td>
+                          <td className={`trackerCriteriaCell ${criteriaState ? `trackerCriteriaCell-${criteriaState}` : ''}`}>
+                            {row.criteria?.map((line) => (
+                              <div key={`${row.key}-${line}`}>{line}</div>
+                            ))}
+                          </td>
+                          {reservationTrackerColumns.map((column) => {
+                            const timingState = getReservationTrackerTimingState(row, column)
+                            return (
+                              <td key={`${row.key}-${column.key}`} className="trackerStepCell">
+                                <div className="trackerCellActions">
+                                  {timingState ? (
+                                    <span
+                                      className={`trackerCellDot trackerCellDot-${timingState}`}
+                                      title={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                      aria-label={timingState === 'due' ? 'Due now' : 'Upcoming in next 24 hours'}
+                                    />
+                                  ) : null}
+                                  <span
+                                    className={`trackerBadge ${row.steps[column.key]?.status || 'pending'}`}
+                                    title={row.steps[column.key]?.at ? new Date(row.steps[column.key].at).toLocaleString() : ''}
+                                  >
+                                    {getTrackerCellLabel(row.steps[column.key])}
+                                  </span>
+                                  {row.steps[column.key]?.at ? (
+                                    <small className="trackerCellTimestamp">{formatTrackerCellTimestamp(row.steps[column.key].at)}</small>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="trackerCellSendBtn"
+                                    onClick={() => previewJourneyCell({ flow: 'reservation', row, column })}
+                                    disabled={!row.runId || previewingJourneyCellKey === `reservation-${row.runId}-${column.key}`}
+                                  >
+                                    {!row.runId ? 'No run' : previewingJourneyCellKey === `reservation-${row.runId}-${column.key}` ? 'Loading...' : 'View Email'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="trackerCellSendBtn"
+                                    onClick={() => manuallySendJourneyCell({ flow: 'reservation', row, column })}
+                                    disabled={!row.runId || sendingJourneyCellKey === `reservation-${row.runId}-${column.key}`}
+                                  >
+                                    {!row.runId ? 'No run' : sendingJourneyCellKey === `reservation-${row.runId}-${column.key}` ? 'Sending...' : 'Send'}
+                                  </button>
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>,
+                        isDebugOpen ? (
+                          <tr key={`overnight-track-debug-${row.key}`} className="trackerDebugRow">
+                            <td colSpan={4 + reservationTrackerColumns.length}>
+                              <div className="trackerDebugPanel">
+                                <div><strong>Row key:</strong> {row.key}</div>
+                                <div><strong>Registration ID:</strong> {row.registrationId || '-'}</div>
+                                <div><strong>Run ID:</strong> {row.runId || '-'}</div>
+                                <div><strong>Email:</strong> {row.email || '-'}</div>
+                                <div><strong>Status:</strong> {row.status || '-'}</div>
+                                <div><strong>Registration type:</strong> {row.registrationType || 'overnight-only'}</div>
+                                <div><strong>Submitted:</strong> {formatTrackerDateTime(row.createdAt) || row.createdAt || '-'}</div>
+                                <div><strong>Attachment event:</strong> {formatTrackerDateTime(row.attachmentEventAt) || row.attachmentEventAt || '-'}</div>
+                                <div><strong>Attachment reason:</strong> {row.attachmentReason || '-'}</div>
+                                <div><strong>Hidden in tracker:</strong> {row.hidden ? 'yes' : 'no'}</div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null,
+                      ]
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+          ) : null}
+
+          {activeTrackingSubtab === 'replies' ? (
           <article className="previewCard">
             <h3>Replies</h3>
             {filteredEmailReplies.length === 0 ? (
               <p className="subhead">No replies yet.</p>
             ) : (
-              <div className="tuitionTableWrap">
-                <table className="tuitionTable">
+              <div className="tuitionTableWrap trackerTableWrap">
+                <table className="tuitionTable trackerTable trackerTableCompact trackerTableLite">
                   <thead>
                     <tr>
                       <th>Action</th>
@@ -8216,17 +10591,51 @@ export default function AdminPage() {
               </div>
             )}
           </article>
+          ) : null}
         </div>
 
+        {activeTrackingSubtab === 'events' ? (
         <article className="previewCard">
           <h3>Recent send/delivery events</h3>
-          {emailEvents.length === 0 ? (
+          <div className="adminActions">
+            <label>
+              Delivery
+              <select value={eventDeliveryFilter} onChange={(event) => setEventDeliveryFilter(event.target.value)}>
+                <option value="all">All events</option>
+                <option value="sent">Sent only</option>
+                <option value="opened">Opened only</option>
+              </select>
+            </label>
+            <label>
+              Flow
+              <select value={eventFlowFilter} onChange={(event) => setEventFlowFilter(event.target.value)}>
+                <option value="all">All flows</option>
+                <option value="lead">Lead</option>
+                <option value="registration">Registration</option>
+                <option value="overnight">Overnight</option>
+              </select>
+            </label>
+            <label>
+              Journey
+              <select value={eventJourneyFilter} onChange={(event) => setEventJourneyFilter(event.target.value)}>
+                <option value="all">All journeys</option>
+                <option value="p">P journey</option>
+                <option value="a">A journey</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <span>
+              Showing: <strong className="trackerDueCountBadge">{filteredEmailEvents.length}</strong>
+            </span>
+          </div>
+          {filteredEmailEvents.length === 0 ? (
             <p className="subhead">No events yet.</p>
           ) : (
-            <div className="tuitionTableWrap">
-              <table className="tuitionTable">
+            <div className="tuitionTableWrap trackerTableWrap">
+              <table className="tuitionTable trackerTable trackerTableCompact trackerTableLite">
                 <thead>
                   <tr>
+                    <th>Action</th>
                     <th>Email</th>
                     <th>Step</th>
                     <th>Event</th>
@@ -8234,11 +10643,35 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {emailEvents.map((row) => (
+                  {filteredEmailEvents.map((row) => (
                     <tr key={`event-${row.id}`}>
+                      <td>
+                        {(
+                          String(row?.event_type || '').startsWith('lead_journey_') ||
+                          String(row?.event_type || '') === 'test_sent_lead' ||
+                          String(row?.event_type || '') === 'test_preview_only_lead' ||
+                          String(row?.event_type || '') === 'reservation_email_sent' ||
+                          String(row?.event_type || '') === 'reservation_email_preview' ||
+                          String(row?.event_type || '') === 'test_sent_reservation' ||
+                          String(row?.event_type || '') === 'test_preview_only_reservation' ||
+                          String(row?.event_type || '').startsWith('paid_prep_') ||
+                          String(row?.event_type || '').startsWith('paid_followup_')
+                        ) ? (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => previewEmailEventRow(row)}
+                            disabled={previewingEventRowKey === `event-${row.id}`}
+                          >
+                            {previewingEventRowKey === `event-${row.id}` ? 'Loading...' : 'View'}
+                          </button>
+                        ) : (
+                          '-'
+                        )}
+                      </td>
                       <td>{row.email}</td>
                       <td>{row.step_number || '-'}</td>
-                      <td>{row.event_type}</td>
+                      <td>{getEmailEventDisplayLabel(row)}</td>
                       <td>{row.event_at ? new Date(row.event_at).toLocaleString() : '-'}</td>
                     </tr>
                   ))}
@@ -8247,6 +10680,7 @@ export default function AdminPage() {
             </div>
           )}
         </article>
+        ) : null}
       </section>
       ) : null}
 
@@ -8267,6 +10701,116 @@ export default function AdminPage() {
       </section>
       ) : null}
 
+      {journeyCellPreviewState.open ? (
+        <div
+          className="summaryOverlayBackdrop"
+          onClick={() => setJourneyCellPreviewState({ open: false, title: '', subject: '', html: '' })}
+        >
+          <div
+            className="summaryOverlayPanel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={journeyCellPreviewState.title || 'Journey email preview'}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="summaryOverlayBar">
+              <div>
+                <strong>{journeyCellPreviewState.title || 'Journey Email Preview'}</strong>
+                {journeyCellPreviewState.subject ? <p className="subhead">Subject: {journeyCellPreviewState.subject}</p> : null}
+              </div>
+              <div className="summaryOverlayActions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setJourneyCellPreviewState({ open: false, title: '', subject: '', html: '' })}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe title={journeyCellPreviewState.title || 'Journey email preview'} srcDoc={journeyCellPreviewState.html} />
+          </div>
+        </div>
+      ) : null}
+
+      {journeyCalendarState.open ? (
+        <div
+          className="summaryOverlayBackdrop"
+          onClick={() => setJourneyCalendarState({ open: false, title: '', entries: [] })}
+        >
+          <div
+            className="summaryOverlayPanel journeyCalendarOverlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label={journeyCalendarState.title || 'Journey calendar'}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="summaryOverlayBar">
+              <div>
+                <strong>{journeyCalendarState.title || 'Journey Calendar'}</strong>
+                <p className="subhead">Each chip shows when that journey step is due to send.</p>
+              </div>
+              <div className="summaryOverlayActions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setJourneyCalendarState({ open: false, title: '', entries: [] })}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="journeyCalendarOverlayBody">
+              {buildJourneyCalendarMonths(journeyCalendarState.entries).length === 0 ? (
+                <p className="subhead">No scheduled journey dates available for this row yet.</p>
+              ) : (
+                <div className="journeyCalendarMonthGrid">
+                  {buildJourneyCalendarMonths(journeyCalendarState.entries).map((month) => (
+                    <section key={month.key} className="journeyCalendarMonthCard">
+                      <div className="journeyCalendarMonthHeader">
+                        <strong>{month.title}</strong>
+                      </div>
+                      <div className="journeyCalendarWeekdayRow">
+                        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label) => (
+                          <span key={`${month.key}-${label}`}>{label}</span>
+                        ))}
+                      </div>
+                      <div className="journeyCalendarDayGrid">
+                        {month.cells.map((cell) => (
+                          <div
+                            key={cell.key}
+                            className={`journeyCalendarDayCell ${cell.empty ? 'empty' : ''} ${cell.entries?.length ? 'hasEntries' : ''}`}
+                          >
+                            {!cell.empty ? (
+                              <>
+                                <div className="journeyCalendarDayNumber">{cell.day}</div>
+                                <div className="journeyCalendarEntryStack">
+                                  {(cell.entries || []).map((entry, index) => (
+                                    <div
+                                      key={`${cell.key}-${entry.label}-${index}`}
+                                      className={`journeyCalendarEntryChip ${entry.status || 'pending'}`}
+                                      title={formatJourneyCalendarEntryDate(entry.scheduledAt)}
+                                    >
+                                      <strong>{entry.label}</strong>
+                                      {entry.note ? <span>{entry.note}</span> : null}
+                                      <small>{formatJourneyCalendarEntryDate(entry.scheduledAt)}</small>
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="adminFloatingSaveBar" role="region" aria-label="Save admin settings">
         <div className="adminFloatingSaveMeta">
           <strong>Save all settings</strong>
@@ -8275,22 +10819,25 @@ export default function AdminPage() {
             <div className="adminProcessSummary">
               <div className="adminProcessGroup">
                 <span className="adminProcessLabel">Lead</span>
-                <span className="adminProcessChip success">{journeyProcessSummary.lead.sent} sent</span>
-                <span className="adminProcessChip">{journeyProcessSummary.lead.queued} queued</span>
-                <span className="adminProcessChip">{journeyProcessSummary.lead.checked} checked</span>
-                <span className="adminProcessChip">{journeyProcessSummary.lead.candidates} candidates</span>
-                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedRegistered} registered</span>
-                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedActive} active</span>
-                <span className="adminProcessChip muted">{journeyProcessSummary.lead.skippedExistingStepOne} existing step 1</span>
-                <span className="adminProcessChip accent">{journeyProcessSummary.lead.revived} revived</span>
-                <span className="adminProcessChip accent">{journeyProcessSummary.lead.newRuns} new runs</span>
-                <span className="adminProcessChip accent">{journeyProcessSummary.lead.bootstrapped} bootstrapped</span>
-                <span className="adminProcessChip success">{journeyProcessSummary.lead.stepOneSent} step 1 sent</span>
+                {buildJourneyProcessStepChips(journeyProcessSummary.lead.stepCounts, 'lead').map((chip) => (
+                  <span key={`lead-${chip.key}`} className="adminProcessChip success">{chip.label} {chip.count}</span>
+                ))}
+                <span className="adminProcessChip">Q {journeyProcessSummary.lead.queued}</span>
+                <span className="adminProcessChip">CHK {journeyProcessSummary.lead.checked}</span>
+                <span className="adminProcessChip">CAND {journeyProcessSummary.lead.candidates}</span>
+                <span className="adminProcessChip muted">REG {journeyProcessSummary.lead.skippedRegistered}</span>
+                <span className="adminProcessChip muted">ACT {journeyProcessSummary.lead.skippedActive}</span>
+                <span className="adminProcessChip muted">HAS L1 {journeyProcessSummary.lead.skippedExistingStepOne}</span>
+                <span className="adminProcessChip accent">REV {journeyProcessSummary.lead.revived}</span>
+                <span className="adminProcessChip accent">NEW {journeyProcessSummary.lead.newRuns}</span>
+                <span className="adminProcessChip accent">BOOT {journeyProcessSummary.lead.bootstrapped}</span>
               </div>
               <div className="adminProcessGroup">
                 <span className="adminProcessLabel">Reservation</span>
-                <span className="adminProcessChip success">{journeyProcessSummary.reservation.sent} sent</span>
-                <span className="adminProcessChip">{journeyProcessSummary.reservation.checked} checked</span>
+                {buildJourneyProcessStepChips(journeyProcessSummary.reservation.stepCounts, 'reservation').map((chip) => (
+                  <span key={`reservation-${chip.key}`} className="adminProcessChip success">{chip.label} {chip.count}</span>
+                ))}
+                <span className="adminProcessChip">CHK {journeyProcessSummary.reservation.checked}</span>
               </div>
             </div>
           ) : null}

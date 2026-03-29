@@ -57,6 +57,7 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}))
     const toEmail = String(body?.toEmail || '').trim()
+    const ccEmails = Array.isArray(body?.ccEmails) ? body.ccEmails.filter((value) => isValidEmail(value)) : []
     const parentName = String(body?.parentName || '').trim()
     const camperName = String(body?.camperName || '').trim()
     const paymentMethod = String(body?.paymentMethod || '').trim()
@@ -92,6 +93,7 @@ export async function POST(request) {
 
     const result = await sendWithSes({
       toEmail,
+      ccEmails,
       subject,
       bodyText,
       html: buildEmailHtml({ parentName, camperName, paymentMethod, summaryHtml }),
@@ -105,13 +107,16 @@ export async function POST(request) {
     })
 
     if (result.previewOnly) {
-      return Response.json({ ok: true, sent: false, previewOnly: true, message: result.error }, { status: 200 })
+      return Response.json(
+        { ok: true, sent: false, previewOnly: true, message: result.error, ccEmails },
+        { status: 200 }
+      )
     }
     if (!result.sent) {
       return Response.json({ error: result.error || 'Email send failed.' }, { status: 500 })
     }
 
-    return Response.json({ ok: true, sent: true }, { status: 200 })
+    return Response.json({ ok: true, sent: true, ccEmails }, { status: 200 })
   } catch (error) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
   }

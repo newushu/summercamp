@@ -25,6 +25,21 @@ function normalizeContext(value) {
   return value
 }
 
+function shouldPromoteLeadSource(existingSource = '', nextSource = '') {
+  const current = String(existingSource || '').trim()
+  const incoming = String(nextSource || '').trim()
+  if (!incoming) {
+    return current
+  }
+  if (!current) {
+    return incoming
+  }
+  if (incoming === 'summer-camp-registration') {
+    return incoming
+  }
+  return current
+}
+
 async function hasCompletedRegistration(email) {
   const { data, error } = await supabaseServer
     .from('registrations')
@@ -66,7 +81,7 @@ async function captureLeadDirectly({ email, camperCount, camperAges, nextContext
           ...nextContext,
         },
         last_completed_step: Math.max(nextLastCompletedStep, Number(existingLead.last_completed_step || 1)),
-        source: String(existingLead.source || '').trim() || nextSource,
+        source: shouldPromoteLeadSource(existingLead.source, nextSource),
       })
       .eq('id', existingLead.id)
 

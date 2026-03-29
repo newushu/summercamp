@@ -35,6 +35,38 @@ function isValidEmail(value) {
   return /^\S+@\S+\.\S+$/.test(String(value || '').trim())
 }
 
+function getSiteBaseUrl() {
+  return (
+    String(process.env.NEXT_PUBLIC_SITE_URL || '').trim() ||
+    String(process.env.SITE_URL || '').trim() ||
+    'https://summer.newushu.com'
+  )
+}
+
+function buildOpenTrackingUrl({ runId = 0, stepNumber = 0, stepKey = '' }) {
+  const baseUrl = getSiteBaseUrl().replace(/\/$/, '')
+  const params = new URLSearchParams({
+    flow: 'lead',
+    runId: String(Number(runId || 0)),
+  })
+  if (Number(stepNumber || 0) > 0) {
+    params.set('stepNumber', String(Number(stepNumber)))
+  }
+  if (String(stepKey || '').trim()) {
+    params.set('stepKey', String(stepKey || '').trim())
+  }
+  return `${baseUrl}/api/email/open?${params.toString()}`
+}
+
+function appendOpenTrackingPixel(html, trackingUrl = '') {
+  const safeHtml = String(html || '')
+  const safeUrl = String(trackingUrl || '').trim()
+  if (!safeHtml || !safeUrl) {
+    return safeHtml
+  }
+  return `${safeHtml}<img src="${safeUrl}" alt="" width="1" height="1" style="display:block;width:1px;height:1px;border:0;opacity:0;" />`
+}
+
 function splitFirstName(fullName) {
   const safe = String(fullName || '').trim()
   if (!safe) {
@@ -47,6 +79,14 @@ function renderTemplate(template, tokens) {
   return Object.entries(tokens).reduce((output, [token, value]) => {
     return String(output || '').replaceAll(`{${token}}`, String(value || ''))
   }, String(template || ''))
+}
+
+function normalizeLeadSource(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function isRegistrationLeadSource(value) {
+  return normalizeLeadSource(value) === 'summer-camp-registration'
 }
 
 function normalizeImageUrls(value) {
@@ -143,6 +183,13 @@ function buildLeadSchedule(templates) {
 }
 
 function buildFallbackLeadRecommendationFromPayload(payload) {
+  if (isRegistrationLeadSource(payload?.source)) {
+    const selectedWeeks = Array.isArray(payload?.selectedWeekLabels) ? payload.selectedWeekLabels.filter(Boolean) : []
+    if (selectedWeeks.length > 0) {
+      return `You started the summer camp registration form and selected ${selectedWeeks.join(', ')}. You can pick back up right where you left off and add more weeks to unlock Train More, Save More pricing.`
+    }
+    return 'You started the summer camp registration form and can pick back up right where you left off. Adding more weeks can unlock Train More, Save More pricing.'
+  }
   const summaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
   const haystack = summaryLines.map((line) => String(line || '').toLowerCase()).join(' ')
   const competitionTrack =
@@ -157,6 +204,35 @@ function buildFallbackLeadRecommendationFromPayload(payload) {
   return 'Recommended fit: General Camp with progression options. This is the best default starting point for families who have not completed the full survey yet.'
 }
 
+function buildTrainMoreSaveMoreLeadCopy() {
+  return [
+    'Train More, Save More:',
+    '- Add more full weeks to lower the effective weekly cost.',
+    '- Families use it when they want stronger consistency, stronger progress, and better summer value.',
+    '- Current early-bird pricing also includes $100 OFF.',
+  ].join('\n')
+}
+
+function buildRegistrationLeadProgramHighlights() {
+  return [
+    'General Camp:',
+    '- Best fit for building fundamentals, confidence, and a strong start in wushu.',
+    '- Families love the fun weekly rhythm: Tuesday outdoor park day, Wednesday water fun, Thursday BBQ, and Friday showcase.',
+    '',
+    'Competition Boot Camp:',
+    '- Best fit for athletes who want more focused taolu training, technical corrections, and stronger competition progress.',
+    '- Helpful for families thinking about Competition Team preparation and a more intensive training track.',
+  ].join('\n')
+}
+
+function isArchivedRegistrationRecord(record) {
+  const entries = Array.isArray(record?.accounting_entries) ? record.accounting_entries : []
+  if (entries.length === 0) {
+    return false
+  }
+  return entries.every((entry) => Boolean(entry?.archived))
+}
+
 async function hasCompletedRegistration(email) {
   const normalizedEmail = String(email || '').trim().toLowerCase()
   if (!isValidEmail(normalizedEmail)) {
@@ -166,22 +242,22 @@ async function hasCompletedRegistration(email) {
   const db = getSupabase()
   const { data, error } = await db
     .from('registrations')
-    .select('id')
+    .select('id, accounting_entries')
     .eq('guardian_email', normalizedEmail)
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(20)
 
   if (error) {
     throw new Error(error.message)
   }
 
-  return Boolean(data?.id)
+  return (Array.isArray(data) ? data : []).some((record) => record?.id && !isArchivedRegistrationRecord(record))
 }
 
-async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNumber }) {
+async function buildLeadStepPreview({ run, payload, templates, scheduleDays, stepNumber }) {
   const index = Math.max(0, Math.min(templates.length - 1, stepNumber - 1))
-  const template = templates[index]
+  const isRegistrationSource = isRegistrationLeadSource(payload?.source)
+  const template = isRegistrationSource ? buildRegistrationLeadTemplate(stepNumber) : templates[index]
   const firstName = splitFirstName(payload?.guardianName || '')
   const summaryLines = Array.isArray(payload?.summaryLines) ? payload.summaryLines : []
   const recommendation =
@@ -196,6 +272,15 @@ async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNu
     timeZoneName: 'short',
   })
   const ctaLink = payload?.registrationLink || 'https://summer.newushu.com/register'
+  const selectedWeekLabels = Array.isArray(payload?.selectedWeekLabels) ? payload.selectedWeekLabels.filter(Boolean) : []
+  const registrationSummaryLines = summaryLines.filter(
+    (line) =>
+      !String(line || '').startsWith('Grand total:') &&
+      !String(line || '').startsWith('Offer reminder:') &&
+      !String(line || '').startsWith('Offer details:') &&
+      !String(line || '').startsWith('Why families use it:') &&
+      !String(line || '').startsWith('Weekly reminders:')
+  )
   const tokens = {
     first_name: firstName,
     parent_name: firstName,
@@ -205,6 +290,14 @@ async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNu
     payment_methods: PAYMENT_METHODS_TEXT,
     reservation_deadline: reservationDeadline,
     registration_summary: summaryLines.join('\n'),
+    left_off_summary:
+      registrationSummaryLines.length > 0
+        ? registrationSummaryLines.join('\n')
+        : `Summer camp registration step ${Math.max(1, Number(payload?.registrationStep || 1))}`,
+    selected_weeks:
+      selectedWeekLabels.length > 0 ? selectedWeekLabels.join('\n') : 'No weeks selected yet',
+    train_more_save_more: buildTrainMoreSaveMoreLeadCopy(),
+    program_highlights: buildRegistrationLeadProgramHighlights(),
     app_launch_date: 'June 20',
   }
 
@@ -217,8 +310,23 @@ async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNu
     landingCarouselImageUrls: branding?.landingCarouselImageUrls || [],
     stepNumber,
   })
-  const bodyText = renderedMessage.bodyText
-  const html = renderedMessage.html
+  return {
+    subject,
+    bodyText: renderedMessage.bodyText,
+    html: renderedMessage.html,
+    template,
+    scheduleDay: scheduleDays[index] || 0,
+  }
+}
+
+async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNumber }) {
+  const preview = await buildLeadStepPreview({ run, payload, templates, scheduleDays, stepNumber })
+  const subject = preview.subject
+  const bodyText = preview.bodyText
+  const html = appendOpenTrackingPixel(
+    preview.html,
+    buildOpenTrackingUrl({ runId: run?.id, stepNumber })
+  )
 
   const sendResult = await sendWithSes({
     toEmail: run.email,
@@ -237,8 +345,8 @@ async function sendLeadStepEmail({ run, payload, templates, scheduleDays, stepNu
     body_preview: bodyText.slice(0, 400),
     event_payload: {
       journeyType: 'lead_assistant',
-      dayLabel: template.dayLabel,
-      scheduleDays: scheduleDays[index] || 0,
+      dayLabel: preview.template.dayLabel,
+      scheduleDays: preview.scheduleDay,
       previewOnly: sendResult.previewOnly,
       error: sendResult.error,
     },
@@ -375,6 +483,10 @@ async function enqueueLeadJourney(payload) {
       guardianName: payload?.guardianName || '',
       recommendation: payload?.recommendation || '',
       summaryLines: Array.isArray(payload?.summaryLines) ? payload.summaryLines : [],
+      source: String(payload?.source || '').trim(),
+      selectedWeekLabels: Array.isArray(payload?.selectedWeekLabels) ? payload.selectedWeekLabels : [],
+      registrationLink: String(payload?.registrationLink || '').trim(),
+      registrationStep: Number(payload?.registrationStep || 0),
       scheduleDays,
     },
   })
@@ -426,7 +538,7 @@ async function getLeadProfileByEmail(email) {
 
   const { data, error } = await getSupabase()
     .from('program_interest_profiles')
-    .select('id, email, camper_count, camper_ages, profile_context, created_at')
+    .select('id, email, camper_count, camper_ages, profile_context, source, created_at')
     .ilike('email', normalizedEmail)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -460,6 +572,9 @@ async function getLeadStepOneEventEmails(emails) {
 
 function buildProfileSummaryLines(profile) {
   const context = profile?.profile_context && typeof profile.profile_context === 'object' ? profile.profile_context : {}
+  if (isRegistrationLeadSource(profile?.source) && Array.isArray(context?.registrationSummaryLines) && context.registrationSummaryLines.length > 0) {
+    return context.registrationSummaryLines
+  }
   const camperCount = Math.max(1, Number(profile?.camper_count || context?.camperCount || 1))
   const camperAges = Array.isArray(profile?.camper_ages)
     ? profile.camper_ages
@@ -478,6 +593,13 @@ function buildProfileSummaryLines(profile) {
 
 function buildFallbackLeadRecommendation(profile) {
   const context = profile?.profile_context && typeof profile.profile_context === 'object' ? profile.profile_context : {}
+  if (isRegistrationLeadSource(profile?.source)) {
+    const selectedWeeks = Array.isArray(context?.selectedWeekLabels) ? context.selectedWeekLabels.filter(Boolean) : []
+    if (selectedWeeks.length > 0) {
+      return `You left off in the summer camp registration form with ${selectedWeeks.join(', ')} selected. Pick back up there, and if you want more weeks, Train More, Save More can help lower your weekly cost.`
+    }
+    return 'You left off in the summer camp registration form. Pick back up there anytime, and if you want more weeks, Train More, Save More can help lower your weekly cost.'
+  }
   const goals = Array.isArray(context?.goals) ? context.goals : []
   const martialYears = Number(context?.martialYears || 0) + Number(context?.martialMonths || 0) / 12
   const competitionTrack = goals.includes('competition') || martialYears >= 3
@@ -489,10 +611,75 @@ function buildFallbackLeadRecommendation(profile) {
   return 'Recommended fit: General Camp with progression options. This is the best default starting point for families who have not completed the full survey yet.'
 }
 
+function buildLeadPayloadFromProfile(profile, fallbackEmail = '') {
+  const context = profile?.profile_context && typeof profile.profile_context === 'object' ? profile.profile_context : {}
+  return {
+    submittedAt: profile?.created_at || new Date().toISOString(),
+    guardianName: String(context?.parentName || fallbackEmail || profile?.email || '').trim(),
+    recommendation: buildFallbackLeadRecommendation(profile || {}),
+    summaryLines: buildProfileSummaryLines(profile || {}),
+    source: String(profile?.source || '').trim(),
+    selectedWeekLabels: Array.isArray(context?.selectedWeekLabels) ? context.selectedWeekLabels.filter(Boolean) : [],
+    registrationLink: String(context?.registrationLink || '').trim() || 'https://summer.newushu.com/register',
+    registrationStep: Number(context?.registrationStep || 0),
+    location: String(context?.location || '').trim(),
+  }
+}
+
+function mergeLeadPayloadWithProfile(payload = {}, profile = null, fallbackEmail = '') {
+  const profilePayload = buildLeadPayloadFromProfile(profile || {}, fallbackEmail)
+  const merged = {
+    ...payload,
+  }
+  if (!merged.submittedAt) merged.submittedAt = profilePayload.submittedAt
+  if (!merged.guardianName) merged.guardianName = profilePayload.guardianName
+  if (!merged.recommendation) merged.recommendation = profilePayload.recommendation
+  if (!Array.isArray(merged.summaryLines) || merged.summaryLines.length === 0) merged.summaryLines = profilePayload.summaryLines
+  if (!merged.source || isRegistrationLeadSource(profilePayload.source)) merged.source = profilePayload.source
+  if (!Array.isArray(merged.selectedWeekLabels) || merged.selectedWeekLabels.length === 0) {
+    merged.selectedWeekLabels = profilePayload.selectedWeekLabels
+  }
+  if (!merged.registrationLink) merged.registrationLink = profilePayload.registrationLink
+  if (!merged.registrationStep) merged.registrationStep = profilePayload.registrationStep
+  if (!merged.location) merged.location = profilePayload.location
+  return merged
+}
+
+function buildRegistrationLeadTemplate(stepNumber = 1) {
+  const templates = {
+    1: {
+      subject: 'You Left Off in Summer Camp Registration - Your Weeks Are Still There',
+      body:
+        'Hi {parent_name},\n\nYou started the summer camp registration form but did not finish, so we wanted to make it easy to pick back up.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nIf you want help choosing the best week mix, just reply and we will help.',
+    },
+    2: {
+      subject: 'Your Camp Weeks Are Started - Want Help Finishing Registration?',
+      body:
+        'Hi {parent_name},\n\nQuick follow-up from our team. You already started the summer camp registration form, and we saved the direction you were heading.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks right now:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nFinish here:\n{registration_link}',
+    },
+    3: {
+      subject: 'Here Is the Summer Camp Plan You Started',
+      body:
+        'Hi {parent_name},\n\nYou were already partway through the summer camp registration flow, so this is a friendly reminder of the plan you started.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nContinue registration here:\n{registration_link}',
+    },
+    4: {
+      subject: 'Pick Up Your Summer Camp Registration Where You Left Off',
+      body:
+        'Hi {parent_name},\n\nYou are already closer than most families because you started the summer camp registration form.\n\nHere is where you left off:\n{left_off_summary}\n\nCurrent weeks selected:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nResume here:\n{registration_link}',
+    },
+    5: {
+      subject: 'Final Reminder to Finish the Summer Camp Registration You Started',
+      body:
+        'Hi {parent_name},\n\nFinal quick reminder from us. You started the summer camp registration flow, and we would still love to help you finish it.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nReply if you want us to guide you.',
+    },
+  }
+  return templates[Math.max(1, Math.min(5, Number(stepNumber || 1)))] || templates[1]
+}
+
 async function ensureLeadJourneysQueued() {
   const { data: profiles, error: profileError } = await getSupabase()
     .from('program_interest_profiles')
-    .select('id, email, camper_count, camper_ages, profile_context, created_at')
+    .select('id, email, camper_count, camper_ages, profile_context, source, created_at')
     .order('created_at', { ascending: false })
     .limit(200)
 
@@ -558,12 +745,7 @@ async function ensureLeadJourneysQueued() {
       skippedActive += 1
       continue
     }
-    if (Number(existingRun?.current_step || 0) >= 1 && stepOneSentEmails.has(email)) {
-      skippedExistingStepOne += 1
-      continue
-    }
-
-    if (existingRun && ['queued', 'error'].includes(String(existingRun.status || '').toLowerCase())) {
+    if (existingRun && ['queued', 'error', 'lead_closed'].includes(String(existingRun.status || '').toLowerCase())) {
       await getSupabase()
         .from('email_journey_runs')
         .update({
@@ -579,12 +761,14 @@ async function ensureLeadJourneysQueued() {
       continue
     }
 
+    if (Number(existingRun?.current_step || 0) >= 1 && stepOneSentEmails.has(email)) {
+      skippedExistingStepOne += 1
+      continue
+    }
+
     await enqueueLeadJourney({
+      ...buildLeadPayloadFromProfile(profile, email),
       contactEmail: email,
-      guardianName: email,
-      submittedAt: profile?.created_at || new Date().toISOString(),
-      recommendation: '',
-      summaryLines: buildProfileSummaryLines(profile),
     })
     queued += 1
     enqueuedNew += 1
@@ -604,7 +788,7 @@ async function ensureLeadJourneysQueued() {
 async function sendMissingLeadStepOneEmails() {
   const { data: profiles, error: profileError } = await getSupabase()
     .from('program_interest_profiles')
-    .select('id, email, camper_count, camper_ages, profile_context, created_at')
+    .select('id, email, camper_count, camper_ages, profile_context, source, created_at')
     .order('created_at', { ascending: false })
     .limit(200)
 
@@ -675,11 +859,8 @@ async function sendMissingLeadStepOneEmails() {
     let run = runMap.get(email) || null
     if (!run) {
       const enqueueResult = await enqueueLeadJourney({
+        ...buildLeadPayloadFromProfile(profile, email),
         contactEmail: email,
-        guardianName: email,
-        submittedAt: profile?.created_at || new Date().toISOString(),
-        recommendation: '',
-        summaryLines: buildProfileSummaryLines(profile),
       })
 
       if (!enqueueResult?.runId) {
@@ -712,13 +893,11 @@ async function sendMissingLeadStepOneEmails() {
       continue
     }
 
-    const payload =
-      (await getLeadPayloadFromRun(run.id)) || {
-        submittedAt: profile?.created_at || run.created_at || new Date().toISOString(),
-        guardianName: email,
-        recommendation: '',
-        summaryLines: buildProfileSummaryLines(profile),
-      }
+    const payload = mergeLeadPayloadWithProfile(
+      (await getLeadPayloadFromRun(run.id)) || {},
+      profile,
+      email
+    )
 
     await sendLeadStepEmail({
       run,
@@ -775,6 +954,13 @@ async function processLeadJourneys() {
   let processed = 0
   let emailed = Number(immediateStepOne?.emailed || 0)
   let closed = 0
+  const stepCounts = {
+    step_1: Number(immediateStepOne?.emailed || 0),
+    step_2: 0,
+    step_3: 0,
+    step_4: 0,
+    step_5: 0,
+  }
 
   for (const run of runs || []) {
     processed += 1
@@ -816,16 +1002,8 @@ async function processLeadJourneys() {
           .eq('id', run.id)
       }
 
-      let payload = await getLeadPayloadFromRun(run.id)
-      if (!payload) {
-        const profile = await getLeadProfileByEmail(run.email)
-        payload = {
-          submittedAt: profile?.created_at || run.created_at || new Date().toISOString(),
-          guardianName: run.email,
-          recommendation: '',
-          summaryLines: buildProfileSummaryLines(profile || {}),
-        }
-      }
+      const profile = await getLeadProfileByEmail(run.email)
+      let payload = mergeLeadPayloadWithProfile(await getLeadPayloadFromRun(run.id), profile, run.email)
       const scheduleDays = Array.isArray(payload?.scheduleDays) ? payload.scheduleDays : [0, 2, 4, 6, 8]
       const templates = await getJourneyTemplates()
       const dueStep = getDueLeadStep(payload?.submittedAt || run.created_at, Number(run.current_step || 0), scheduleDays, run.status)
@@ -864,6 +1042,7 @@ async function processLeadJourneys() {
         stepNumber: dueStep,
       })
       emailed += 1
+      stepCounts[`step_${dueStep}`] = Number(stepCounts[`step_${dueStep}`] || 0) + 1
 
       const nextSendAt = computeNextSendAt(payload?.submittedAt || run.created_at, dueStep, scheduleDays)
       const nextStatus = dueStep >= templates.length ? 'lead_closed' : 'lead_active'
@@ -908,6 +1087,7 @@ async function processLeadJourneys() {
     processed,
     emailed,
     closed,
+    stepCounts,
     debug: {
       queue: queuedSummary,
       stepOne: immediateStepOne,
@@ -942,13 +1122,11 @@ async function manuallySendLeadStep({ email = '', runId = 0, stepNumber = 1 }) {
   const profile = await getLeadProfileByEmail(fallbackEmail)
   const templates = await getJourneyTemplates()
   const scheduleDays = buildLeadSchedule(templates)
-  const payload =
-    (run?.id ? await getLeadPayloadFromRun(run.id) : null) || {
-      submittedAt: profile?.created_at || run?.created_at || new Date().toISOString(),
-      guardianName: fallbackEmail,
-      recommendation: buildFallbackLeadRecommendation(profile || {}),
-      summaryLines: buildProfileSummaryLines(profile || {}),
-    }
+  const payload = mergeLeadPayloadWithProfile(
+    run?.id ? await getLeadPayloadFromRun(run.id) : null,
+    profile,
+    fallbackEmail
+  )
 
   const sendResult = await sendLeadStepEmail({
     run: {
@@ -985,6 +1163,60 @@ async function manuallySendLeadStep({ email = '', runId = 0, stepNumber = 1 }) {
     email: fallbackEmail,
     sent: Boolean(sendResult?.sent),
     previewOnly: Boolean(sendResult?.previewOnly),
+  }
+}
+
+async function previewLeadStep({ email = '', runId = 0, stepNumber = 1 }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const targetStep = Math.max(1, Math.min(5, Number(stepNumber || 1)))
+  let run = null
+
+  if (Number(runId || 0) > 0) {
+    const { data, error } = await getSupabase()
+      .from('email_journey_runs')
+      .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at')
+      .eq('id', Number(runId))
+      .maybeSingle()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+    run = data || null
+  }
+
+  const fallbackEmail = normalizedEmail || String(run?.email || '').trim().toLowerCase()
+  if (!isValidEmail(fallbackEmail)) {
+    throw new Error('A valid lead email is required.')
+  }
+
+  const profile = await getLeadProfileByEmail(fallbackEmail)
+  const templates = await getJourneyTemplates()
+  const scheduleDays = buildLeadSchedule(templates)
+  const payload = mergeLeadPayloadWithProfile(
+    run?.id ? await getLeadPayloadFromRun(run.id) : null,
+    profile,
+    fallbackEmail
+  )
+
+  const preview = await buildLeadStepPreview({
+    run: {
+      id: run?.id || null,
+      profile_id: run?.profile_id || profile?.id || null,
+      email: fallbackEmail,
+      created_at: run?.created_at || profile?.created_at || new Date().toISOString(),
+    },
+    payload,
+    templates,
+    scheduleDays,
+    stepNumber: targetStep,
+  })
+
+  return {
+    stepNumber: targetStep,
+    email: fallbackEmail,
+    subject: preview.subject,
+    bodyText: preview.bodyText,
+    html: preview.html,
   }
 }
 
@@ -1028,7 +1260,20 @@ export async function POST(request) {
       return Response.json({ ok: true, action, ...result }, { status: 200 })
     }
 
-    return Response.json({ error: 'Invalid action. Use "enqueue", "process", or "manual_send".' }, { status: 400 })
+    if (action === 'preview_step') {
+      const authorized = await isAuthorizedAutomationRequest(request)
+      if (!authorized) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const result = await previewLeadStep({
+        email: body?.email,
+        runId: body?.runId,
+        stepNumber: body?.stepNumber,
+      })
+      return Response.json({ ok: true, action, ...result }, { status: 200 })
+    }
+
+    return Response.json({ error: 'Invalid action. Use "enqueue", "process", "manual_send", or "preview_step".' }, { status: 400 })
   } catch (error) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
   } finally {
