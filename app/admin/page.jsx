@@ -2988,6 +2988,9 @@ export default function AdminPage() {
       row.status = run?.status || row.status
       const currentStep = Number(run?.current_step || 0)
       const statusValue = String(run?.status || '')
+      if (statusValue === 'paid' && !String(row.paidActivatedAt || '').trim()) {
+        row.paidActivatedAt = String(run?.updated_at || run?.last_sent_at || '').trim()
+      }
       if (statusValue === 'paid') {
         const paidEntries = getPaidJourneyEntries(row, row.selectedWeekStarts)
         const nextPendingEntry = getPendingPaidJourneyEntries(row, row.selectedWeekStarts)[0] || null
@@ -3791,6 +3794,8 @@ export default function AdminPage() {
     : isPaidFollowupJourneyFlow
       ? paidEnrollmentJourneyBlueprint
       : reservationReminderJourneyBlueprint
+  const activeJourneyStepLabel = activeJourneyBlueprintItems[activeJourneyPreviewIndex]?.step || `Step ${activeJourneyPreviewIndex + 1}`
+  const activeJourneyDisplayTitle = activeJourneyTemplate?.title || activeJourneyStepLabel
 
   function getLevelUpScreenshotCaption(index) {
     return (
@@ -8483,7 +8488,7 @@ export default function AdminPage() {
             >
               {sendingTestStep === activeJourneyPreviewIndex + 1
                 ? 'Sending test...'
-                : `Send Test for Step ${activeJourneyPreviewIndex + 1}`}
+                : `Send Test for ${activeJourneyStepLabel}`}
             </button>
           </div>
         </div>
@@ -8517,7 +8522,7 @@ export default function AdminPage() {
         <article className="journeyCard adminJourneyCard">
           <p className="journeyDay">Selected Step</p>
           <h4>
-            {activeJourneyTemplate?.title || `Step ${activeJourneyPreviewIndex + 1}`}
+            {activeJourneyDisplayTitle}
           </h4>
           <p className="subhead">
             Manual send checks all due journey thresholds and logs each email as it goes. If a step is overdue, it sends immediately on this run.
@@ -8602,23 +8607,23 @@ export default function AdminPage() {
             >
               {sendingTestStep === activeJourneyPreviewIndex + 1
                 ? 'Sending test...'
-                : `Send Test for Step ${activeJourneyPreviewIndex + 1}`}
+                : `Send Test for ${activeJourneyStepLabel}`}
             </button>
           </div>
           <p className="subhead">
             {isLeadJourneyFlow
               ? 'Click step tabs to review premium survey-lead emails in live preview.'
               : isPaidFollowupJourneyFlow
-                ? 'Click step tabs to preview the paid-family 2-week, 4-week, and 8-week emails. Switch between General Camp and Competition Boot Camp above.'
+                ? 'Click step tabs to preview the live paid-family journey for A0, A2, A4, and A8. Switch between General Camp and Competition Boot Camp above.'
               : isOvernightJourneyFlow
                 ? 'Click step tabs to review the overnight registration reminder version in live preview.'
                 : 'Click step tabs to review premium submitted-registration reminder emails in live preview.'}
           </p>
         </article>
         <article className="journeyCard adminJourneyCard">
-          <p className="journeyDay">Live Preview (Step {activeJourneyPreviewIndex + 1})</p>
+          <p className="journeyDay">Live Preview ({activeJourneyStepLabel})</p>
           <iframe
-            title={`Journey email preview step ${activeJourneyPreviewIndex + 1}`}
+            title={`Journey email preview ${activeJourneyStepLabel}`}
             className="adminEmailPreviewFrame"
             srcDoc={buildJourneyPreviewHtmlFromTemplate(
               activeJourneyPreviewIndex,

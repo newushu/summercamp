@@ -1,4 +1,4 @@
-import { supabaseServer } from '../../../../../lib/supabaseServer'
+import { supabaseServer } from '../../../../lib/supabaseServer'
 
 const TRANSPARENT_GIF_BASE64 = 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
 
