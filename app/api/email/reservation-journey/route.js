@@ -3002,7 +3002,7 @@ async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 
     }
     const eventRows = await getRunJourneyEvents(run.id)
     const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
-    const stage = getNextSpecificPaidPrepStage(payload, sentKeys, stageIdMap[normalizedStepKey])
+    const stage = getPreviewPaidPrepStage(payload, sentKeys, stageIdMap[normalizedStepKey])
     if (!stage) {
       throw new Error('Paid prep stage not available for this run.')
     }
@@ -3025,7 +3025,7 @@ async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 
     }
     const eventRows = await getRunJourneyEvents(run.id)
     const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
-    const stage = getSpecificPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
+    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
     if (!stage) {
       throw new Error('Paid follow-up stage not available for this run.')
     }
