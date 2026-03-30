@@ -526,14 +526,14 @@ const reservationJourneyTemplates = [
     title: 'P2 - 5-Day Prep Reminder',
     subject: '5 Days Before Camp: Final Logistics + Extra Week Invitation',
     body:
-      'Hi {parent_name},\n\nYour camp week is coming up fast. Please review clothing, lunch, Water Wednesday, and Friday showcase timing.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want help adding more weeks.',
+      'Hi {parent_name},\n\nYour camp week is coming up fast. Camp runs 8:30 AM-4:00 PM, with pickup from 4:00-4:30 PM. Please review clothing, lunch, Water Wednesday, and Friday showcase timing during pickup.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want help adding more weeks.',
   },
   {
     dayLabel: '3 Days Before Camp',
     title: 'P3 - 3-Day Prep Reminder',
     subject: '3 Days Before Camp: Final Packing + Arrival Checklist',
     body:
-      'Hi {parent_name},\n\nThree-day reminder before camp begins: confirm drop-off and pickup timing, pack training clothing, and review the weekly schedule.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want to adjust weeks before camp starts.',
+      'Hi {parent_name},\n\nThree-day reminder before camp begins: camp runs 8:30 AM-4:00 PM, with pickup from 4:00-4:30 PM. Pack training clothing and review the weekly schedule.\n\nIf your camper wants to start Competition Team in the fall, they must enroll in 3 weeks of Competition Team Boot Camp this summer.\n\nReply if you want to adjust weeks before camp starts.',
   },
   {
     dayLabel: '1 Day Before Camp',
@@ -4010,7 +4010,8 @@ export default function AdminPage() {
                   'Payment method: Zelle',
                   'Ethan Chen: Competition Boot Camp, Jul 7-11, Jul 14-18, Jul 21-25',
                   'Grand total: $2,340.00',
-                  'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:30 PM',
+                  'Camp hours: 8:30 AM-4:00 PM (pickup 4:00-4:30 PM)',
+                  'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase during pickup',
                 ],
               }
             : buildReservationPreviewPayload('standard'),
@@ -4813,15 +4814,46 @@ export default function AdminPage() {
     if (normalizedRunId <= 0 || !supabaseEnabled || !supabase) {
       return
     }
+    const nowIso = new Date().toISOString()
+    const { data: run, error: runError } = await supabase
+      .from('email_journey_runs')
+      .select('id, email, status')
+      .eq('id', normalizedRunId)
+      .maybeSingle()
+    if (runError || !run?.id) {
+      return
+    }
+
     const nextStatus = markPaid ? 'paid' : 'active'
+    const currentStatus = String(run?.status || '').trim().toLowerCase()
+    if (currentStatus === nextStatus) {
+      return
+    }
+
     await supabase
       .from('email_journey_runs')
       .update({
         status: nextStatus,
-        updated_at: new Date().toISOString(),
+        next_send_at: nowIso,
+        updated_at: nowIso,
       })
       .eq('id', normalizedRunId)
       .in('status', ['active', 'queued', 'paid', 'canceled_unpaid'])
+
+    await supabase.from('email_journey_events').insert({
+      run_id: normalizedRunId,
+      email: run.email,
+      step_number: null,
+      event_type: markPaid ? 'payment_marked_paid' : 'payment_marked_unpaid',
+      subject: markPaid ? 'Payment marked received' : 'Payment status returned to unpaid follow-up',
+      body_preview: markPaid
+        ? 'Accounting save reached 95%+ tuition paid. Unpaid reminders stopped and paid follow-up scheduling started.'
+        : 'Accounting save dropped below the paid threshold. Registration reminder flow resumed.',
+      event_payload: {
+        markedAt: nowIso,
+        source: 'accounting_save',
+      },
+    })
   }
 
   async function updateAccountingEntryField(row, updates = {}) {

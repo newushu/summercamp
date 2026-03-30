@@ -7,6 +7,10 @@ import { buildRegistrationSummarySnapshot } from '../../../../lib/registrationSu
 import { getWeekTierPromoLines } from '../../../../lib/campPricing'
 
 const CAMP_NAME = 'New England Wushu Summer Camp'
+const DAY_CAMP_START_TIME = '8:30 AM'
+const DAY_CAMP_END_TIME = '4:00 PM'
+const DAY_CAMP_PICKUP_WINDOW = '4:00-4:30 PM'
+const DAY_CAMP_HOURS_WITH_PICKUP_LABEL = `${DAY_CAMP_START_TIME} - ${DAY_CAMP_END_TIME} (pickup ${DAY_CAMP_PICKUP_WINDOW})`
 const PAYMENT_METHODS_TEXT = [
   'Zelle: wushu688@gmail.com (name: Xiaoyi Chen, head coach)',
   'Venmo: @newushu (Calvin newushu, head coach at New England Wushu)',
@@ -783,6 +787,8 @@ function buildStepContent({ firstName, stepNumber, reservationDeadlineLabel, sum
       `Thank you for submitting your ${CAMP_NAME} registration. Your reservation is now active for 72 hours and will auto-cancel if payment is not received by ${reservationDeadlineLabel}.`,
       Number(amountDue || 0) > 0 ? `Amount due now: ${formatCurrency(amountDue)}` : '',
       '',
+      `Camp hours: ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`,
+      '',
       'We are excited to support your camper this summer with structured skill progression, confidence-building, and team-based growth.',
       '',
       'Please send payment using one of the methods below to secure your spot.',
@@ -1179,7 +1185,7 @@ function getNextPaidPrepSendAt(payload, sentKeys) {
   return candidates[0] ? candidates[0].toISOString() : null
 }
 
-function getPaidEnrollmentAnchorDate(payload, eventRows = []) {
+function getPaidEnrollmentAnchorDate(payload, eventRows = [], fallbackPaidAt = '') {
   const payloadPaidAt = new Date(payload?.paidAt || '')
   if (!Number.isNaN(payloadPaidAt.getTime())) {
     return payloadPaidAt
@@ -1202,15 +1208,20 @@ function getPaidEnrollmentAnchorDate(payload, eventRows = []) {
   if (!Number.isNaN(paidEventAt.getTime())) {
     return paidEventAt
   }
+
+  const fallbackPaidDate = new Date(fallbackPaidAt || '')
+  if (!Number.isNaN(fallbackPaidDate.getTime())) {
+    return fallbackPaidDate
+  }
   return null
 }
 
-function getPaidEnrollmentFollowupSchedule(payload, eventRows = []) {
+function getPaidEnrollmentFollowupSchedule(payload, eventRows = [], fallbackPaidAt = '') {
   if (String(payload?.registrationType || '').trim() === 'overnight-only') {
     return null
   }
 
-  const anchorDate = getPaidEnrollmentAnchorDate(payload, eventRows)
+  const anchorDate = getPaidEnrollmentAnchorDate(payload, eventRows, fallbackPaidAt)
   if (!anchorDate) {
     return null
   }
@@ -1246,8 +1257,8 @@ function getPaidEnrollmentFollowupSchedule(payload, eventRows = []) {
   }
 }
 
-function getPaidEnrollmentDueStage(payload, sentKeys, eventRows = []) {
-  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+function getPaidEnrollmentDueStage(payload, sentKeys, eventRows = [], fallbackPaidAt = '') {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows, fallbackPaidAt)
   if (!schedule) {
     return null
   }
@@ -1262,8 +1273,8 @@ function getPaidEnrollmentDueStage(payload, sentKeys, eventRows = []) {
   return due[0] || null
 }
 
-function getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows = []) {
-  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+function getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows = [], fallbackPaidAt = '') {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows, fallbackPaidAt)
   if (!schedule) {
     return null
   }
@@ -1278,14 +1289,14 @@ function getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows = []) {
   return candidates[0] ? candidates[0].toISOString() : null
 }
 
-function getNextPaidJourneyStage(payload, sentKeys, eventRows = []) {
-  return [getPaidPrepDueStage(payload, sentKeys), getPaidEnrollmentDueStage(payload, sentKeys, eventRows)]
+function getNextPaidJourneyStage(payload, sentKeys, eventRows = [], fallbackPaidAt = '') {
+  return [getPaidPrepDueStage(payload, sentKeys), getPaidEnrollmentDueStage(payload, sentKeys, eventRows, fallbackPaidAt)]
     .filter(Boolean)
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0] || null
 }
 
-function getNextPaidJourneySendAt(payload, sentKeys, eventRows = []) {
-  return [getNextPaidPrepSendAt(payload, sentKeys), getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows)]
+function getNextPaidJourneySendAt(payload, sentKeys, eventRows = [], fallbackPaidAt = '') {
+  return [getNextPaidPrepSendAt(payload, sentKeys), getNextPaidEnrollmentSendAt(payload, sentKeys, eventRows, fallbackPaidAt)]
     .filter(Boolean)
     .map((value) => new Date(value))
     .filter((value) => !Number.isNaN(value.getTime()))
@@ -1312,8 +1323,8 @@ function getPreviewPaidPrepStage(payload, sentKeys, stageId) {
   )
 }
 
-function getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = []) {
-  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows)
+function getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = [], fallbackPaidAt = '') {
+  const schedule = getPaidEnrollmentFollowupSchedule(payload, eventRows, fallbackPaidAt)
   const stage = schedule?.stages?.[stageId]
   if (!stage || sentKeys.has(`${stage.id}:global`)) {
     return null
@@ -1321,12 +1332,20 @@ function getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = 
   return stage
 }
 
-function getPreviewPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = []) {
+function getPreviewPaidEnrollmentStage(payload, sentKeys, stageId, eventRows = [], fallbackPaidAt = '') {
   return (
-    getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows) ||
-    getPaidEnrollmentFollowupSchedule(payload, eventRows)?.stages?.[stageId] ||
+    getSpecificPaidEnrollmentStage(payload, sentKeys, stageId, eventRows, fallbackPaidAt) ||
+    getPaidEnrollmentFollowupSchedule(payload, eventRows, fallbackPaidAt)?.stages?.[stageId] ||
     null
   )
+}
+
+function getFallbackPaidAtForRun(run = {}) {
+  const status = String(run?.status || '').trim().toLowerCase()
+  if (status !== 'paid') {
+    return ''
+  }
+  return String(run?.updated_at || run?.next_send_at || run?.last_sent_at || run?.created_at || '').trim()
 }
 
 function buildPaidPrepContent({ firstName, stage, payload }) {
@@ -1341,11 +1360,12 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
     '- Tuesday: outdoor park day.',
     '- Wednesday: Water Wednesday / water balloon day.',
     '- Thursday: BBQ day.',
-    '- Friday: family showcase.',
+    '- Friday: family showcase during pickup.',
   ]
 
   const generalClose = [
     '',
+    `Camp hours are ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`,
     'General Camp is a fun and productive way to build fundamentals and give your camper a great start in their wushu journey.',
     'The Level Up app helps kids earn prizes and rewards for hard work, while we also use camp to teach teamwork, responsibility, and cleaning up together.',
     'Each full week also earns 2,500 Level Up points.',
@@ -1356,6 +1376,7 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
 
   const bootcampClose = [
     '',
+    `Camp hours are ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`,
     'Competition Boot Camp is designed to help athletes keep progressing in taolu, tumbling, and overall competition readiness.',
     'Every athlete works through skill tree items and skill sprint items in our Level Up app.',
     'Skill sprint means a featured skill has a deadline and prize pool, and that prize pool drops over time to motivate students to work hard and hit the skill earlier.',
@@ -1397,7 +1418,8 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         '- Pack sunscreen or outdoor shoes if that helps for Tuesday park day.',
         '- Bring a change of clothes for Wednesday water balloon fun.',
         '- Thursday BBQ is part of the camp fun.',
-        '- Friday ends with the family showcase.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
+        '- Friday ends with the family showcase during pickup.',
         ...generalClose,
       ],
     },
@@ -1411,9 +1433,9 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         `Hi ${firstName},`,
         '',
         'Three days to go before General Camp starts:',
-        '- Confirm your drop-off and pick-up plan.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack daily training clothes and water bottle.',
-        '- Keep Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase in mind.',
+        '- Keep Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase during pickup in mind.',
         '',
         'General Camp helps campers learn a lot more than just movements. We use camp to build focus, teamwork, responsibility, and confidence too.',
         ...generalClose,
@@ -1429,9 +1451,9 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         `Hi ${firstName},`,
         '',
         'General Camp starts tomorrow. Final reminder before arrival:',
-        '- Double-check drop-off and pickup timing.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack training clothes, water bottle, and anything else your camper needs.',
-        '- We are excited for a week of training, park day, water fun, BBQ, and the Friday showcase.',
+        '- We are excited for a week of training, park day, water fun, BBQ, and the Friday showcase during pickup.',
         ...generalClose,
       ],
     },
@@ -1465,7 +1487,8 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         '- Pack training clothes, athletic shoes, and water bottle each day.',
         '- Athletes should come ready for technical reps, tumbling work, and focused corrections.',
         '- Summer camp is one of the best ways to stay current on skill sprint goals and keep progressing through the curriculum pathway.',
-        '- Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase are all still part of the summer camp week rhythm.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
+        '- Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase during pickup are all still part of the summer camp week rhythm.',
         ...bootcampClose,
       ],
     },
@@ -1479,7 +1502,7 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         `Hi ${firstName},`,
         '',
         'Three days to go before Competition Boot Camp starts:',
-        '- Confirm your drop-off and pick-up plan.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack daily training gear and water bottle.',
         '- Athletes should be ready for taolu reps, tumbling progress, and steady work on skill tree and skill sprint items.',
         ...bootcampClose,
@@ -1495,7 +1518,7 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
         `Hi ${firstName},`,
         '',
         'Competition Boot Camp starts tomorrow. Final reminder before arrival:',
-        '- Double-check drop-off and pickup timing.',
+        `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack training clothes, water bottle, and anything needed for tumbling or conditioning work.',
         '- We are excited to help your athlete keep progressing in taolu, tumbling, and the broader curriculum pathway.',
         ...bootcampClose,
@@ -1517,7 +1540,8 @@ function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
     'Thank you again for signing up. We are excited to welcome your family and cannot wait to see you at summer camp.',
     '',
     'General Camp is a fun and productive way for campers to build fundamentals and make a strong start in their wushu journey.',
-    'During the week, campers also get to enjoy Tuesday outdoor park day, Wednesday water balloon day, Thursday BBQ, and Friday family showcase.',
+    `Camp hours are ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`,
+    'During the week, campers also get to enjoy Tuesday outdoor park day, Wednesday water balloon day, Thursday BBQ, and Friday family showcase during pickup.',
     'The Level Up app helps kids earn prizes and rewards for hard work, and we also use camp to teach teamwork, responsibility, and cleaning up together.',
     'Each full week earns 2,500 Level Up points.',
     '',
@@ -2798,7 +2822,8 @@ async function processDueReservationJourneys() {
 
       const eventRows = await getRunJourneyEvents(run.id)
       const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
-      const dueStage = getNextPaidJourneyStage(payload, sentKeys, eventRows)
+      const fallbackPaidAt = getFallbackPaidAtForRun(run)
+      const dueStage = getNextPaidJourneyStage(payload, sentKeys, eventRows, fallbackPaidAt)
       if (dueStage) {
         if (String(dueStage.id || '').endsWith('Day')) {
           await sendPaidPrepEmail({ run, payload, stage: dueStage })
@@ -2819,7 +2844,7 @@ async function processDueReservationJourneys() {
       }
 
       const refreshedEventRows = dueStage ? await getRunJourneyEvents(run.id) : eventRows
-      const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows)
+      const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows, fallbackPaidAt)
 
       await supabaseServer
         .from('email_journey_runs')
@@ -2853,7 +2878,7 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
 
   const { data: run, error: runError } = await supabaseServer
     .from('email_journey_runs')
-    .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at')
+    .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at, updated_at')
     .eq('id', Number(runId))
     .maybeSingle()
 
@@ -2917,13 +2942,14 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
     }
     const eventRows = await getRunJourneyEvents(run.id)
     const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
-    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
+    const fallbackPaidAt = getFallbackPaidAtForRun(run)
+    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows, fallbackPaidAt)
     if (!stage) {
       throw new Error('Paid follow-up stage not available for this run.')
     }
     const sendResult = await sendPaidEnrollmentFollowupEmail({ run, payload, stage })
     const refreshedEventRows = await getRunJourneyEvents(run.id)
-    const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows)
+    const nextSendAt = getNextPaidJourneySendAt(payload, buildPaidJourneySentKeySet(payload, refreshedEventRows), refreshedEventRows, fallbackPaidAt)
     await supabaseServer
       .from('email_journey_runs')
       .update({
@@ -2971,7 +2997,7 @@ async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 
 
   const { data: run, error: runError } = await supabaseServer
     .from('email_journey_runs')
-    .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at')
+    .select('id, profile_id, email, status, current_step, created_at, next_send_at, last_sent_at, updated_at')
     .eq('id', Number(runId))
     .maybeSingle()
 
@@ -3025,7 +3051,8 @@ async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 
     }
     const eventRows = await getRunJourneyEvents(run.id)
     const sentKeys = buildPaidJourneySentKeySet(payload, eventRows)
-    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows)
+    const fallbackPaidAt = getFallbackPaidAtForRun(run)
+    const stage = getPreviewPaidEnrollmentStage(payload, sentKeys, stageIdMap[normalizedStepKey], eventRows, fallbackPaidAt)
     if (!stage) {
       throw new Error('Paid follow-up stage not available for this run.')
     }

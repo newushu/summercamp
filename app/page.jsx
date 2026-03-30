@@ -75,6 +75,11 @@ const DAY_CAMP_WEEKLY_POINTS = 2500
 const DAY_CAMP_FULL_DAY_POINTS = 500
 const DAY_CAMP_HALF_DAY_POINTS = 100
 const OVERNIGHT_WEEKLY_POINTS = 5000
+const DAY_CAMP_START_TIME = '8:30 AM'
+const DAY_CAMP_END_TIME = '4:00 PM'
+const DAY_CAMP_PICKUP_WINDOW = '4:00-4:30 PM'
+const DAY_CAMP_HOURS_LABEL = `${DAY_CAMP_START_TIME} - ${DAY_CAMP_END_TIME}`
+const DAY_CAMP_HOURS_WITH_PICKUP_LABEL = `${DAY_CAMP_HOURS_LABEL} (pickup ${DAY_CAMP_PICKUP_WINDOW})`
 const DOB_YEAR_OPTIONS = Array.from({ length: 26 }, (_, index) => String(new Date().getFullYear() - 2 - index))
 
 function getLocationLabel(value) {
@@ -255,7 +260,7 @@ const perks = [
 
 const dayAtCampTimeline = [
   {
-    time: '9:00 AM',
+    time: DAY_CAMP_START_TIME,
     title: 'Warm-up + team games',
     zhTitle: '热身 + 团队游戏',
     note: 'Arrival, movement prep, and social energy.',
@@ -304,11 +309,11 @@ const dayAtCampTimeline = [
     zhNote: '建立自信、友谊与高能量乐趣。',
   },
   {
-    time: '4:30 PM',
-    title: 'Pickup',
+    time: DAY_CAMP_END_TIME,
+    title: 'Camp ends + pickup',
     zhTitle: '接送',
-    note: 'Families head home with a full, structured day completed.',
-    zhNote: '一天完整而有结构的营地安排结束。',
+    note: `Camp wraps at ${DAY_CAMP_END_TIME}, with family pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
+    zhNote: '营地活动于下午4点结束，家庭接送时间为下午4点至4点30分。',
   },
 ]
 
@@ -3716,7 +3721,8 @@ export default function HomePage() {
     lines.push(`Offer reminder: ${WEEK_TIER_PROMO.headline}`)
     lines.push(`Offer details: ${WEEK_TIER_PROMO.cap} ${WEEK_TIER_PROMO.tiers} ${WEEK_TIER_PROMO.detail}`)
     lines.push(`Why families use it: ${WEEK_TIER_PROMO.growth}`)
-    lines.push('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase.')
+    lines.push(`Camp hours: ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`)
+    lines.push('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase happens during pickup.')
     return lines
   }
 
@@ -5373,12 +5379,13 @@ export default function HomePage() {
             <h1>{text('Structured martial arts camp for confident, active kids.', '为孩子打造有结构、有成长感的武术夏令营。')}</h1>
             <p className="subhead">
               {text(
-                'Ages 3-17. All levels welcome. Full-week, full-day, and half-day options across summer.',
-                '3-17岁。所有水平均可参加。整个夏季提供整周、全天与半天选择。'
+                `Ages 3-17. All levels welcome. Daily drop-off starts at ${DAY_CAMP_START_TIME}, camp runs until ${DAY_CAMP_END_TIME}, and pickup is ${DAY_CAMP_PICKUP_WINDOW}. Full-week, full-day, and half-day options across summer.`,
+                `3-17岁。所有水平均可参加。每日最早可于上午8点30分送达，营地活动至下午4点，接送时间为下午4点至4点30分。整个夏季提供整周、全天与半天选择。`
               )}
             </p>
             <div className="heroQuickFacts" aria-label={text('Key camp facts', '营地关键信息')}>
               <span>{text('Ages 3-17', '3-17岁')}</span>
+              <span>{text(`Daily ${DAY_CAMP_HOURS_LABEL}`, `每日 ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}`)}</span>
               <span>{text('Full-Day & Half-Day', '全天与半天可选')}</span>
               <span>{text(dayCampSeasonLabel, dayCampSeasonLabel)}</span>
               <span>{text('All Levels Welcome', '所有水平欢迎参加')}</span>
@@ -5608,8 +5615,8 @@ export default function HomePage() {
         <h2>{text('Pricing', '价格')}</h2>
         <p className="subhead">
           {text(
-            'Clear pricing for the main day-camp options. Families can add lunch by day, and menus vary by week with choices that may include burgers, sushi, or hot dogs plus a juice box or fruit.',
-            '这是日营主要价格的一览。家庭可按天加购午餐；每周菜单会有变化，可能包括汉堡、寿司或热狗，并搭配果汁盒或水果。'
+            `Clear pricing for the main day-camp options. Daily drop-off starts at ${DAY_CAMP_START_TIME}, camp runs until ${DAY_CAMP_END_TIME}, and pickup is ${DAY_CAMP_PICKUP_WINDOW}. Families can add lunch by day, and menus vary by week with choices that may include burgers, sushi, or hot dogs plus a juice box or fruit.`,
+            `这是日营主要价格的一览。每日最早可于上午8点30分送达，营地活动至下午4点，接送时间为下午4点至4点30分。家庭可按天加购午餐；每周菜单会有变化，可能包括汉堡、寿司或热狗，并搭配果汁盒或水果。`
           )}
         </p>
         <div className="pricingGrid">
@@ -5632,7 +5639,7 @@ export default function HomePage() {
             <span>
               {discountActive
                 ? text(`Discounted price until ${discountEndDateSpokenLabel.en}`, `优惠价截止至 ${discountEndDateSpokenLabel.zh}`)
-                : text('9:00 AM - 4:30 PM', '上午9点至下午4点30分')}
+                : text(DAY_CAMP_HOURS_WITH_PICKUP_LABEL, '上午9点至下午4点，接送时间为下午4点至4点30分')}
             </span>
           </article>
           <article className="pricingCard">
@@ -5832,8 +5839,8 @@ export default function HomePage() {
         <h2>{text('A Day at Camp', '营地的一天')}</h2>
         <p className="subhead">
           {text(
-            'Parents want to know what the day actually feels like. This is the flow most families can expect from a standard full day at camp.',
-            '家长最关心的一点之一就是：孩子一天大概怎么安排。以下是标准全天营的典型日程。'
+            `Parents want to know what the day actually feels like. A standard full day runs ${DAY_CAMP_HOURS_LABEL}, with drop-off starting at ${DAY_CAMP_START_TIME} and pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
+            `家长最关心的一点之一就是：孩子一天大概怎么安排。标准全天营时间为上午8点30分至下午4点；最早可于上午8点30分送达，接送时间为下午4点至4点30分。`
           )}
         </p>
         <div className="dayTimeline">
