@@ -9520,10 +9520,12 @@ textarea:focus {
     appearance: none;
     text-decoration: none;
     text-align: center;
-    font-size: 0.64rem;
+    font-size: 0.56rem;
     font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
     color: #334155;
-    padding: 0.38rem 0.1rem;
+    padding: 0.34rem 0.08rem;
     border-radius: 12px;
     background: transparent;
     border: 1px solid transparent;
@@ -9533,10 +9535,12 @@ textarea:focus {
   .mobileSectionNav button {
     appearance: none;
     text-align: center;
-    font-size: 0.64rem;
+    font-size: 0.56rem;
     font-weight: 800;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
     color: #ffffff;
-    padding: 0.38rem 0.1rem;
+    padding: 0.34rem 0.08rem;
     border-radius: 12px;
     background: linear-gradient(140deg, #2563eb 0%, #1d4ed8 100%);
     border: 1px solid rgba(37, 99, 235, 0.4);
@@ -9548,7 +9552,7 @@ textarea:focus {
   .mobileSectionNav button {
     text-decoration: none;
     text-align: center;
-    min-height: 2.15rem;
+    min-height: 2rem;
   }
 
   .mobileSectionNav a:active {

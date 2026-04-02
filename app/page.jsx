@@ -7736,7 +7736,6 @@ export default function HomePage() {
 
       {showLandingOnlySections ? (
       <nav className="mobileSectionNav" aria-label="Section navigation">
-        <a href="#camp-info">{text('Top', '顶部')}</a>
         <a href="#why-camp">{text('Highlights', '亮点')}</a>
         <a href="#camp-dates">{text('Camp Options', '营地选项')}</a>
         <a href="#student-stories">{text('Stories', '口碑')}</a>
