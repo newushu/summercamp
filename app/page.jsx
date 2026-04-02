@@ -37,6 +37,7 @@ const registrationSteps = [
 const desktopCampNavItems = [
   { href: '#camp-info', label: 'Top' },
   { href: '#why-camp', label: 'Highlights' },
+  { href: '#camp-dates', label: 'Camp Options' },
   { href: '#student-stories', label: 'Stories' },
   { href: '#weekly-structure', label: 'Sample Day' },
 ]
@@ -399,33 +400,6 @@ const levelUpFeatures = [
   'Parents can conveniently order lunch in the app.',
   'A weekly camp schedule is shown in-app so families know exactly what is happening.',
   'Parents can see day-to-day activity and clear progress over time.',
-]
-
-const campGalleryCaptions = [
-  {
-    en: 'Every week blends high-energy training, confidence-building, and summer fun.',
-    zh: '每周都结合高能训练、自信培养与夏日乐趣。',
-  },
-  {
-    en: 'Campers build real skills while making friends through team challenges.',
-    zh: '营员在团队挑战中提升真实技能，也结交新朋友。',
-  },
-  {
-    en: 'Daily movement, structure, and coaching help kids grow fast and stay motivated.',
-    zh: '每日训练节奏与教练指导，帮助孩子快速成长并持续保持动力。',
-  },
-  {
-    en: 'From first-timers to advanced students, every camper trains at the right level.',
-    zh: '从零基础到进阶学员，每位营员都在适合自己的层级训练。',
-  },
-  {
-    en: 'Weekly showcase moments turn progress into proud memories for families.',
-    zh: '每周展示把成长转化为家庭共同见证的高光时刻。',
-  },
-  {
-    en: 'A summer they enjoy now, with confidence and discipline that lasts beyond camp.',
-    zh: '一个当下快乐、长期受益的夏天，自信与自律延续到营地之外。',
-  },
 ]
 
 const testimonialTranslationMap = {
@@ -1030,8 +1004,6 @@ export default function HomePage() {
     return 'register'
   })
   const [testimonialIndex, setTestimonialIndex] = useState(0)
-  const [campGalleryIndex, setCampGalleryIndex] = useState(0)
-  const [campGalleryDirection, setCampGalleryDirection] = useState('next')
   const [summaryExpanded, setSummaryExpanded] = useState(false)
   const [summaryOverlayOpen, setSummaryOverlayOpen] = useState(false)
   const [summaryOverlayHtml, setSummaryOverlayHtml] = useState('')
@@ -1083,7 +1055,6 @@ export default function HomePage() {
   const surveyRef = useRef(null)
   const summaryIframeRef = useRef(null)
   const slideTouchStartRef = useRef(0)
-  const campGalleryTouchStartRef = useRef(0)
   const surveyLeadAutosaveTimerRef = useRef(null)
   const registrationLeadAutosaveTimerRef = useRef(null)
 
@@ -1235,18 +1206,6 @@ export default function HomePage() {
       transformOrigin: 'center center',
     }
   }
-  const campGalleryCount = campGalleryItems.length
-  const normalizedCampGalleryIndex = campGalleryCount > 0
-    ? ((campGalleryIndex % campGalleryCount) + campGalleryCount) % campGalleryCount
-    : 0
-  const activeCampGalleryItem = campGalleryCount > 0 ? campGalleryItems[normalizedCampGalleryIndex] : null
-  const previousCampGalleryItem = campGalleryCount > 1
-    ? campGalleryItems[(normalizedCampGalleryIndex - 1 + campGalleryCount) % campGalleryCount]
-    : activeCampGalleryItem
-  const nextCampGalleryItem = campGalleryCount > 1
-    ? campGalleryItems[(normalizedCampGalleryIndex + 1) % campGalleryCount]
-    : activeCampGalleryItem
-  const activeCampGalleryCaption = campGalleryCaptions[normalizedCampGalleryIndex % campGalleryCaptions.length]
   const levelUpSlideCount = Math.max(phoneScreenshots.length, levelUpFeatures.length, 1)
   const activeLevelUpFeature = levelUpFeatures[levelUpSlideIndex % levelUpFeatures.length]
   const activeLevelUpScreenshotIndex =
@@ -1321,6 +1280,46 @@ export default function HomePage() {
       endLabel: end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     }
   }, [adminConfig.tuition.discountEndDate, countdownNow])
+  const discountStatus = useMemo(() => {
+    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    if (!end || !countdownNow) {
+      return {
+        hasDate: false,
+        active: false,
+        labelEn: 'Regular pricing',
+        labelZh: '当前为常规价格',
+        detailEn: '',
+        detailZh: '',
+        ctaEn: '',
+        ctaZh: '',
+      }
+    }
+    const endDateTime = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59)
+    const diffMs = countdownNow.getTime() - endDateTime.getTime()
+    if (diffMs <= 0) {
+      return {
+        hasDate: true,
+        active: true,
+        labelEn: 'Discount active',
+        labelZh: '优惠进行中',
+        detailEn: `Discount ends ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        detailZh: `优惠截止至 ${end.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}`,
+        ctaEn: 'Claim discount here',
+        ctaZh: '点此领取优惠',
+      }
+    }
+    const daysAgo = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
+    return {
+      hasDate: true,
+      active: false,
+      labelEn: `Discount expired (${daysAgo} day${daysAgo === 1 ? '' : 's'} ago)`,
+      labelZh: `优惠已结束（${daysAgo}天前）`,
+      detailEn: 'You may still be able to get it. Click below to register and check.',
+      detailZh: '你仍有可能获得优惠。点击下方报名并查看是否仍可申请。',
+      ctaEn: 'Still want the discount? Click here',
+      ctaZh: '仍想领取优惠？点这里',
+    }
+  }, [adminConfig.tuition.discountEndDate, countdownNow])
   const overnightPricingRows = useMemo(() => {
     const regular = adminConfig.tuition.regular
     const discounted = adminConfig.tuition.discount
@@ -1376,6 +1375,28 @@ export default function HomePage() {
       halfDayHigh,
     }
   }, [adminConfig.tuition.discount, adminConfig.tuition.regular, discountActive])
+  const bootcampPricing = useMemo(() => {
+    const resolved = resolveBootcampTuition(adminConfig.tuition)
+    const regular = resolved?.regular || {}
+    const discount = resolved?.discount || {}
+    const effective = (regularValue, discountValue) => {
+      const regularNumber = Number(regularValue || 0)
+      const discountedNumber = Number(discountValue || 0)
+      if (!discountActive) {
+        return regularNumber
+      }
+      if (discountedNumber > 0) {
+        return Math.min(regularNumber || discountedNumber, discountedNumber)
+      }
+      return regularNumber
+    }
+    return {
+      fullWeek: effective(regular.fullWeek, discount.fullWeek),
+      fullDay: effective(regular.fullDay, discount.fullDay),
+      regularFullWeek: Number(regular.fullWeek || 0),
+      regularFullDay: Number(regular.fullDay || 0),
+    }
+  }, [adminConfig.tuition, discountActive])
   const halfDayPriceLabel = useMemo(() => {
     if (dayCampPricing.halfDayLow <= 0) {
       return ''
@@ -1385,6 +1406,18 @@ export default function HomePage() {
     }
     return `${currency(dayCampPricing.halfDayLow)} - ${currency(dayCampPricing.halfDayHigh)}`
   }, [dayCampPricing.halfDayHigh, dayCampPricing.halfDayLow])
+  const heroPricingSnapshot = useMemo(() => {
+    const dayWeek = Number(dayCampPricing.fullWeek || 0)
+    const bootcampWeek = Number(bootcampPricing.fullWeek || 0)
+    const lowestWeek = [dayWeek, bootcampWeek].filter((value) => value > 0).sort((a, b) => a - b)[0] || 0
+    return {
+      startingWeek: lowestWeek,
+      generalWeek: dayWeek,
+      bootcampWeek,
+      generalDay: Number(dayCampPricing.fullDay || 0),
+      bootcampDay: Number(bootcampPricing.fullDay || 0),
+    }
+  }, [bootcampPricing.fullDay, bootcampPricing.fullWeek, dayCampPricing.fullDay, dayCampPricing.fullWeek])
   const enabledLocationOptions = useMemo(
     () => LOCATION_OPTIONS.filter((option) => adminConfig.locations?.[option.value]?.enabled !== false),
     [adminConfig.locations]
@@ -1457,39 +1490,6 @@ export default function HomePage() {
       nextLevelUpSlide()
     } else {
       previousLevelUpSlide()
-    }
-  }
-
-  function goToCampGallerySlide(nextIndex, direction = 'next') {
-    if (campGalleryCount <= 0) {
-      return
-    }
-    setCampGalleryDirection(direction)
-    setCampGalleryIndex(((nextIndex % campGalleryCount) + campGalleryCount) % campGalleryCount)
-  }
-
-  function nextCampGallerySlide() {
-    goToCampGallerySlide(campGalleryIndex + 1, 'next')
-  }
-
-  function previousCampGallerySlide() {
-    goToCampGallerySlide(campGalleryIndex - 1, 'prev')
-  }
-
-  function onCampGalleryTouchStart(event) {
-    campGalleryTouchStartRef.current = event.changedTouches?.[0]?.clientX || 0
-  }
-
-  function onCampGalleryTouchEnd(event) {
-    const endX = event.changedTouches?.[0]?.clientX || 0
-    const delta = endX - campGalleryTouchStartRef.current
-    if (Math.abs(delta) < 24) {
-      return
-    }
-    if (delta < 0) {
-      nextCampGallerySlide()
-    } else {
-      previousCampGallerySlide()
     }
   }
 
@@ -4229,13 +4229,14 @@ export default function HomePage() {
   const activeSurveyYouTubeEmbed = getYouTubeEmbedUrl(activeSurveyVideo)
   const landingSectionVisuals = useMemo(
     () => ({
-      whyCamp: adminConfig.media.surveyStepImageUrls?.[1] || adminConfig.media.heroImageUrl || '',
-      marketingFlow: adminConfig.media.surveyStepImageUrls?.[2] || adminConfig.media.heroImageUrl || '',
-      testimonials: adminConfig.media.surveyStepImageUrls?.[3] || adminConfig.media.heroImageUrl || '',
-      campDates: adminConfig.media.surveyStepImageUrls?.[4] || adminConfig.media.heroImageUrl || '',
-      weekly: adminConfig.media.surveyStepImageUrls?.[5] || adminConfig.media.heroImageUrl || '',
+      hero: campGalleryItems[0]?.src || adminConfig.media.heroImageUrl || '',
+      whyCamp: adminConfig.media.surveyStepImageUrls?.[1] || campGalleryItems[1]?.src || adminConfig.media.heroImageUrl || '',
+      marketingFlow: adminConfig.media.surveyStepImageUrls?.[2] || campGalleryItems[2]?.src || adminConfig.media.heroImageUrl || '',
+      testimonials: adminConfig.media.surveyStepImageUrls?.[3] || campGalleryItems[3]?.src || adminConfig.media.heroImageUrl || '',
+      campDates: adminConfig.media.surveyStepImageUrls?.[4] || campGalleryItems[0]?.src || adminConfig.media.heroImageUrl || '',
+      weekly: adminConfig.media.surveyStepImageUrls?.[5] || campGalleryItems[2]?.src || adminConfig.media.heroImageUrl || '',
     }),
-    [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls]
+    [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls, campGalleryItems]
   )
   const claimableDiscountTotal = getClaimableDiscountTotal()
   const surveyEmailInvalid =
@@ -5428,15 +5429,28 @@ export default function HomePage() {
               )}
             </p>
           </article>
-          <article className="heroAchievementCard">
+          <article className={`heroAchievementCard heroAchievementCardPricing ${discountStatus.active ? 'discountLive' : discountStatus.hasDate ? 'discountExpired' : ''}`}>
             <p className="heroAchievementLabel">{text('Pricing Snapshot', '价格概览')}</p>
-            <h3>{text(`Starting at ${currency(dayCampPricing.fullWeek)}/week`, `${currency(dayCampPricing.fullWeek)}/周起`)}</h3>
+            {discountStatus.hasDate ? (
+              <span className={`heroAchievementRibbon ${discountStatus.active ? 'active' : 'expired'}`}>
+                {text(discountStatus.labelEn, discountStatus.labelZh)}
+              </span>
+            ) : null}
+            <h3>{text(`Starting at ${currency(heroPricingSnapshot.startingWeek)}/week`, `${currency(heroPricingSnapshot.startingWeek)}/周起`)}</h3>
+            <div className="heroPricingMeta">
+              {discountStatus.detailEn ? <span>{text(discountStatus.detailEn, discountStatus.detailZh)}</span> : null}
+            </div>
             <p>
               {text(
-                `Full day from ${currency(dayCampPricing.fullDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
-                `全天 ${currency(dayCampPricing.fullDay)}/天起。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
+                `General Camp: ${currency(heroPricingSnapshot.generalWeek)}/week, ${currency(heroPricingSnapshot.generalDay)}/day. Competition Boot Camp: ${currency(heroPricingSnapshot.bootcampWeek)}/week, ${currency(heroPricingSnapshot.bootcampDay)}/day. Half day ${halfDayPriceLabel || 'contact us for pricing'}.`,
+                `普通营：${currency(heroPricingSnapshot.generalWeek)}/周，${currency(heroPricingSnapshot.generalDay)}/天。竞赛集训营：${currency(heroPricingSnapshot.bootcampWeek)}/周，${currency(heroPricingSnapshot.bootcampDay)}/天。半天 ${halfDayPriceLabel || '价格请联系咨询'}。`
               )}
             </p>
+            {discountStatus.hasDate && discountStatus.ctaEn ? (
+              <button type="button" className="button heroPricingCta" onClick={jumpToRegistration}>
+                {text(discountStatus.ctaEn, discountStatus.ctaZh)}
+              </button>
+            ) : null}
           </article>
         </div>
         <div className="heroCompactPoints">
@@ -5489,78 +5503,10 @@ export default function HomePage() {
             )}
           </p>
         </div>
-
-        {activeCampGalleryItem ? (
-          <div
-            className="heroGalleryWrap"
-            onTouchStart={onCampGalleryTouchStart}
-            onTouchEnd={onCampGalleryTouchEnd}
-          >
-            <div className="heroGalleryRail">
-              <button
-                type="button"
-                className="heroGalleryArrow left"
-                onClick={previousCampGallerySlide}
-                aria-label={text('Previous camp photo', '上一张营地照片')}
-              >
-                ←
-              </button>
-              <div className="heroGallerySide left" aria-hidden="true">
-                {previousCampGalleryItem?.src ? (
-                  <img src={previousCampGalleryItem.src} alt="" style={getLandingCarouselImageStyle(previousCampGalleryItem.positionIndex)} />
-                ) : (
-                  <div className="heroGalleryPlaceholderSide">{previousCampGalleryItem?.slot || text('Camp Photo', '营地照片')}</div>
-                )}
-              </div>
-              <figure
-                key={`gallery-${normalizedCampGalleryIndex}`}
-                className={`heroGalleryMain ${campGalleryDirection === 'next' ? 'next' : 'prev'}`}
-              >
-                {activeCampGalleryItem.src ? (
-                  <img
-                    className="heroMedia"
-                    src={activeCampGalleryItem.src}
-                    alt={text('Summer camp gallery', '夏令营图集')}
-                    style={getLandingCarouselImageStyle(activeCampGalleryItem.positionIndex)}
-                  />
-                ) : (
-                  <div className="heroMediaPlaceholder">
-                    <strong>{activeCampGalleryItem.slot}</strong>
-                    <span>{text('Upload this photo slot in /admin media.', '请在 /admin 媒体中上传此照片位。')}</span>
-                  </div>
-                )}
-              </figure>
-              <div className="heroGallerySide right" aria-hidden="true">
-                {nextCampGalleryItem?.src ? (
-                  <img src={nextCampGalleryItem.src} alt="" style={getLandingCarouselImageStyle(nextCampGalleryItem.positionIndex)} />
-                ) : (
-                  <div className="heroGalleryPlaceholderSide">{nextCampGalleryItem?.slot || text('Camp Photo', '营地照片')}</div>
-                )}
-              </div>
-              <button
-                type="button"
-                className="heroGalleryArrow right"
-                onClick={nextCampGallerySlide}
-                aria-label={text('Next camp photo', '下一张营地照片')}
-              >
-                →
-              </button>
-            </div>
-            <p className="heroGalleryCaption">
-              {text(activeCampGalleryCaption.en, activeCampGalleryCaption.zh)}
-            </p>
-            <div className="heroGalleryDots" aria-label={text('Camp photo position', '营地图集位置')}>
-              {campGalleryItems.map((_, index) => (
-                <button
-                  key={`gallery-dot-${index}`}
-                  type="button"
-                  className={`dot ${index === normalizedCampGalleryIndex ? 'active' : ''}`}
-                  onClick={() => goToCampGallerySlide(index, index > normalizedCampGalleryIndex ? 'next' : 'prev')}
-                  aria-label={text(`Go to photo ${index + 1}`, `跳转到第 ${index + 1} 张`)}
-                />
-              ))}
-            </div>
-          </div>
+        {landingSectionVisuals.hero ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.hero} alt="Summer camp hero banner" style={getLandingCarouselImageStyle(0)} />
+          </figure>
         ) : null}
 
       </section>
@@ -5770,7 +5716,12 @@ export default function HomePage() {
       </section>
 
       <section id="camp-dates" className="card section">
-        <h2>{text('Camp Options', '营地选项')}</h2>
+        {landingSectionVisuals.campDates ? (
+          <figure className="sectionMediaBanner">
+            <img src={landingSectionVisuals.campDates} alt="Camp options banner" style={getLandingCarouselImageStyle(0)} />
+          </figure>
+        ) : null}
+        <h2>{text('Camp Types & Options', '营地类型与选项')}</h2>
         <p className="subhead">
           {text(
             'The two main day-camp paths are easy to compare below. Overnight camp stays available as a separate immersive option.',
@@ -7787,6 +7738,7 @@ export default function HomePage() {
       <nav className="mobileSectionNav" aria-label="Section navigation">
         <a href="#camp-info">{text('Top', '顶部')}</a>
         <a href="#why-camp">{text('Highlights', '亮点')}</a>
+        <a href="#camp-dates">{text('Camp Options', '营地选项')}</a>
         <a href="#student-stories">{text('Stories', '口碑')}</a>
         <a href="#weekly-structure">{text('Sample Day', '示例日程')}</a>
         <button type="button" onClick={jumpToRegistration}>
@@ -7848,70 +7800,101 @@ export default function HomePage() {
       ) : null}
       </>
       ) : null}
-      {discountCountdown && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && isMobileViewport && isDiscountCollapsed ? (
+      {discountStatus.hasDate && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && isDiscountCollapsed ? (
         <button
           type="button"
           className="discountCollapsedRemnant"
           aria-label={text('Show discount', '展开优惠')}
+          title={text('Show discount', '展开优惠')}
           onClick={() => setIsDiscountCollapsed(false)}
         >
           ⌃
         </button>
       ) : null}
-      {discountCountdown && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && (!isMobileViewport || !isDiscountCollapsed) ? (
+      {discountStatus.hasDate && (!isMobileLearnOverlayOpen || keepFloatingUiVisible) && (!isMobileViewport || !isDiscountCollapsed) ? (
         <div
           className={`discountCountdownDock ${isMobileViewport ? 'mobileStrip' : ''} ${
             showRegistrationSections && isMobileViewport ? 'registrationOffset' : ''
           }`}
           aria-label="Discount countdown"
         >
+          {!isMobileViewport ? (
+            <button
+              type="button"
+              className="discountHideBtn"
+              aria-label={text('Hide discount', '隐藏优惠')}
+              title={text('Hide discount', '隐藏优惠')}
+              onClick={() => setIsDiscountCollapsed(true)}
+            >
+              Hide
+            </button>
+          ) : null}
           <div className="discountCountdownMeta discountCountdownMetaPrimary">
-            <strong>{text('Early-Bird', '早鸟优惠')}</strong>
-            <p className="discountAmountHero">
-              <span className="discountAmountMain">{discountAmountLabel}</span>
-              <span className="discountAmountSub">{text('per week', '每周')}</span>
-            </p>
-            <div className="discountCountdownBoxes" aria-label="Countdown timer">
-              <div className="discountTimeBox">
-                <span className="discountTimeValue" suppressHydrationWarning>{discountCountdown.days}</span>
-                <span className="discountTimeLabel">{isMobileViewport ? 'D' : text('Days', '天')}</span>
-              </div>
-              <div className="discountTimeBox">
-                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.hours).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{isMobileViewport ? 'H' : text('Hours', '时')}</span>
-              </div>
-              <div className="discountTimeBox">
-                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.minutes).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{isMobileViewport ? 'M' : text('Minutes', '分')}</span>
-              </div>
-              <div className="discountTimeBox">
-                <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown.seconds).padStart(2, '0')}</span>
-                <span className="discountTimeLabel">{isMobileViewport ? 'S' : text('Seconds', '秒')}</span>
-              </div>
-            </div>
+            <strong>{text(discountStatus.active ? 'Early-Bird' : 'Discount Update', discountStatus.active ? '早鸟优惠' : '优惠更新')}</strong>
+            {discountStatus.active ? (
+              <>
+                <p className="discountAmountHero">
+                  <span className="discountAmountMain">{discountAmountLabel}</span>
+                  <span className="discountAmountSub">{text('per week', '每周')}</span>
+                </p>
+                <div className="discountCountdownBoxes" aria-label="Countdown timer">
+                  <div className="discountTimeBox">
+                    <span className="discountTimeValue" suppressHydrationWarning>{discountCountdown?.days}</span>
+                    <span className="discountTimeLabel">{isMobileViewport ? 'D' : text('Days', '天')}</span>
+                  </div>
+                  <div className="discountTimeBox">
+                    <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown?.hours || 0).padStart(2, '0')}</span>
+                    <span className="discountTimeLabel">{isMobileViewport ? 'H' : text('Hours', '时')}</span>
+                  </div>
+                  <div className="discountTimeBox">
+                    <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown?.minutes || 0).padStart(2, '0')}</span>
+                    <span className="discountTimeLabel">{isMobileViewport ? 'M' : text('Minutes', '分')}</span>
+                  </div>
+                  <div className="discountTimeBox">
+                    <span className="discountTimeValue" suppressHydrationWarning>{String(discountCountdown?.seconds || 0).padStart(2, '0')}</span>
+                    <span className="discountTimeLabel">{isMobileViewport ? 'S' : text('Seconds', '秒')}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="discountExpiredLead">{text(discountStatus.labelEn, discountStatus.labelZh)}</p>
+            )}
             {!isMobileViewport ? (
               <>
-                <span>{text('Claim by', '请于')} {discountCountdown.endLabel}</span>
+                <span>{text(discountStatus.detailEn, discountStatus.detailZh)}</span>
                 {adminConfig.tuition.discountCode ? (
                   <p className="discountCodeLine">
                     {text('Code', '优惠码')}: <code>{adminConfig.tuition.discountCode}</code>
                   </p>
                 ) : null}
                 <button type="button" className="button discountClaimBtn" onClick={jumpToRegistration}>
-                  {text('Claim Early-Bird', '领取早鸟优惠')}
+                  {text(discountStatus.ctaEn, discountStatus.ctaZh)}
                 </button>
               </>
             ) : null}
           </div>
           <div className="discountCountdownMeta discountCountdownMetaSecondary">
             <strong>{text('Train More, Save More', '多练多省')}</strong>
-            <p className="discountSecondaryLead">
-              <span className="discountSecondaryBig">{text('50% OFF', '5折优惠')}</span>{' '}
-              {text('Full Weeks', '整周课程')}
-            </p>
-            <p className="discountSecondaryDeadline">
-              {text('Enroll by June 30.', '请于6月30日前报名。')}
-            </p>
+            {discountStatus.active ? (
+              <>
+                <p className="discountSecondaryLead">
+                  <span className="discountSecondaryBig">{text('50% OFF', '5折优惠')}</span>{' '}
+                  {text('Full Weeks', '整周课程')}
+                </p>
+                <p className="discountSecondaryDeadline">
+                  {text('Enroll by June 30.', '请于6月30日前报名。')}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="discountSecondaryLead">
+                  <span className="discountSecondaryBig">{text('Discount ended', '优惠已结束')}</span>
+                </p>
+                <p className="discountSecondaryDeadline">
+                  {text('You may still be able to get it. Click here to register and check.', '你仍有可能获得优惠。点击这里报名并查看。')}
+                </p>
+              </>
+            )}
           </div>
           {isMobileViewport ? (
             <div className="discountMobileLangToggle" aria-label="Language">

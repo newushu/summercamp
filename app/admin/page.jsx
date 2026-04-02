@@ -10,6 +10,7 @@ import {
   resolveBootcampTuition,
 } from '../../lib/campAdmin'
 import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
+import { buildRosterSummaryPdfBase64 } from '../../lib/rosterSummaryPdf'
 import {
   fetchAdminConfigFromSupabase,
   filterSelectedWeeksByDateWindow,
@@ -41,6 +42,27 @@ const programMeta = {
   overnight: {
     title: 'Overnight Camp',
     rhythm: 'Auto-generated Sunday to Saturday 7-day weeks',
+  },
+}
+
+const rosterProgramMeta = {
+  general: {
+    title: 'General Camp',
+    exportTitle: 'General Camp Weekly Roster',
+    emptyText: 'No general camp campers registered for this week yet.',
+    accentColor: [0.902, 0.933, 0.976],
+  },
+  bootcamp: {
+    title: 'Competition Team Boot Camp',
+    exportTitle: 'Competition Team Boot Camp Weekly Roster',
+    emptyText: 'No boot camp campers registered for this week yet.',
+    accentColor: [0.992, 0.941, 0.882],
+  },
+  overnight: {
+    title: 'Overnight Camp',
+    exportTitle: 'Overnight Camp Weekly Roster',
+    emptyText: 'No overnight campers registered for this week yet.',
+    accentColor: [0.878, 0.969, 0.949],
   },
 }
 
@@ -1552,6 +1574,18 @@ function toWeekLabel(weekId, weekById) {
   return startDate || weekId
 }
 
+function getCanonicalWeekId(programKey, weekId) {
+  const rawWeekId = String(weekId || '').trim()
+  if (!rawWeekId) {
+    return ''
+  }
+  if (rawWeekId.startsWith('daycamp:')) {
+    const [, startDate = ''] = rawWeekId.split(':')
+    return `${programKey}:${startDate}`
+  }
+  return rawWeekId
+}
+
 function formatCalendarDate(value) {
   const parsed = new Date(`${value}T12:00:00`)
   if (Number.isNaN(parsed.getTime())) {
@@ -1816,6 +1850,48 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
   return rows
 }
 
+function resolveRosterProgramKey(scheduleItem) {
+  if (scheduleItem?.programKey === 'daycamp') {
+    return scheduleItem?.entry?.campType || 'general'
+  }
+  return scheduleItem?.programKey || scheduleItem?.entry?.campType || 'general'
+}
+
+function shouldShowInRoster(row) {
+  return !row?.archived && Array.isArray(row?.scheduleByWeek) && row.scheduleByWeek.length > 0
+}
+
+function formatRosterValue(value, emptyLabel = 'None reported') {
+  const normalized = String(value || '').trim()
+  return normalized || emptyLabel
+}
+
+function normalizeRosterFilenamePart(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function downloadPdfBase64(filename, pdfBase64) {
+  const normalized = String(pdfBase64 || '').replace(/\s+/g, '')
+  const binary = atob(normalized)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  const blob = new Blob([bytes], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 function getStudentScheduleForAccounting(student) {
   const directSchedule = typeof student?.schedule === 'object' && student?.schedule ? student.schedule : {}
   if (Object.keys(directSchedule).length > 0) {
@@ -1894,6 +1970,8 @@ function buildCamperPricing({
       entry?.programKey === 'daycamp'
         ? entry?.campType || 'general'
         : entry?.programKey || entry?.campType || (String(weekId).startsWith('overnight:') ? 'overnight' : 'general')
+    const canonicalWeekId = getCanonicalWeekId(programKey, weekId)
+    const resolvedWeek = weekById[canonicalWeekId] || weekById[weekId] || null
     const dayKeys = Object.keys(entry?.days || {})
     const resolvedDayKeys = dayKeys.length > 0 ? dayKeys : getWeekDayKeysForProgram(programKey)
     const modes = resolvedDayKeys.map((dayKey) => entry?.days?.[dayKey] || 'NONE')
@@ -1976,12 +2054,12 @@ function buildCamperPricing({
     totals.countsByProgram[programKey].amHalf += counts.amHalf
     totals.countsByProgram[programKey].pmHalf += counts.pmHalf
 
-    totals.weekIds.push(weekId)
-    totals.scheduleByWeek.push({ weekId, programKey, entry })
+    totals.weekIds.push(canonicalWeekId || weekId)
+    totals.scheduleByWeek.push({ weekId: canonicalWeekId || weekId, sourceWeekId: weekId, programKey, entry })
     totals.weekDetails.push({
-      weekId,
+      weekId: canonicalWeekId || weekId,
       programKey,
-      label: weekById[weekId] ? formatWeekLabel(weekById[weekId]) : toWeekLabel(weekId, weekById),
+      label: resolvedWeek ? formatWeekLabel(resolvedWeek) : toWeekLabel(canonicalWeekId || weekId, weekById),
       counts,
       isFullWeek: counts.fullWeek > 0,
       detailLines: [
@@ -2023,12 +2101,12 @@ function buildCamperPricing({
         }
         const lunchKey = `${weekId}:${dayKey}`
         if (normalizeDayKey(dayKey) === 'thu') {
-          totals.lunchDays.push(`${toWeekLabel(weekId, weekById)} · Thu BBQ included`)
+          totals.lunchDays.push(`${toWeekLabel(canonicalWeekId || weekId, weekById)} · Thu BBQ included`)
           continue
         }
         if (lunch[lunchKey]) {
           totals.paidLunchCount += 1
-          totals.lunchDays.push(`${toWeekLabel(weekId, weekById)} · ${dayKey.slice(0, 3).toUpperCase()} lunch`)
+          totals.lunchDays.push(`${toWeekLabel(canonicalWeekId || weekId, weekById)} · ${dayKey.slice(0, 3).toUpperCase()} lunch`)
         }
       }
     }
@@ -2116,6 +2194,10 @@ export default function AdminPage() {
   const [loadingLeads, setLoadingLeads] = useState(false)
   const [updatingAccountingKey, setUpdatingAccountingKey] = useState('')
   const [sendingInvoiceKey, setSendingInvoiceKey] = useState('')
+  const [exportingRosterKey, setExportingRosterKey] = useState('')
+  const [selectedRosterWeekKeys, setSelectedRosterWeekKeys] = useState([])
+  const [expandedRosterWeekKeys, setExpandedRosterWeekKeys] = useState([])
+  const [rosterSearchTerm, setRosterSearchTerm] = useState('')
   const [invoicePreviewState, setInvoicePreviewState] = useState({
     open: false,
     title: '',
@@ -3326,10 +3408,20 @@ export default function AdminPage() {
           camperIndex: index,
           registrationType,
           createdAt: record.created_at,
+          location: String(payload.location || '').trim(),
           parentName,
           parentEmail,
+          parentPhone: String(payload.contactPhone || record.guardian_phone || '').trim(),
           camperName,
+          camperDob: String(student?.dob || '').trim(),
+          camperAllergies: String(student?.allergies || '').trim(),
+          camperMedication: String(student?.medication || '').trim(),
+          camperPreviousInjury: String(student?.previousInjury || '').trim(),
+          camperHealthNotes: String(student?.healthNotes || '').trim(),
+          camperActivitySelections: Array.isArray(student?.activitySelections) ? student.activitySelections : [],
           selectedWeekIds,
+          scheduleByWeek: pricing.scheduleByWeek,
+          weekProgramDetails: pricing.weekDetails,
           weeksCount: selectedWeekIds.length,
           weekLabels: selectedWeekIds.map((weekId) => toWeekLabel(weekId, weekById)),
           weekChipDetails,
@@ -3388,31 +3480,135 @@ export default function AdminPage() {
     () => overnightAccountingRows.filter((row) => row.archived),
     [overnightAccountingRows]
   )
-  const overnightRosterByWeek = useMemo(() => {
-    const roster = {}
-    for (const week of weekOptions.overnight) {
-      roster[week.id] = {
-        week,
-        rows: [],
+  const rosterEntries = useMemo(() => {
+    const entries = []
+    for (const row of [...activeAccountingRows, ...activeOvernightAccountingRows]) {
+      if (!shouldShowInRoster(row)) {
+        continue
+      }
+
+      const detailByWeekId = new Map(
+        (Array.isArray(row.weekProgramDetails) ? row.weekProgramDetails : []).map((detail) => [detail.weekId, detail])
+      )
+      const seenAssignments = new Set()
+
+      for (const item of Array.isArray(row.scheduleByWeek) ? row.scheduleByWeek : []) {
+        const weekId = String(item?.weekId || '').trim()
+        const programKey = resolveRosterProgramKey(item)
+        if (!weekId || !rosterProgramMeta[programKey]) {
+          continue
+        }
+
+        const assignmentKey = `${row.key}:${programKey}:${weekId}`
+        if (seenAssignments.has(assignmentKey)) {
+          continue
+        }
+        seenAssignments.add(assignmentKey)
+
+        const detail = detailByWeekId.get(weekId)
+        const week = weekById[weekId] || { id: weekId, start: '', end: '' }
+        entries.push({
+          key: assignmentKey,
+          rowKey: row.key,
+          programKey,
+          weekId,
+          week,
+          camperName: row.camperName || 'Camper',
+          camperDob: formatRosterValue(row.camperDob, 'DOB not provided'),
+          parentName: row.parentName || 'Parent/Guardian',
+          email: row.parentEmail || '-',
+          phone: formatRosterValue(row.parentPhone, 'Phone not provided'),
+          location: row.location || (programKey === 'overnight' ? 'Camp House' : '-'),
+          selectionSummary: detail ? formatWeekCountSummary(detail.counts, programKey) : 'Registered',
+          paymentMethod: row.paymentMethod ? String(row.paymentMethod).toUpperCase() : 'TBD',
+          balanceSummary:
+            Number(row.owedAmount || 0) > 0
+              ? `Balance due ${money(row.owedAmount)}`
+              : 'Paid in full',
+          accountingSummary: [
+            `Tuition ${money(row.tuitionAfterManualDiscount)}`,
+            `Lunch ${money(row.lunchCost)}`,
+            `Paid ${money(row.paidAmount)}`,
+            `Owed ${money(row.owedAmount)}`,
+          ].join(' · '),
+          healthSummary: [
+            `Allergies: ${formatRosterValue(row.camperAllergies)}`,
+            `Medication: ${formatRosterValue(row.camperMedication)}`,
+            `Injuries: ${formatRosterValue(row.camperPreviousInjury)}`,
+            `Health notes: ${formatRosterValue(row.camperHealthNotes)}`,
+          ].join(' | '),
+          activitySummary:
+            Array.isArray(row.camperActivitySelections) && row.camperActivitySelections.length > 0
+              ? `Activities: ${row.camperActivitySelections.join(', ')}`
+              : 'Activities: None selected',
+        })
       }
     }
-    for (const row of overnightAccountingRows) {
-      const isPaid = Number(row.owedAmount || 0) <= 0 && Number(row.totalAfterManualDiscount || 0) > 0
-      if (!isPaid) continue
-      for (const weekId of Array.isArray(row.selectedWeekIds) ? row.selectedWeekIds : []) {
-        if (!roster[weekId]) {
-          roster[weekId] = {
-            week: weekById[weekId] || null,
+
+    return entries.sort((a, b) => {
+      const startCompare = String(a.week?.start || '').localeCompare(String(b.week?.start || ''))
+      if (startCompare !== 0) return startCompare
+      const programCompare = String(a.programKey || '').localeCompare(String(b.programKey || ''))
+      if (programCompare !== 0) return programCompare
+      return String(a.camperName || '').localeCompare(String(b.camperName || ''))
+    })
+  }, [activeAccountingRows, activeOvernightAccountingRows, weekById])
+  const rosterSummary = useMemo(() => {
+    const byProgram = {}
+    for (const programKey of Object.keys(rosterProgramMeta)) {
+      const groupsByWeekId = {}
+      for (const week of weekOptions[programKey] || []) {
+        groupsByWeekId[week.id] = {
+          week,
+          rows: [],
+        }
+      }
+
+      for (const entry of rosterEntries) {
+        if (entry.programKey !== programKey) {
+          continue
+        }
+        if (!groupsByWeekId[entry.weekId]) {
+          groupsByWeekId[entry.weekId] = {
+            week: weekById[entry.weekId] || entry.week || null,
             rows: [],
           }
         }
-        roster[weekId].rows.push(row)
+        groupsByWeekId[entry.weekId].rows.push(entry)
+      }
+
+      const groups = Object.values(groupsByWeekId)
+        .sort((a, b) => String(a.week?.start || '').localeCompare(String(b.week?.start || '')))
+        .map((group) => ({
+          week: group.week,
+          rows: [...group.rows].sort((a, b) => String(a.camperName || '').localeCompare(String(b.camperName || ''))),
+        }))
+
+      const totalCampers = groups.reduce((sum, group) => sum + group.rows.length, 0)
+      const activeWeeks = groups.filter((group) => group.rows.length > 0).length
+      byProgram[programKey] = {
+        key: programKey,
+        title: rosterProgramMeta[programKey].title,
+        exportTitle: rosterProgramMeta[programKey].exportTitle,
+        emptyText: rosterProgramMeta[programKey].emptyText,
+        accentColor: rosterProgramMeta[programKey].accentColor,
+        groups,
+        totalCampers,
+        activeWeeks,
       }
     }
-    return Object.values(roster).sort((a, b) =>
-      String(a.week?.start || '').localeCompare(String(b.week?.start || ''))
-    )
-  }, [overnightAccountingRows, weekById, weekOptions.overnight])
+
+    const mergedCampers = Object.values(byProgram).reduce((sum, section) => sum + section.totalCampers, 0)
+    const mergedActiveWeeks = Object.values(byProgram).reduce((sum, section) => sum + section.activeWeeks, 0)
+
+    return {
+      byProgram,
+      merged: {
+        totalCampers: mergedCampers,
+        activeWeeks: mergedActiveWeeks,
+      },
+    }
+  }, [rosterEntries, weekById, weekOptions])
   const leadDueCounts = useMemo(() => {
     const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
     const now = Date.now()
@@ -5093,7 +5289,7 @@ export default function AdminPage() {
       rows: [
         { label: 'Tuition after discounts', value: money(row.tuitionAfterManualDiscount) },
         { label: 'Lunch total', value: money(row.lunchCost) },
-        { label: 'Registration total', value: money(row.totalCost) },
+        { label: 'Registration total', value: money(row.totalAfterManualDiscount) },
         { label: 'Paid tuition', value: money(row.tuitionPaidAmount) },
         { label: 'Paid lunch', value: money(row.lunchPaidAmount) },
         { label: 'Total paid', value: money(row.paidAmount) },
@@ -5460,6 +5656,236 @@ export default function AdminPage() {
     )
     setSendingInvoiceKey('')
     setInvoiceSendDialog({ open: false, row: null, sendAdminCopy: true })
+  }
+
+  function buildRosterExportSections(programKeys = [], selectedWeekKeySet = null) {
+    return programKeys
+      .map((programKey) => rosterSummary.byProgram[programKey])
+      .filter(Boolean)
+      .map((section) => ({
+        title: section.exportTitle,
+        summary: `${section.totalCampers} registered camper${section.totalCampers === 1 ? '' : 's'} across ${section.activeWeeks} active week${section.activeWeeks === 1 ? '' : 's'}`,
+        accentColor: section.accentColor,
+        groups: section.groups
+          .filter((group) => {
+            if (group.rows.length === 0) return false
+            if (!selectedWeekKeySet || selectedWeekKeySet.size === 0) return true
+            return selectedWeekKeySet.has(`${section.key}:${group.week?.id || ''}`)
+          })
+          .map((group) => ({
+            title: group.week ? formatWeekLabel(group.week) : 'Unmapped week',
+            subtitle: `${group.rows.length} registered camper${group.rows.length === 1 ? '' : 's'}`,
+            rows: group.rows.map((row) => ({
+              camperName: `${row.camperName} | ${row.camperDob}`,
+              parentName: `${row.parentName} | ${row.email} | ${row.phone}`,
+              location: `${row.location} | ${row.activitySummary}`,
+              selectionSummary: `${row.selectionSummary} | ${row.balanceSummary} | ${row.accountingSummary}`,
+              paymentMethod: `${row.paymentMethod} | ${row.balanceSummary}`,
+              email: row.healthSummary,
+            })),
+          })),
+      }))
+      .filter((section) => section.groups.length > 0)
+  }
+
+  function exportRosterPdf(scope = {}) {
+    const mode = scope.mode || 'program'
+    const scopeKey = scope.scopeKey || ''
+    const programKey = scope.programKey || ''
+    const weekId = scope.weekId || ''
+    const selectedWeekKeySet =
+      mode === 'selected' ? new Set(selectedRosterWeekKeys) : mode === 'week' && programKey && weekId ? new Set([`${programKey}:${weekId}`]) : null
+    const programKeys =
+      mode === 'merged' || mode === 'selected'
+        ? Object.keys(rosterProgramMeta)
+        : [programKey || scopeKey].filter(Boolean)
+    const sections = buildRosterExportSections(programKeys, selectedWeekKeySet)
+    if (sections.length === 0) {
+      setErrorMessage('No roster sections are available to export yet.')
+      return
+    }
+
+    const exportKey =
+      mode === 'week'
+        ? `week:${programKey}:${weekId}`
+        : mode === 'selected'
+          ? 'selected'
+          : mode === 'merged'
+            ? 'merged'
+            : programKey || scopeKey
+    setExportingRosterKey(exportKey)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      const title = mode === 'merged'
+        ? 'Merged Camp Roster'
+        : mode === 'selected'
+          ? 'Selected Camp Roster'
+          : mode === 'week'
+            ? `${rosterSummary.byProgram[programKey]?.title || 'Camp'} ${formatWeekLabel(weekById[weekId] || { start: '', end: '' })} Roster`
+            : rosterSummary.byProgram[programKey || scopeKey]?.exportTitle || 'Camp Roster'
+      const pdfBase64 = buildRosterSummaryPdfBase64({
+        title,
+        subtitle: 'All registered campers with balances',
+        generatedAtLabel: new Date().toLocaleString(),
+        sections,
+      })
+      const dateLabel = new Date().toISOString().slice(0, 10)
+      downloadPdfBase64(
+        `${normalizeRosterFilenamePart(title)}-${dateLabel}.pdf`,
+        pdfBase64
+      )
+      setSavedMessage(`${title} PDF exported.`)
+    } catch (error) {
+      setErrorMessage(error?.message || 'Roster PDF export failed.')
+    }
+
+    setExportingRosterKey('')
+  }
+
+  function toggleRosterWeekSelection(programKey, weekId) {
+    const key = `${programKey}:${weekId}`
+    setSelectedRosterWeekKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    )
+  }
+
+  function toggleRosterWeekExpanded(programKey, weekId) {
+    const key = `${programKey}:${weekId}`
+    setExpandedRosterWeekKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    )
+  }
+
+  function collapseAllRosterWeeks() {
+    setExpandedRosterWeekKeys([])
+  }
+
+  function renderRosterProgramCard(programKey) {
+    const section = rosterSummary.byProgram[programKey]
+    if (!section) {
+      return null
+    }
+    const normalizedSearch = rosterSearchTerm.trim().toLowerCase()
+    const visibleGroups = section.groups
+      .map((group) => ({
+        ...group,
+        rows:
+          normalizedSearch.length === 0
+            ? group.rows
+            : group.rows.filter((row) => {
+                const haystack = [
+                  row.camperName,
+                  row.parentName,
+                  row.email,
+                  row.phone,
+                ]
+                  .join(' ')
+                  .toLowerCase()
+                return haystack.includes(normalizedSearch)
+              }),
+      }))
+      .filter((group) => group.rows.length > 0)
+
+    return (
+      <article key={`roster-program-${programKey}`} className={`rosterProgramCard ${programKey}`}>
+        <div className="rosterProgramCardHeader">
+          <div>
+            <h3>{section.title}</h3>
+            <p className="subhead">
+              {section.totalCampers} registered camper{section.totalCampers === 1 ? '' : 's'} across {section.activeWeeks} active week{section.activeWeeks === 1 ? '' : 's'}.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => exportRosterPdf({ mode: 'program', programKey })}
+            disabled={exportingRosterKey === programKey}
+          >
+            {exportingRosterKey === programKey ? 'Exporting...' : `Export ${section.title}`}
+          </button>
+        </div>
+        {visibleGroups.length === 0 ? (
+          <div className="rosterProgramEmpty">
+            <p className="subhead">{section.emptyText}</p>
+          </div>
+        ) : (
+        <div className="rosterWeekGrid">
+          {visibleGroups.map((group) => (
+            <article key={`roster-week-${programKey}-${group.week?.id || 'unknown'}`} className="rosterWeekCard">
+              <div className="rosterWeekCardHeader">
+                <button
+                  type="button"
+                  className={`rosterWeekToggle ${expandedRosterWeekKeys.includes(`${programKey}:${group.week?.id || ''}`) || normalizedSearch ? 'expanded' : ''}`}
+                  onClick={() => toggleRosterWeekExpanded(programKey, group.week?.id || '')}
+                >
+                  <strong>{group.week ? formatWeekLabel(group.week) : 'Unmapped week'}</strong>
+                  <span>
+                    {group.rows.length} camper{group.rows.length === 1 ? '' : 's'}
+                  </span>
+                </button>
+                <div className="rosterWeekActions">
+                  <label className="rosterSelectToggle">
+                    <input
+                      type="checkbox"
+                      checked={selectedRosterWeekKeys.includes(`${programKey}:${group.week?.id || ''}`)}
+                      onChange={() => toggleRosterWeekSelection(programKey, group.week?.id || '')}
+                    />
+                    <span>Select</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => exportRosterPdf({ mode: 'week', programKey, weekId: group.week?.id || '' })}
+                    disabled={exportingRosterKey === `week:${programKey}:${group.week?.id || ''}`}
+                  >
+                    {exportingRosterKey === `week:${programKey}:${group.week?.id || ''}` ? 'Exporting...' : `Export ${section.title}`}
+                  </button>
+                </div>
+              </div>
+              {expandedRosterWeekKeys.includes(`${programKey}:${group.week?.id || ''}`) || normalizedSearch ? (
+                <div className="rosterTable">
+                  <div className="rosterTableHead">
+                    <span>Camper</span>
+                    <span>Parent</span>
+                    <span>Selection</span>
+                    <span>Accounting / Health</span>
+                  </div>
+                  <div className="rosterTableBody">
+                    {group.rows.map((row) => (
+                      <div key={row.key} className="rosterTableRow">
+                        <span>
+                          <strong>{row.camperName}</strong>
+                          <small>{row.camperDob}</small>
+                        </span>
+                        <span>
+                          {row.parentName}
+                          <small>{row.email}</small>
+                          <small>{row.phone}</small>
+                        </span>
+                        <span>
+                          {row.selectionSummary}
+                          <small>{row.location}</small>
+                          <small>{row.activitySummary}</small>
+                        </span>
+                        <span>
+                          {row.accountingSummary}
+                          <small>{row.balanceSummary}</small>
+                          <small>{row.paymentMethod}</small>
+                          <small>{row.healthSummary}</small>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+        )}
+      </article>
+    )
   }
 
   async function generateAiReplyDraft() {
@@ -8752,6 +9178,60 @@ export default function AdminPage() {
         <p className="subhead">
           Camper-level accounting from submitted registrations. Archive rows when complete, and restore anytime.
         </p>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Weekly Roster Summary</h3>
+            <p className="subhead">
+              Shows all registered campers with saved week selections, whether paid or unpaid. Export one polished PDF per program or a merged all-camp roster packet.
+            </p>
+          </div>
+          <div className="rosterSummaryHero">
+            <div>
+              <strong>Merged Camp Roster</strong>
+              <p className="subhead">
+                {rosterSummary.merged.totalCampers} registered camper{rosterSummary.merged.totalCampers === 1 ? '' : 's'} across{' '}
+                {rosterSummary.merged.activeWeeks} active program-weeks.
+              </p>
+            </div>
+            <div className="adminActions">
+              <label className="rosterSearchField">
+                <span>Search name</span>
+                <input
+                  type="search"
+                  value={rosterSearchTerm}
+                  onChange={(event) => setRosterSearchTerm(event.target.value)}
+                  placeholder="Search camper or parent"
+                />
+              </label>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={collapseAllRosterWeeks}
+              >
+                Collapse All
+              </button>
+              <button
+                type="button"
+                className="button"
+                onClick={() => exportRosterPdf({ mode: 'merged' })}
+                disabled={exportingRosterKey === 'merged'}
+              >
+                {exportingRosterKey === 'merged' ? 'Exporting...' : 'Export Merged PDF'}
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => exportRosterPdf({ mode: 'selected' })}
+                disabled={exportingRosterKey === 'selected' || selectedRosterWeekKeys.length === 0}
+              >
+                {exportingRosterKey === 'selected' ? 'Exporting...' : `Export Selected (${selectedRosterWeekKeys.length})`}
+              </button>
+            </div>
+          </div>
+          <div className="rosterProgramStack">
+            {Object.keys(rosterProgramMeta).map((programKey) => renderRosterProgramCard(programKey))}
+          </div>
+        </div>
         <div className="adminActions">
           <button
             type="button"
@@ -9735,27 +10215,11 @@ export default function AdminPage() {
         </div>
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
-            <h3>Paid Week Rosters</h3>
-            <p className="subhead">Campers appear here once their overnight balance is fully paid.</p>
+            <h3>Weekly Rosters</h3>
+            <p className="subhead">Shows all overnight campers with registered weeks, with balance due visible on each row.</p>
           </div>
-          <div className="adminGrid">
-            {overnightRosterByWeek.map((group) => (
-              <article key={`overnight-roster-${group.week?.id || 'unknown'}`} className="subCard">
-                <h3>{group.week ? formatWeekLabel(group.week) : 'Unmapped week'}</h3>
-                <p className="subhead">{group.rows.length} paid camper{group.rows.length === 1 ? '' : 's'}</p>
-                {group.rows.length === 0 ? (
-                  <p className="subhead">No paid overnight campers for this week yet.</p>
-                ) : (
-                  <div className="accountingDetailStack">
-                    {group.rows.map((row) => (
-                      <div key={`overnight-roster-row-${group.week?.id || 'unknown'}-${row.key}`} className="accountingRosterLine">
-                        <strong>{row.camperName}</strong> · {row.parentName} · {row.paymentMethod ? row.paymentMethod.toUpperCase() : 'Method TBD'}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </article>
-            ))}
+          <div className="rosterEmbeddedCardWrap">
+            {renderRosterProgramCard('overnight')}
           </div>
         </div>
         <div className="accountingTableSection">
