@@ -1777,6 +1777,15 @@ function deriveAccountingPaymentState({ entry = {}, tuitionTotal = 0, lunchTotal
   }
 }
 
+function getOvernightAccountingDraft(row, draft) {
+  return {
+    manualDiscount: draft?.manualDiscount ?? Number(row.manualDiscount || 0),
+    paidAmount: draft?.paidAmount ?? String(row.paidAmount ?? 0),
+    paymentMethod: draft?.paymentMethod ?? String(row.paymentMethod || ''),
+    archived: draft?.archived ?? Boolean(row.archived),
+  }
+}
+
 function formatWeekCountSummary(counts = {}, programKey = 'general') {
   const parts = []
   if (Number(counts.fullWeek || 0) > 0) {
@@ -2198,6 +2207,7 @@ export default function AdminPage() {
   const [selectedRosterWeekKeys, setSelectedRosterWeekKeys] = useState([])
   const [expandedRosterWeekKeys, setExpandedRosterWeekKeys] = useState([])
   const [rosterSearchTerm, setRosterSearchTerm] = useState('')
+  const [activeOvernightSummaryWeekId, setActiveOvernightSummaryWeekId] = useState('')
   const [invoicePreviewState, setInvoicePreviewState] = useState({
     open: false,
     title: '',
@@ -3479,6 +3489,56 @@ export default function AdminPage() {
   const archivedOvernightAccountingRows = useMemo(
     () => overnightAccountingRows.filter((row) => row.archived),
     [overnightAccountingRows]
+  )
+  const overnightAccountingSummary = useMemo(() => {
+    const summaryByWeekId = {}
+    for (const week of weekOptions.overnight) {
+      summaryByWeekId[week.id] = {
+        week,
+        camperCount: 0,
+        tuitionDue: 0,
+        paid: 0,
+        owed: 0,
+        names: [],
+      }
+    }
+
+    const totals = activeOvernightAccountingRows.reduce(
+      (accumulator, row) => {
+        accumulator.tuitionDue += Number(row.totalAfterManualDiscount || 0)
+        accumulator.paid += Number(row.paidAmount || 0)
+        accumulator.owed += Number(row.owedAmount || 0)
+        return accumulator
+      },
+      { tuitionDue: 0, paid: 0, owed: 0 }
+    )
+
+    for (const row of activeOvernightAccountingRows) {
+      for (const weekId of Array.isArray(row.selectedWeekIds) ? row.selectedWeekIds : []) {
+        if (!summaryByWeekId[weekId]) {
+          continue
+        }
+        summaryByWeekId[weekId].camperCount += 1
+        summaryByWeekId[weekId].tuitionDue += Number(row.totalAfterManualDiscount || 0)
+        summaryByWeekId[weekId].paid += Number(row.paidAmount || 0)
+        summaryByWeekId[weekId].owed += Number(row.owedAmount || 0)
+        summaryByWeekId[weekId].names.push(row.camperName)
+      }
+    }
+
+    return {
+      totals,
+      weeks: weekOptions.overnight
+        .map((week) => ({
+          ...summaryByWeekId[week.id],
+          names: Array.from(new Set(summaryByWeekId[week.id]?.names || [])).sort((a, b) => a.localeCompare(b)),
+        }))
+        .filter((item) => item.camperCount > 0),
+    }
+  }, [activeOvernightAccountingRows, weekOptions.overnight])
+  const activeOvernightSummaryWeek = useMemo(
+    () => overnightAccountingSummary.weeks.find((item) => item.week.id === activeOvernightSummaryWeekId) || null,
+    [activeOvernightSummaryWeekId, overnightAccountingSummary.weeks]
   )
   const rosterEntries = useMemo(() => {
     const entries = []
@@ -5096,6 +5156,15 @@ export default function AdminPage() {
       payment_method: String(updates.payment_method ?? base.payment_method ?? '').trim().toLowerCase(),
       archived: Boolean(updates.archived ?? base.archived ?? false),
     }
+    if (
+      row.registrationType === 'overnight-only' &&
+      updates.paid_amount != null &&
+      updates.tuition_paid_amount == null &&
+      updates.lunch_paid_amount == null
+    ) {
+      next.tuition_paid_amount = Math.max(0, Number(next.paid_amount || 0))
+      next.lunch_paid_amount = 0
+    }
     if (updates.tuition_paid_amount != null || updates.lunch_paid_amount != null) {
       next.paid_amount = roundMoney(Number(next.tuition_paid_amount || 0) + Number(next.lunch_paid_amount || 0))
     }
@@ -5148,6 +5217,8 @@ export default function AdminPage() {
       [row.key]: {
         manualDiscount:
           updates.manualDiscount ?? current[row.key]?.manualDiscount ?? Number(row.manualDiscount || 0),
+        paidAmount:
+          updates.paidAmount ?? current[row.key]?.paidAmount ?? String(row.paidAmount ?? 0),
         tuitionPaidAmount:
           updates.tuitionPaidAmount ?? current[row.key]?.tuitionPaidAmount ?? String(row.tuitionPaidAmount ?? 0),
         lunchPaidAmount:
@@ -5166,6 +5237,7 @@ export default function AdminPage() {
     }
     const hasChanges =
       Number(draft.manualDiscount || 0) !== Number(row.manualDiscount || 0) ||
+      Number(draft.paidAmount || 0) !== Number(row.paidAmount || 0) ||
       Number(draft.tuitionPaidAmount || 0) !== Number(row.tuitionPaidAmount || 0) ||
       Number(draft.lunchPaidAmount || 0) !== Number(row.lunchPaidAmount || 0) ||
       String(draft.paymentMethod || '') !== String(row.paymentMethod || '') ||
@@ -5178,13 +5250,23 @@ export default function AdminPage() {
       })
       return
     }
-    const ok = await updateAccountingEntryField(row, {
-      manual_discount: Number(draft.manualDiscount || 0),
-      tuition_paid_amount: Number(draft.tuitionPaidAmount || 0),
-      lunch_paid_amount: Number(draft.lunchPaidAmount || 0),
-      payment_method: String(draft.paymentMethod || ''),
-      archived: Boolean(draft.archived),
-    })
+    const ok = await updateAccountingEntryField(
+      row,
+      row.registrationType === 'overnight-only'
+        ? {
+            manual_discount: Number(draft.manualDiscount || 0),
+            paid_amount: Number(draft.paidAmount || 0),
+            payment_method: String(draft.paymentMethod || ''),
+            archived: Boolean(draft.archived),
+          }
+        : {
+            manual_discount: Number(draft.manualDiscount || 0),
+            tuition_paid_amount: Number(draft.tuitionPaidAmount || 0),
+            lunch_paid_amount: Number(draft.lunchPaidAmount || 0),
+            payment_method: String(draft.paymentMethod || ''),
+            archived: Boolean(draft.archived),
+          }
+    )
     if (ok) {
       setAccountingDrafts((current) => {
         const next = { ...current }
@@ -9173,7 +9255,7 @@ export default function AdminPage() {
       ) : null}
 
       {activeAdminTab === 'accounting' ? (
-      <section className="card section">
+      <section className="card section adminAccountingSectionWide">
         <h2>Registration Accounting</h2>
         <p className="subhead">
           Camper-level accounting from submitted registrations. Archive rows when complete, and restore anytime.
@@ -9330,7 +9412,7 @@ export default function AdminPage() {
             <h3>Active Registration Rows</h3>
             <p className="subhead">Current camper balances and payment tracking.</p>
           </div>
-          <div className="tuitionTableWrap">
+          <div className="tuitionTableWrap accountingTableScroll">
             <table className="tuitionTable">
               <thead>
                 <tr>
@@ -9371,7 +9453,10 @@ export default function AdminPage() {
                       String(paymentMethodValue || '') !== String(row.paymentMethod || '') ||
                       Boolean(archivedValue) !== Boolean(row.archived)
                     return (
-                      <tr key={`accounting-row-${key}`}>
+                      <tr
+                        key={`accounting-row-${key}`}
+                        className={paymentMethodValue === 'credit-card' ? 'accountingCreditCardRow' : ''}
+                      >
                         <td>
                           <strong>{row.parentName}</strong>
                           {row.r5SentUnpaid ? <div className="accountingAlertText">R5 sent, not paid</div> : null}
@@ -9519,6 +9604,9 @@ export default function AdminPage() {
                               </option>
                             ))}
                           </select>
+                          {paymentMethodValue === 'credit-card' ? (
+                            <div className="accountingCreditCardBadge">Credit card checkout</div>
+                          ) : null}
                         </td>
                         <td>
                           <div className="adminActions">
@@ -9577,7 +9665,7 @@ export default function AdminPage() {
             <h3>Archived Rows</h3>
             <p className="subhead">Completed or filed camper rows kept separate from the active table.</p>
           </div>
-          <div className="tuitionTableWrap">
+          <div className="tuitionTableWrap accountingTableScroll">
             <table className="tuitionTable">
               <thead>
                 <tr>
@@ -9606,7 +9694,10 @@ export default function AdminPage() {
                   archivedAccountingRows.map((row) => {
                     const key = `${row.registrationId}-${row.camperIndex}`
                     return (
-                      <tr key={`archived-accounting-row-${key}`}>
+                      <tr
+                        key={`archived-accounting-row-${key}`}
+                        className={row.paymentMethod === 'credit-card' ? 'accountingCreditCardRow' : ''}
+                      >
                         <td>
                           <strong>{row.parentName}</strong>
                           {row.r5SentUnpaid ? <div className="accountingAlertText">R5 sent, not paid</div> : null}
@@ -9678,7 +9769,12 @@ export default function AdminPage() {
                             ]
                           )}
                         </td>
-                        <td>{row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}</td>
+                        <td>
+                          {row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}
+                          {row.paymentMethod === 'credit-card' ? (
+                            <div className="accountingCreditCardBadge">Credit card checkout</div>
+                          ) : null}
+                        </td>
                         <td>
                           <div className="adminActions">
                             <button
@@ -10071,17 +10167,70 @@ export default function AdminPage() {
       ) : null}
 
       {activeAdminTab === 'overnight-accounting' ? (
-      <section className="card section">
+      <section className="card section adminAccountingSectionWide">
         <h2>Overnight Accounting</h2>
         <p className="subhead">
           Overnight camp uses its own registration/payment workflow. Tuition covers lodging and food only; outings are billed separately.
         </p>
+        <div className="accountingDashboardGrid accountingDashboardGridWide">
+          <article className="accountingStatCard">
+            <span>Tuition Due</span>
+            <strong>{money(overnightAccountingSummary.totals.tuitionDue)}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Paid</span>
+            <strong>{money(overnightAccountingSummary.totals.paid)}</strong>
+          </article>
+          <article className="accountingStatCard">
+            <span>Still Owed</span>
+            <strong>{money(overnightAccountingSummary.totals.owed)}</strong>
+          </article>
+        </div>
+        {overnightAccountingSummary.weeks.length > 0 ? (
+          <div className="overnightAccountingWeekSummary">
+            {overnightAccountingSummary.weeks.map((item) => {
+              const active = activeOvernightSummaryWeekId === item.week.id
+              return (
+                <button
+                  key={`overnight-summary-${item.week.id}`}
+                  type="button"
+                  className={`overnightAccountingWeekCard ${active ? 'active' : ''}`}
+                  onClick={() =>
+                    setActiveOvernightSummaryWeekId((current) => (current === item.week.id ? '' : item.week.id))
+                  }
+                >
+                  <span className="overnightAccountingWeekLabel">{formatWeekLabel(item.week)}</span>
+                  <strong>{item.camperCount} camper{item.camperCount === 1 ? '' : 's'}</strong>
+                  <small>{money(item.owed)} owed</small>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+        {activeOvernightSummaryWeek ? (
+          <div className="overnightAccountingWeekRoster">
+            <div className="accountingSectionHeader">
+              <h3>{formatWeekLabel(activeOvernightSummaryWeek.week)}</h3>
+              <p className="subhead">
+                {activeOvernightSummaryWeek.names.length} camper{activeOvernightSummaryWeek.names.length === 1 ? '' : 's'} registered
+                · {money(activeOvernightSummaryWeek.tuitionDue)} due · {money(activeOvernightSummaryWeek.paid)} paid · {money(activeOvernightSummaryWeek.owed)} owed
+              </p>
+            </div>
+            <div className="overnightAccountingNameList">
+              {activeOvernightSummaryWeek.names.map((name) => (
+                <span key={`overnight-roster-${activeOvernightSummaryWeek.week.id}-${name}`} className="overnightAccountingNameChip">
+                  {name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
             <h3>Active Overnight Rows</h3>
             <p className="subhead">Track payment status and adjust registered weeks for overnight campers.</p>
           </div>
-          <div className="tuitionTableWrap">
+          <div className="tuitionTableWrap accountingTableScroll">
             <table className="tuitionTable">
               <thead>
                 <tr>
@@ -10089,6 +10238,7 @@ export default function AdminPage() {
                   <th>Camper</th>
                   <th>Weeks</th>
                   <th>Total</th>
+                  <th>Manual Discount</th>
                   <th>Paid</th>
                   <th>Owed</th>
                   <th>Method</th>
@@ -10098,15 +10248,33 @@ export default function AdminPage() {
               <tbody>
                 {activeOvernightAccountingRows.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="accountingEmptyCell">
+                    <td colSpan="9" className="accountingEmptyCell">
                       No overnight registrations yet.
                     </td>
                   </tr>
                 ) : (
                   activeOvernightAccountingRows.map((row) => {
                     const key = `${row.registrationId}-${row.camperIndex}`
+                    const overnightDraft = getOvernightAccountingDraft(row, accountingDrafts[row.key])
+                    const overnightPreviewState = deriveAccountingPaymentState({
+                      entry: {
+                        tuition_paid_amount: Number(overnightDraft.paidAmount || 0),
+                        lunch_paid_amount: 0,
+                      },
+                      tuitionTotal: Number(row.tuitionBeforeManualDiscount || 0),
+                      lunchTotal: 0,
+                      manualDiscount: Number(overnightDraft.manualDiscount || 0),
+                    })
+                    const hasPendingOvernightChanges =
+                      Number(overnightDraft.manualDiscount || 0) !== Number(row.manualDiscount || 0) ||
+                      Number(overnightDraft.paidAmount || 0) !== Number(row.paidAmount || 0) ||
+                      String(overnightDraft.paymentMethod || '') !== String(row.paymentMethod || '') ||
+                      Boolean(overnightDraft.archived) !== Boolean(row.archived)
                     return (
-                      <tr key={`overnight-accounting-row-${key}`}>
+                      <tr
+                        key={`overnight-accounting-row-${key}`}
+                        className={overnightDraft.paymentMethod === 'credit-card' ? 'accountingCreditCardRow' : ''}
+                      >
                         <td>
                           <strong>{row.parentName}</strong>
                           <div>{row.parentEmail || '-'}</div>
@@ -10117,11 +10285,11 @@ export default function AdminPage() {
                           <div>No sibling discount</div>
                         </td>
                         <td>
-                          <div className="overnightWeekCheckboxes">
+                          <div className="overnightWeekCheckboxes accountingCompact">
                             {weekOptions.overnight.map((week) => {
                               const checked = row.selectedWeekIds.includes(week.id)
                               return (
-                                <label key={`overnight-accounting-week-${key}-${week.id}`} className="overnightWeekCheckbox">
+                                <label key={`overnight-accounting-week-${key}-${week.id}`} className="overnightWeekCheckbox accountingCompact">
                                   <input
                                     type="checkbox"
                                     checked={checked}
@@ -10139,41 +10307,63 @@ export default function AdminPage() {
                             })}
                           </div>
                         </td>
-                        <td>{renderAccountingDetailChip(`${key}-overnight-total-breakdown`, money(row.totalAfterManualDiscount), row.totalBreakdownLines)}</td>
+                        <td>
+                          {renderAccountingDetailChip(
+                            `${key}-overnight-total-breakdown`,
+                            money(overnightPreviewState.totalAfterManualDiscount),
+                            [
+                              ...row.totalBreakdownLines.filter((line) => !line.startsWith('Manual discount:') && !line.startsWith('Tuition after manual discount:') && !line.startsWith('Displayed total:')),
+                              `Manual discount: -${money(overnightDraft.manualDiscount)}`,
+                              `Tuition after manual discount: ${money(overnightPreviewState.tuitionAfterManualDiscount)}`,
+                              `Displayed total: ${money(overnightPreviewState.totalAfterManualDiscount)}`,
+                            ]
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={overnightDraft.manualDiscount}
+                            onChange={(event) =>
+                              updateAccountingDraft(row, { manualDiscount: Number(event.target.value || 0) })
+                            }
+                            disabled={updatingAccountingKey === key}
+                          />
+                        </td>
                         <td>
                           <div className="accountingPaidCell">
                             <input
                               type="text"
                               inputMode="decimal"
-                              value={String(row.paidAmount ?? '')}
-                              onChange={(event) => {
-                                const sanitized = String(event.target.value || '').replace(/[^\d.]/g, '')
-                                updateAccountingEntryField(row, {
-                                  paid_amount: Number(sanitized || 0),
+                              value={overnightDraft.paidAmount}
+                              onChange={(event) =>
+                                updateAccountingDraft(row, {
+                                  paidAmount: String(event.target.value || '').replace(/[^\d.]/g, ''),
                                 })
-                              }}
+                              }
                               disabled={updatingAccountingKey === key}
                             />
                             <button
                               type="button"
                               className="accountingQuickFillBtn"
                               onClick={() =>
-                                updateAccountingEntryField(row, {
-                                  paid_amount: Number(row.totalAfterManualDiscount || 0),
+                                updateAccountingDraft(row, {
+                                  paidAmount: String(overnightPreviewState.totalAfterManualDiscount || 0),
                                 })
                               }
-                              disabled={updatingAccountingKey === key || Number(row.owedAmount || 0) <= 0}
+                              disabled={updatingAccountingKey === key || Number(overnightPreviewState.totalOwedAmount || 0) <= 0}
                             >
                               Use Owed
                             </button>
                           </div>
                         </td>
-                        <td>{money(row.owedAmount)}</td>
+                        <td>{money(overnightPreviewState.totalOwedAmount)}</td>
                         <td>
                           <select
-                            value={row.paymentMethod}
+                            value={overnightDraft.paymentMethod}
                             onChange={(event) =>
-                              updateAccountingEntryField(row, { payment_method: event.target.value })
+                              updateAccountingDraft(row, { paymentMethod: event.target.value })
                             }
                             disabled={updatingAccountingKey === key}
                           >
@@ -10184,21 +10374,32 @@ export default function AdminPage() {
                               </option>
                             ))}
                           </select>
+                          {overnightDraft.paymentMethod === 'credit-card' ? (
+                            <div className="accountingCreditCardBadge">Credit card checkout</div>
+                          ) : null}
                         </td>
                         <td>
                           <div className="adminActions">
                             <button
                               type="button"
                               className="button secondary"
-                              onClick={() => updateAccountingEntryField(row, { archived: true })}
+                              onClick={() => updateAccountingDraft(row, { archived: !overnightDraft.archived })}
                               disabled={updatingAccountingKey === key}
                             >
-                              Archive
+                              {overnightDraft.archived ? 'Keep Active' : 'Archive'}
                             </button>
                             <button
                               type="button"
                               className="button secondary"
-                              onClick={() => sendAccountingInvoice(row)}
+                              onClick={() => saveAccountingDraft(row)}
+                              disabled={updatingAccountingKey === key || !hasPendingOvernightChanges}
+                            >
+                              Save Row
+                            </button>
+                            <button
+                              type="button"
+                              className="button secondary"
+                              onClick={() => openAccountingInvoiceSendDialog(row)}
                               disabled={sendingInvoiceKey === key}
                             >
                               {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
@@ -10227,7 +10428,7 @@ export default function AdminPage() {
             <h3>Archived Overnight Rows</h3>
             <p className="subhead">Completed or filed overnight rows.</p>
           </div>
-          <div className="tuitionTableWrap">
+          <div className="tuitionTableWrap accountingTableScroll">
             <table className="tuitionTable">
               <thead>
                 <tr>
@@ -10235,6 +10436,7 @@ export default function AdminPage() {
                   <th>Camper</th>
                   <th>Weeks</th>
                   <th>Total</th>
+                  <th>Manual Discount</th>
                   <th>Paid</th>
                   <th>Owed</th>
                   <th>Method</th>
@@ -10244,18 +10446,27 @@ export default function AdminPage() {
               <tbody>
                 {archivedOvernightAccountingRows.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="accountingEmptyCell">No archived overnight rows yet.</td>
+                    <td colSpan="9" className="accountingEmptyCell">No archived overnight rows yet.</td>
                   </tr>
                 ) : (
                   archivedOvernightAccountingRows.map((row) => (
-                    <tr key={`overnight-archived-row-${row.key}`}>
+                    <tr
+                      key={`overnight-archived-row-${row.key}`}
+                      className={row.paymentMethod === 'credit-card' ? 'accountingCreditCardRow' : ''}
+                    >
                       <td><strong>{row.parentName}</strong><div>{row.parentEmail || '-'}</div><div>{formatAdminDateTime(row.createdAt)}</div></td>
                       <td><strong>{row.camperName}</strong></td>
                       <td>{row.weeksCount > 0 ? renderAccountingDetailChip(`${row.key}-overnight-archived-weeks`, 'Weeks', row.weekOverlayLines, row.weeksCount) : '-'}</td>
                       <td>{money(row.totalAfterManualDiscount)}</td>
+                      <td>{money(row.manualDiscount)}</td>
                       <td>{money(row.paidAmount)}</td>
                       <td>{money(row.owedAmount)}</td>
-                      <td>{row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}</td>
+                      <td>
+                        {row.paymentMethod ? row.paymentMethod.toUpperCase() : '-'}
+                        {row.paymentMethod === 'credit-card' ? (
+                          <div className="accountingCreditCardBadge">Credit card checkout</div>
+                        ) : null}
+                      </td>
                       <td>
                         <button
                           type="button"

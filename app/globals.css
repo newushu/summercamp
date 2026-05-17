@@ -62,6 +62,10 @@ body {
   padding-bottom: 6.4rem;
 }
 
+.adminPage .card.section.adminAccountingSectionWide {
+  width: min(1500px, calc(100vw - 2.5rem));
+}
+
 .card {
   width: min(980px, 100%);
   margin: 0 auto;
@@ -1873,6 +1877,8 @@ h3 {
 .specialOfferPill {
   display: inline-flex;
   align-items: center;
+  flex-direction: column;
+  justify-content: center;
   min-height: 2rem;
   padding: 0.42rem 0.78rem;
   border-radius: 999px;
@@ -1882,6 +1888,36 @@ h3 {
   font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.01em;
+  line-height: 1.15;
+}
+
+.specialOfferPill strong {
+  font-size: 0.82rem;
+}
+
+.specialOfferPill small {
+  font-size: 0.68rem;
+  color: rgba(124, 79, 56, 0.82);
+}
+
+.specialOfferPillRemaining {
+  min-width: 160px;
+  border-color: rgba(251, 191, 36, 0.72);
+  background: linear-gradient(135deg, #fff9d5 0%, #ffe894 100%);
+  color: #8a3b03;
+  box-shadow:
+    0 10px 22px rgba(245, 158, 11, 0.18),
+    0 0 20px rgba(250, 204, 21, 0.18);
+  animation: specialOfferRemainingPulse 2.2s ease-in-out infinite;
+}
+
+.specialOfferPillRemaining strong {
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
+.specialOfferPillRemaining small {
+  color: rgba(138, 59, 3, 0.78);
 }
 
 .specialOfferApplied {
@@ -2117,6 +2153,23 @@ h3 {
       0 22px 40px rgba(187, 148, 127, 0.22),
       0 0 0 1px rgba(250, 204, 21, 0.34),
       0 0 34px rgba(250, 204, 21, 0.26);
+  }
+}
+
+@keyframes specialOfferRemainingPulse {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow:
+      0 10px 22px rgba(245, 158, 11, 0.18),
+      0 0 20px rgba(250, 204, 21, 0.18);
+  }
+
+  50% {
+    transform: translateY(-1px);
+    box-shadow:
+      0 14px 28px rgba(245, 158, 11, 0.24),
+      0 0 28px rgba(250, 204, 21, 0.26);
   }
 }
 
@@ -5320,6 +5373,15 @@ h3 {
   border-radius: 14px;
   background: #fff;
   overflow: hidden;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.weekCard.weekCardActive {
+  border: 2px solid #4f9cf9;
+  box-shadow:
+    0 0 0 4px rgba(79, 156, 249, 0.14),
+    0 18px 34px rgba(37, 99, 235, 0.14);
+  animation: weekCardPulseGlow 2.3s ease-in-out infinite;
 }
 
 .weekHead {
@@ -5337,8 +5399,11 @@ h3 {
 }
 
 .weekHead.selected {
-  background: #e8f1ff;
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.8), transparent 30%),
+    #e8f1ff;
   box-shadow: inset 0 0 0 1px #93c5fd;
+  border-bottom: 2px solid rgba(79, 156, 249, 0.42);
 }
 
 .weekHead.hasSelection {
@@ -5363,6 +5428,13 @@ h3 {
 .weekHead.lunchSelected {
   background: linear-gradient(180deg, #f4fff7 0%, #dcfce7 100%);
   box-shadow: inset 0 0 0 1px #4ade80;
+}
+
+.weekHead.conflictLocked {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.75), transparent 28%),
+    linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  box-shadow: inset 0 0 0 1px #fb923c;
 }
 
 .weekHead span {
@@ -5406,6 +5478,30 @@ h3 {
   font-size: 0.79rem;
   color: #0f766e;
   font-weight: 700;
+}
+
+.weekConflictChip {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.18rem 0.62rem;
+  border: 1px solid #f97316;
+  background: linear-gradient(135deg, #fdba74 0%, #fb923c 100%);
+  color: #7c2d12;
+  font-size: 0.74rem;
+  font-weight: 900;
+  box-shadow: 0 10px 18px rgba(249, 115, 22, 0.16);
+}
+
+.weekBody {
+  border-top: 2px solid rgba(79, 156, 249, 0.18);
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.48) 0%, rgba(255, 255, 255, 0.98) 32%);
+}
+
+.weekSelectionStateChip.conflict {
+  border: 1px solid #f97316;
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .accountingAlertText {
@@ -5633,6 +5729,106 @@ h3 {
   padding: 0.78rem 0.85rem;
   text-align: center;
   color: #1e293b;
+}
+
+.paymentOptionsOverlayMethodCard--featured {
+  border-color: #7dd3fc;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+  box-shadow: 0 14px 28px rgba(14, 165, 233, 0.12);
+}
+
+.paymentOptionsOverlayMethodCard--featured p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+}
+
+.paymentOptionsInlineButton {
+  margin-top: 0.75rem;
+}
+
+.creditCardOverlayPanel {
+  width: min(1180px, 100%);
+  height: min(88vh, 940px);
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid #bfdbfe;
+  background: #fff;
+  box-shadow: 0 28px 52px rgba(15, 23, 42, 0.4);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+}
+
+.creditCardOverlayIntro {
+  padding: 0.9rem 1rem 0;
+}
+
+.creditCardOverlayPanel iframe,
+.creditCardInlineFrame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.creditCardOverlayPanel iframe {
+  min-height: 520px;
+}
+
+.creditCardWidgetShell,
+.creditCardInlineFrame {
+  border-radius: 18px;
+  border: 1px solid #dbe5f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  overflow: hidden;
+}
+
+.creditCardWidgetShell {
+  min-height: 760px;
+  padding: 0.5rem;
+}
+
+.creditCardWidgetShell wl-store-widget {
+  display: block;
+  min-height: 740px;
+}
+
+.creditCardInlineFrame {
+  min-height: 780px;
+  margin-top: 0.9rem;
+}
+
+.paymentOptionInlineButton {
+  margin-top: 0.85rem;
+}
+
+.creditCardInstructionCard {
+  margin-top: 0.85rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.08);
+  padding: 0.95rem 1rem;
+}
+
+.creditCardInstructionCard.embedded {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+}
+
+.creditCardInstructionCard strong {
+  color: #1e3a8a;
+  font-size: 0.98rem;
+}
+
+.creditCardInstructionList {
+  margin: 0.55rem 0 0;
+  padding-left: 1.1rem;
+  color: #334155;
+}
+
+.creditCardInstructionList li + li {
+  margin-top: 0.42rem;
 }
 
 .weekStatusChip {
@@ -5867,7 +6063,41 @@ h3 {
   font-weight: 800;
 }
 
+.discountedUnitPriceHint {
+  max-width: 18rem;
+  color: #92400e;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.28;
+  text-align: right;
+}
+
+.registrationDiscountReminderBar {
+  margin-top: 0.72rem;
+  padding: 0.68rem 0.8rem;
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 248, 220, 0.96), rgba(255, 237, 191, 0.92));
+  color: #92400e;
+  box-shadow: 0 10px 20px rgba(245, 158, 11, 0.12);
+}
+
+.registrationDiscountReminderBar strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.registrationDiscountReminderBar span {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .stepFourDiscountClaim {
+  position: relative;
+  overflow: hidden;
   margin-top: 0.8rem;
   border: 1px solid #f5b342;
   border-radius: 16px;
@@ -5880,6 +6110,29 @@ h3 {
   justify-content: space-between;
   align-items: center;
   gap: 0.9rem;
+}
+
+.stepFourDiscountClaimInline {
+  margin-top: 1rem;
+}
+
+.stepFourDiscountClaim::after {
+  content: '';
+  position: absolute;
+  inset: -40% auto -40% -22%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.34) 50%, transparent 100%);
+  transform: rotate(16deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stepFourDiscountClaim.claimReady {
+  animation: discountClaimPulse 1.9s ease-in-out infinite;
+}
+
+.stepFourDiscountClaim.claimReady::after {
+  animation: discountClaimSweep 2.5s linear infinite;
 }
 
 .stepFourDiscountClaim strong {
@@ -5902,6 +6155,23 @@ h3 {
   box-shadow: 0 10px 18px rgba(30, 64, 175, 0.28);
 }
 
+.stepFourClaimBtnSparkle {
+  position: relative;
+  overflow: hidden;
+  animation: discountClaimPulse 1.3s ease-in-out infinite;
+}
+
+.stepFourClaimBtnSparkle::after {
+  content: '';
+  position: absolute;
+  inset: -35% auto -35% -26%;
+  width: 36%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.86) 50%, transparent 100%);
+  transform: rotate(18deg);
+  animation: discountClaimSweep 1.7s linear infinite;
+  pointer-events: none;
+}
+
 .stepFourDiscountClaim.claimed {
   border-color: #f5b342;
   background:
@@ -5922,12 +6192,69 @@ h3 {
   box-shadow: 0 10px 18px rgba(245, 158, 11, 0.18);
 }
 
+.stepFourDiscountClaim.claimed {
+  animation: discountClaimConfirmed 0.72s ease;
+}
+
 .registrationEmailStatus {
   margin-top: 0.8rem;
   border: 1px solid #cbd5e1;
   border-radius: 16px;
   padding: 0.85rem 0.95rem;
   background: #f8fbff;
+}
+
+@keyframes discountClaimPulse {
+  0%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 14px 28px rgba(245, 158, 11, 0.28);
+  }
+  50% {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 34px rgba(245, 158, 11, 0.38);
+  }
+}
+
+@keyframes discountClaimSweep {
+  0% {
+    left: -30%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.8;
+  }
+  55% {
+    opacity: 0.55;
+  }
+  100% {
+    left: 115%;
+    opacity: 0;
+  }
+}
+
+@keyframes discountClaimConfirmed {
+  0% {
+    transform: scale(0.985);
+  }
+  45% {
+    transform: scale(1.01);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes weekCardPulseGlow {
+  0%, 100% {
+    box-shadow:
+      0 0 0 4px rgba(79, 156, 249, 0.14),
+      0 18px 34px rgba(37, 99, 235, 0.14);
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px rgba(79, 156, 249, 0.18),
+      0 22px 38px rgba(37, 99, 235, 0.18);
+  }
 }
 
 .registrationEmailStatus strong {
@@ -5977,6 +6304,10 @@ h3 {
 .totalLine {
   margin: 0.7rem 0 0;
   font-weight: 700;
+}
+
+.grandDiscountPreview {
+  color: #b45309;
 }
 
 .subtotalLine {
@@ -6227,6 +6558,59 @@ h3 {
   padding: 0.1rem 0.4rem;
   font-size: 0.62rem;
   font-weight: 800;
+}
+
+.locationFolderTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.45rem;
+}
+
+.locationFolderTab {
+  appearance: none;
+  min-width: 180px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px 16px 12px 12px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  color: #475569;
+  padding: 0.72rem 0.88rem 0.66rem;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.locationFolderTab:hover {
+  transform: translateY(-1px);
+  border-color: #93c5fd;
+  box-shadow: 0 10px 18px rgba(37, 99, 235, 0.1);
+}
+
+.locationFolderTab.active {
+  border-color: #0284c7;
+  background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+  box-shadow:
+    inset 0 3px 0 #0ea5e9,
+    0 14px 24px rgba(14, 165, 233, 0.14);
+  color: #0f172a;
+}
+
+.locationFolderTabLabel {
+  display: block;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.locationFolderTabSubhead {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.locationFolderTab.active .locationFolderTabSubhead {
+  color: #0369a1;
 }
 
 .locationAlbumCard {
@@ -6625,6 +7009,18 @@ h3 {
 
 .registrationSubmittedCard p {
   margin-top: 0.22rem;
+}
+
+.registrationSubmittedEmphasis {
+  display: inline-flex;
+  margin-top: 0.55rem;
+  padding: 0.38rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid #4ade80;
+  background: rgba(255, 255, 255, 0.7);
+  color: #166534;
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .registrationSubmittedCard--complete {
@@ -7260,6 +7656,10 @@ textarea:focus {
   gap: 0.75rem;
 }
 
+.accountingDashboardGridWide {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .accountingMethodGrid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -7403,6 +7803,11 @@ textarea:focus {
 .accountingTableSection .tuitionTableWrap {
   margin-top: 0;
   overflow-x: auto;
+}
+
+.accountingTableScroll {
+  overflow: auto;
+  max-height: min(72vh, 1100px);
 }
 
 .accountingSectionHeader {
@@ -7613,6 +8018,80 @@ textarea:focus {
 
 .rosterEmbeddedCardWrap {
   padding: 1rem;
+}
+
+.overnightAccountingWeekSummary {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+}
+
+.overnightAccountingWeekCard {
+  border: 1px solid #cfe2ff;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
+  padding: 0.85rem 0.95rem;
+  text-align: left;
+  display: grid;
+  gap: 0.22rem;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(14, 116, 144, 0.08);
+}
+
+.overnightAccountingWeekCard.active {
+  border-color: #38bdf8;
+  box-shadow:
+    0 14px 28px rgba(14, 116, 144, 0.12),
+    0 0 0 1px rgba(56, 189, 248, 0.18),
+    0 0 18px rgba(56, 189, 248, 0.14);
+}
+
+.overnightAccountingWeekLabel {
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.overnightAccountingWeekCard strong {
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.overnightAccountingWeekCard small {
+  color: #0f766e;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.overnightAccountingWeekRoster {
+  margin-top: 0.95rem;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 12px 24px rgba(14, 116, 144, 0.08);
+}
+
+.overnightAccountingNameList {
+  padding: 0.95rem 1rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.overnightAccountingNameChip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 800;
 }
 
 .rosterProgramEmpty {
@@ -8246,6 +8725,7 @@ textarea:focus {
 .tuitionTable {
   width: 100%;
   border-collapse: collapse;
+  min-width: 1100px;
 }
 
 .tuitionTable th {
@@ -8260,6 +8740,10 @@ textarea:focus {
   letter-spacing: 0.03em;
   color: #334155;
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  box-shadow: inset 0 -1px 0 #dbe5f0;
 }
 
 .tuitionTable td {
@@ -8278,12 +8762,62 @@ textarea:focus {
   background: #eff6ff;
 }
 
+.tuitionTable tbody tr.accountingCreditCardRow td {
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.tuitionTable tbody tr.accountingCreditCardRow:nth-child(even) td,
+.tuitionTable tbody tr.accountingCreditCardRow:hover td {
+  background: linear-gradient(180deg, #dbeafe 0%, #c7e3ff 100%);
+}
+
+.accountingCreditCardBadge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid #60a5fa;
+  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+  color: #1d4ed8;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  box-shadow:
+    0 0 0 1px rgba(96, 165, 250, 0.12),
+    0 0 16px rgba(59, 130, 246, 0.18);
+}
+
 .selectedReplyRow {
   background: #eff6ff;
 }
 
 .tuitionTable input {
   width: 100%;
+}
+
+.tuitionTable td:nth-child(3),
+.tuitionTable th:nth-child(3) {
+  width: 128px;
+  min-width: 128px;
+}
+
+.overnightWeekCheckboxes.accountingCompact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  max-width: 146px;
+}
+
+.overnightWeekCheckbox.accountingCompact {
+  min-width: 0;
+  padding: 0.35rem 0.38rem;
+  border-radius: 14px;
+  gap: 0.2rem;
+}
+
+.overnightWeekCheckbox.accountingCompact span {
+  font-size: 0.68rem;
+  line-height: 1.15;
 }
 
 .trackingStack {
@@ -8763,10 +9297,67 @@ textarea:focus {
     color: #0f766e;
   }
 
+  .desktopRailLocationSwitch {
+    display: grid;
+    gap: 0.42rem;
+    padding: 0.72rem 0.76rem;
+    border: 1px solid #dbe5f0;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+
+  .desktopRailLocationLabel {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #0369a1;
+  }
+
+  .desktopRailLocationTabs {
+    display: grid;
+    gap: 0.42rem;
+  }
+
+  .desktopRailLocationTab {
+    appearance: none;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #1e3a8a;
+    padding: 0.42rem 0.65rem;
+    font-size: 0.82rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  }
+
+  .desktopRailLocationTab:hover {
+    transform: translateY(-1px);
+    border-color: #60a5fa;
+    box-shadow: 0 10px 18px rgba(59, 130, 246, 0.12);
+  }
+
+  .desktopRailLocationTab.active {
+    border-color: #0284c7;
+    background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+    color: #ffffff;
+    box-shadow: 0 12px 24px rgba(2, 132, 199, 0.22);
+  }
+
   .desktopSideRailLinks,
+  .desktopRegistrationRailLinks,
   .desktopRegistrationRailSteps {
     display: grid;
     gap: 0.5rem;
+  }
+
+  .desktopRegistrationRailHomeLink {
+    border-color: #cbd5e1;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    color: #0f172a;
+    font-weight: 800;
   }
 
   .desktopSideRailLink,
@@ -9240,6 +9831,15 @@ textarea:focus {
   .registrationStepOneGrid textarea,
   .registrationStepOneGrid .fieldIncompleteGroup,
   .registrationStepOneGrid .locationFacilityBlock {
+    min-width: 0;
+  }
+
+  .locationFolderTabs {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .locationFolderTab {
     min-width: 0;
   }
 

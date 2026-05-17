@@ -130,7 +130,7 @@ set
   end,
   tuition_overnight_week = case when coalesce(tuition_overnight_week, 0) = 0 then 1180 else tuition_overnight_week end,
   discount_overnight_week = case when coalesce(discount_overnight_week, 0) = 0 then 980 else discount_overnight_week end,
-  discount_end_date = coalesce(discount_end_date, date '2026-05-20'),
+  discount_end_date = date '2026-06-17',
   discount_display_value = coalesce(nullif(discount_display_value, ''), '$200 off week 1 + extra $100 off week 2');
 
 -- Ensure level up screenshot positions has exactly 5 {x,y,zoom} entries

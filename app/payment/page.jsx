@@ -1,8 +1,15 @@
 import Link from 'next/link'
-import { decodePaymentPagePayload } from '../../lib/paymentPageLink'
+import { buildCreditCardCheckoutHref, decodePaymentPagePayload } from '../../lib/paymentPageLink'
 import { calculateVenmoGoodsServicesTotal } from '../../lib/emailJourneyRenderer'
 
 const PAYMENT_OPTIONS = [
+  {
+    title: 'Credit Card',
+    value: 'Secure online checkout',
+    detailLabel: 'Checkout',
+    description: 'Open the secure credit card checkout in a separate page or use the embedded frame below.',
+    tone: 'blue',
+  },
   {
     title: 'Zelle',
     value: 'wushu688@gmail.com',
@@ -82,6 +89,8 @@ export default async function PaymentPage({ searchParams }) {
   const amountDue = Number(payload?.amountDue || 0)
   const venmoGoodsServicesTotal = calculateVenmoGoodsServicesTotal(amountDue)
   const heading = payload?.registrationType === 'overnight-only' ? 'Overnight Camp Payment' : 'Summer Camp Payment'
+  const creditCardCheckoutHref = buildCreditCardCheckoutHref()
+  const embeddedCreditCardCheckoutHref = `${creditCardCheckoutHref}?embedded=1`
 
   return (
     <main className="page">
@@ -112,6 +121,11 @@ export default async function PaymentPage({ searchParams }) {
                 <strong>{option.value}</strong>
               </div>
               <p>{option.description}</p>
+              {option.title === 'Credit Card' ? (
+                <a className="button paymentOptionInlineButton" href={creditCardCheckoutHref} target="_blank" rel="noreferrer">
+                  Open Credit Card Checkout
+                </a>
+              ) : null}
               {option.title === 'Venmo' && venmoGoodsServicesTotal > 0 ? (
                 <p className="paymentOptionFeeLine">
                   Goods &amp; Services total: <strong>{currency(venmoGoodsServicesTotal)}</strong>
@@ -119,6 +133,16 @@ export default async function PaymentPage({ searchParams }) {
               ) : null}
             </div>
           ))}
+        </div>
+
+        <div className="paymentSummaryCard paymentSummaryCard--notes">
+          <h3>Embedded Credit Card Checkout</h3>
+          <p className="subhead">
+            Families paying by card can finish right here without replacing the payment page.
+          </p>
+          <div className="creditCardInlineFrame">
+            <iframe title="Embedded credit card checkout" src={embeddedCreditCardCheckoutHref} />
+          </div>
         </div>
 
         <div className="paymentSummaryPanel">

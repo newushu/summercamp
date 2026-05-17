@@ -11,12 +11,14 @@ import {
 } from '../lib/campAdmin'
 import {
   WEEK_TIER_PROMO,
+  getCampRateForLocation,
   getNextWeekTierPromoPrompt,
   getWeekTierPromoDisplayLines,
   getWeekTierPromoForStudent,
+  getWeekTierPromoQuotaStatus,
 } from '../lib/campPricing'
 import { fetchAdminConfigFromSupabase } from '../lib/campAdminApi'
-import { buildPaymentPageHref } from '../lib/paymentPageLink'
+import { buildCreditCardCheckoutHref, buildPaymentPageHref } from '../lib/paymentPageLink'
 import { buildRegistrationSummaryDocument } from '../lib/registrationSummaryDocument'
 import { supabase, supabaseEnabled } from '../lib/supabase'
 
@@ -48,6 +50,7 @@ const SURVEY_STEP_DRAFT_KEY = 'new-england-wushu-survey-step-draft-v1'
 const ASSISTANT_COLLAPSED_KEY = 'new-england-wushu-assistant-collapsed-v1'
 const SUPPORT_EMAIL = 'info@newushu.com'
 const PAYMENT_METHOD_OPTIONS = [
+  { value: 'credit-card', label: 'Credit Card (secure online checkout)' },
   { value: 'zelle', label: 'Zelle (wushu688@gmail.com, Xiaoyi Chen)' },
   { value: 'venmo', label: 'Venmo (@newushu, Friends & Family preferred)' },
   { value: 'cash', label: 'Cash (exact change to Calvin or Xiaoyi)' },
@@ -76,6 +79,9 @@ const DAY_CAMP_WEEKLY_POINTS = 2500
 const DAY_CAMP_FULL_DAY_POINTS = 500
 const DAY_CAMP_HALF_DAY_POINTS = 100
 const OVERNIGHT_WEEKLY_POINTS = 5000
+const OVERNIGHT_SIBLING_DISCOUNT_PCT = 5
+const DISCOUNT_BANNER_HOLD_DATE = '2026-05-21'
+const DISCOUNT_BANNER_PREVIEW_DATE = '2026-05-20'
 const DAY_CAMP_START_TIME = '8:30 AM'
 const DAY_CAMP_END_TIME = '4:00 PM'
 const DAY_CAMP_PICKUP_WINDOW = '4:00-4:30 PM'
@@ -321,8 +327,8 @@ const dayAtCampTimeline = [
 const overnightSchedule = [
   {
     day: 'Sunday',
-    amTheme: 'Arrival + orientation',
-    pmTheme: 'Outing',
+    amTheme: 'No AM session',
+    pmTheme: 'Arrival + orientation + outing',
     note: 'Drop-off at 1:00 PM, settle in, then first supervised outing and team bonding.',
   },
   {
@@ -620,6 +626,11 @@ function getWeekDays(weekStartIso, labels = dayKeys) {
   return labels.map((key, index) => ({ key, date: isoDate(addDays(start, index)) }))
 }
 
+function getDayCampWeekId(locationValue, weekStartIso) {
+  const location = String(locationValue || '').trim() || 'unassigned'
+  return `daycamp:${location}:${weekStartIso}`
+}
+
 function getStudentSummary(student) {
   const general = { fullWeeks: 0, fullDays: 0, amDays: 0, pmDays: 0 }
   const bootcamp = { fullWeeks: 0, fullDays: 0, amDays: 0, pmDays: 0 }
@@ -657,6 +668,9 @@ function getLunchWeeksForStudent(student, weeksById) {
   const rows = []
   for (const [weekId, entry] of Object.entries(student.schedule || {})) {
     const week = weeksById[weekId]
+    if (!week) {
+      continue
+    }
     const programKey = week?.programKey || entry?.programKey
     if (programKey === 'overnight') {
       continue
@@ -732,6 +746,40 @@ function getLunchDecisionStats(student, weeksById) {
     lunchProvidedDays,
     packLunchNeededDays,
   }
+}
+
+function getWeekConflictForStudent(student, targetWeek, weeksById) {
+  if (!student || !targetWeek?.start) {
+    return null
+  }
+
+  for (const [weekId, entry] of Object.entries(student.schedule || {})) {
+    const scheduledWeek = weeksById?.[weekId]
+    if (!scheduledWeek || scheduledWeek.id === targetWeek.id) {
+      continue
+    }
+    if (scheduledWeek.programKey === 'overnight') {
+      continue
+    }
+    if (String(scheduledWeek.start || '') !== String(targetWeek.start || '')) {
+      continue
+    }
+    if (String(scheduledWeek.locationValue || '') === String(targetWeek.locationValue || '')) {
+      continue
+    }
+    const hasSelectedDay = Object.values(entry?.days || {}).some((mode) => mode && mode !== 'NONE')
+    if (!hasSelectedDay) {
+      continue
+    }
+    return {
+      weekId,
+      locationValue: scheduledWeek.locationValue || '',
+      locationLabel: scheduledWeek.locationLabel || getLocationLabel(scheduledWeek.locationValue || ''),
+      week: scheduledWeek,
+    }
+  }
+
+  return null
 }
 
 function getDayCampPointsFromSummary(summary) {
@@ -829,6 +877,21 @@ function getWeekSelectionSummary(entry, week) {
 
 function currency(amount) {
   return `$${Number(amount || 0).toFixed(2)}`
+}
+
+function getDisplayedDiscountEndDate(rawEndDate, nowDate) {
+  const actual = String(rawEndDate || '').trim()
+  if (!actual) {
+    return ''
+  }
+  const switchDate = parseDateLocal(DISCOUNT_BANNER_HOLD_DATE)
+  const now = nowDate instanceof Date ? nowDate : null
+  if (!switchDate || !now || Number.isNaN(now.getTime())) {
+    return actual
+  }
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const switchPoint = new Date(switchDate.getFullYear(), switchDate.getMonth(), switchDate.getDate())
+  return today.getTime() >= switchPoint.getTime() ? actual : DISCOUNT_BANNER_PREVIEW_DATE
 }
 
 function getYouTubeVideoId(url) {
@@ -1008,6 +1071,7 @@ export default function HomePage() {
   const [summaryOverlayOpen, setSummaryOverlayOpen] = useState(false)
   const [summaryOverlayHtml, setSummaryOverlayHtml] = useState('')
   const [paymentOptionsOverlayOpen, setPaymentOptionsOverlayOpen] = useState(false)
+  const [creditCardOverlayOpen, setCreditCardOverlayOpen] = useState(false)
   const [locationAlbumOpen, setLocationAlbumOpen] = useState(false)
   const [locationAlbumIndex, setLocationAlbumIndex] = useState(0)
   const [submittedRegistrationSnapshot, setSubmittedRegistrationSnapshot] = useState(null)
@@ -1119,22 +1183,25 @@ export default function HomePage() {
 
   const registrationWeeks = useMemo(() => {
     const dayCampMap = new Map()
+    const locationLabel = getLocationLabel(registration.location)
 
     for (const week of generalWeeks) {
-      const id = `daycamp:${week.start}`
+      const id = getDayCampWeekId(registration.location, week.start)
       dayCampMap.set(id, {
         id,
         start: week.start,
         end: week.end,
         programKey: 'daycamp',
-        programLabel: 'Camp Week',
+        programLabel: `${locationLabel} Camp Week`,
+        locationValue: registration.location,
+        locationLabel,
         days: getWeekDays(week.start),
         availableCampTypes: ['general'],
       })
     }
 
     for (const week of bootcampWeeks) {
-      const id = `daycamp:${week.start}`
+      const id = getDayCampWeekId(registration.location, week.start)
       const existing = dayCampMap.get(id)
       if (existing) {
         existing.availableCampTypes = existing.availableCampTypes.includes('bootcamp')
@@ -1147,7 +1214,7 @@ export default function HomePage() {
     const mappedDayCamp = Array.from(dayCampMap.values()).sort((a, b) => a.start.localeCompare(b.start))
 
     return mappedDayCamp
-  }, [bootcampWeeks, generalWeeks])
+  }, [bootcampWeeks, generalWeeks, registration.location])
 
   const weeksById = useMemo(() => {
     const byId = {}
@@ -1156,6 +1223,49 @@ export default function HomePage() {
     }
     return byId
   }, [registrationWeeks])
+  const allRegistrationWeeksById = useMemo(() => {
+    const byId = {}
+    const locationOptionsForConflicts = LOCATION_OPTIONS.filter(
+      (option) => adminConfig.locations?.[option.value]?.enabled !== false
+    )
+    for (const locationOption of locationOptionsForConflicts) {
+      const locationValue = locationOption.value
+      const locationLabel = locationOption.label
+      const generalWeeksForLocation = getSelectedWeeks(
+        'general',
+        getGeneralProgramForLocation(adminConfig.programs.general, locationValue)
+      )
+      const generalStarts = new Set(generalWeeksForLocation.map((week) => week.start))
+
+      for (const week of generalWeeksForLocation) {
+        const id = getDayCampWeekId(locationValue, week.start)
+        byId[id] = {
+          id,
+          start: week.start,
+          end: week.end,
+          programKey: 'daycamp',
+          programLabel: `${locationLabel} Camp Week`,
+          locationValue,
+          locationLabel,
+          days: getWeekDays(week.start),
+          availableCampTypes: ['general'],
+        }
+      }
+
+      for (const week of bootcampWeeks) {
+        if (!generalStarts.has(week.start)) {
+          continue
+        }
+        const id = getDayCampWeekId(locationValue, week.start)
+        if (byId[id]) {
+          byId[id].availableCampTypes = byId[id].availableCampTypes.includes('bootcamp')
+            ? byId[id].availableCampTypes
+            : [...byId[id].availableCampTypes, 'bootcamp']
+        }
+      }
+    }
+    return byId
+  }, [adminConfig.locations, adminConfig.programs.general, bootcampWeeks])
 
   const phoneScreenshots = useMemo(() => {
     const screenshotUrls = Array.isArray(adminConfig.media.levelUpScreenshotUrls)
@@ -1250,6 +1360,10 @@ export default function HomePage() {
     )
     return { totalCampDays, totalPaidLunchDays, totalIncludedLunchDays }
   }, [summaries, weeksById])
+  const displayedDiscountEndDate = useMemo(
+    () => getDisplayedDiscountEndDate(adminConfig.tuition.discountEndDate, countdownNow),
+    [adminConfig.tuition.discountEndDate, countdownNow]
+  )
 
   const discountActive = useMemo(() => {
     if (!countdownNow) {
@@ -1266,7 +1380,7 @@ export default function HomePage() {
     if (!countdownNow) {
       return null
     }
-    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    const end = parseDateLocal(displayedDiscountEndDate)
     if (!end) {
       return null
     }
@@ -1279,9 +1393,9 @@ export default function HomePage() {
       ...parts,
       endLabel: end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     }
-  }, [adminConfig.tuition.discountEndDate, countdownNow])
+  }, [countdownNow, displayedDiscountEndDate])
   const discountStatus = useMemo(() => {
-    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    const end = parseDateLocal(displayedDiscountEndDate)
     if (!end || !countdownNow) {
       return {
         hasDate: false,
@@ -1319,7 +1433,7 @@ export default function HomePage() {
       ctaEn: 'Still want the discount? Click here',
       ctaZh: '仍想领取优惠？点这里',
     }
-  }, [adminConfig.tuition.discountEndDate, countdownNow])
+  }, [countdownNow, displayedDiscountEndDate])
   const overnightPricingRows = useMemo(() => {
     const regular = adminConfig.tuition.regular
     const discounted = adminConfig.tuition.discount
@@ -1441,6 +1555,10 @@ export default function HomePage() {
     [enabledLocationLabels]
   )
   const fullWeekRegularPrice = Number(adminConfig.tuition.regular.fullWeek || 0)
+  const weekTierPromoQuota = useMemo(
+    () => getWeekTierPromoQuotaStatus(countdownNow || new Date()),
+    [countdownNow]
+  )
   useEffect(() => {
     let active = true
 
@@ -2402,40 +2520,20 @@ export default function HomePage() {
         return { ...current, [field]: value }
       }
 
-      const allowedGeneralWeekIds = new Set(
-        getSelectedWeeks('general', getGeneralProgramForLocation(adminConfig.programs.general, value)).map(
-          (week) => `daycamp:${week.start}`
-        )
-      )
-
       return {
         ...current,
         [field]: value,
-        students: current.students.map((student) => {
-          const nextSchedule = { ...student.schedule }
-          const nextLunch = { ...student.lunch }
-
-          for (const [weekId, entry] of Object.entries(student.schedule || {})) {
-            if (entry?.campType !== 'general') {
-              continue
-            }
-            if (allowedGeneralWeekIds.has(weekId)) {
-              continue
-            }
-            delete nextSchedule[weekId]
-            for (const dayKey of Object.keys(entry?.days || {})) {
-              delete nextLunch[`${weekId}:${dayKey}`]
-            }
-          }
-
-          return {
-            ...student,
-            schedule: nextSchedule,
-            lunch: nextLunch,
-          }
-        }),
       }
     })
+    if (field === 'location') {
+      setExpandedWeekKey('')
+      setExpandedLunchWeekKey('')
+      setMessage(
+        value
+          ? `Location set to ${getLocationLabel(value)}. Existing selections at other locations stay saved, and overlapping weeks will show as conflicts here.`
+          : ''
+      )
+    }
   }
 
   function updateStudentField(studentId, field, value) {
@@ -3129,12 +3227,7 @@ export default function HomePage() {
       typeof options.siblingDiscountEligible === 'boolean'
         ? options.siblingDiscountEligible
         : studentIndex >= 1
-    const regular = adminConfig.tuition.regular
-    const discount = adminConfig.tuition.discount
-    const bootcampTuition = resolveBootcampTuition(adminConfig.tuition)
     const siblingDiscountPct = siblingDiscountEligible ? Number(adminConfig.tuition.siblingDiscountPct || 0) : 0
-    const bootcampRegular = bootcampTuition.regular
-    const bootcampDiscounted = bootcampTuition.discount
 
     const rows = [
       {
@@ -3194,20 +3287,28 @@ export default function HomePage() {
         rateType: 'bootcamp',
       },
     ].map((item) => {
-      const regularPrice =
-        item.rateType === 'bootcamp' ? bootcampRegular[item.key] || 0 : regular[item.key] || 0
-      const configuredDiscountedPrice =
-        item.rateType === 'bootcamp' ? bootcampDiscounted[item.key] || 0 : discount[item.key] || 0
+      const locationValue = options.location ?? registration.location
+      const configuredRate = getCampRateForLocation(locationValue, item.rateType, item.key, adminConfig.tuition)
+      const regularPrice = configuredRate.regularPrice
+      const configuredDiscountedPrice = configuredRate.discountedPrice
       const normalizedDiscountedPrice =
         Number(configuredDiscountedPrice) > 0 ? Number(configuredDiscountedPrice) : regularPrice
       const effectivePrice = applyLimitedDiscount
         ? Math.max(0, Math.min(regularPrice, normalizedDiscountedPrice))
         : regularPrice
       const discountAmount = applyLimitedDiscount ? Math.max(0, regularPrice - effectivePrice) : 0
+      const discountedPriceLabel =
+        discountActive && normalizedDiscountedPrice > 0 && normalizedDiscountedPrice < regularPrice
+          ? applyLimitedDiscount
+            ? `Discount claimed on this last step. This is now ${currency(normalizedDiscountedPrice)} each.`
+            : `Claim the discount on this last step to make this ${currency(normalizedDiscountedPrice)} each.`
+          : ''
       return {
         ...item,
         regularPrice,
+        discountedPrice: normalizedDiscountedPrice,
         discountAmount,
+        discountedPriceLabel,
         effectivePrice,
         regularLineTotal: regularPrice * item.qty,
         discountLineTotal: discountAmount * item.qty,
@@ -3296,11 +3397,6 @@ export default function HomePage() {
     }
 
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
-    const regular = adminConfig.tuition.regular
-    const discount = adminConfig.tuition.discount
-    const bootcampTuition = resolveBootcampTuition(adminConfig.tuition)
-    const bootcampRegular = bootcampTuition.regular
-    const bootcampDiscounted = bootcampTuition.discount
 
     const ranked = studentList
       .map((student, index) => {
@@ -3315,8 +3411,9 @@ export default function HomePage() {
           ['bootcamp', 'amHalf', summary.bootcamp.amDays],
           ['bootcamp', 'pmHalf', summary.bootcamp.pmDays],
         ].reduce((sum, [rateType, key, qty]) => {
-          const regularPrice = rateType === 'bootcamp' ? bootcampRegular[key] || 0 : regular[key] || 0
-          const configuredDiscountedPrice = rateType === 'bootcamp' ? bootcampDiscounted[key] || 0 : discount[key] || 0
+          const configuredRate = getCampRateForLocation(registration.location, rateType, key, adminConfig.tuition)
+          const regularPrice = configuredRate.regularPrice
+          const configuredDiscountedPrice = configuredRate.discountedPrice
           const normalizedDiscountedPrice =
             Number(configuredDiscountedPrice) > 0 ? Number(configuredDiscountedPrice) : regularPrice
           const effectivePrice = applyLimitedDiscount
@@ -3369,6 +3466,7 @@ export default function HomePage() {
     const allCampEntries = []
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive,
+      location: targetRegistration.location,
     })
 
     const studentSections = targetRegistration.students
@@ -3377,6 +3475,7 @@ export default function HomePage() {
         const summary = getStudentSummary(student)
         const invoice = buildStudentPriceRows(summary, index, {
           student,
+          location: targetRegistration.location,
           applyLimitedDiscount: discountActive,
           siblingDiscountEligible: eligibleIds.has(student.id),
         })
@@ -3599,7 +3698,24 @@ export default function HomePage() {
   }
 
   function openPaymentOptionsOverlay() {
+    if ((submittedRegistrationRecord?.paymentMethod || registration.paymentMethod) === 'credit-card') {
+      setCreditCardOverlayOpen(true)
+      return
+    }
     setPaymentOptionsOverlayOpen(true)
+  }
+
+  function openCreditCardOverlay() {
+    setPaymentOptionsOverlayOpen(false)
+    setCreditCardOverlayOpen(true)
+  }
+
+  function getCreditCardCheckoutLink() {
+    return buildCreditCardCheckoutHref({ baseUrl: getSiteBaseUrl() })
+  }
+
+  function getEmbeddedCreditCardCheckoutLink() {
+    return `${getCreditCardCheckoutLink()}?embedded=1`
   }
 
   function emailSummaryToSelf(targetRegistration = registration) {
@@ -3680,12 +3796,14 @@ export default function HomePage() {
     ]
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      location: targetRegistration.location,
     })
     for (const [index, student] of targetRegistration.students.entries()) {
       const camperName = student.fullName.trim() || `Camper ${index + 1}`
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, index, {
         student,
+        location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
@@ -3712,6 +3830,7 @@ export default function HomePage() {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         student,
+        location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
@@ -3730,11 +3849,13 @@ export default function HomePage() {
     const summaryLines = buildReservationSummaryLines(targetRegistration)
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      location: targetRegistration.location,
     })
     const amountDue = (targetRegistration?.students || []).reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         student,
+        location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
@@ -4014,18 +4135,29 @@ export default function HomePage() {
     { eligible: false, amount: 0, camperCount: 0, labels: [] }
   )
   const weekTierPromoPills = [
-    text('First 30 enrollments', '前30个报名名额'),
-    text('Weeks 4-6: 50% OFF', '第4至6周享半价'),
-    text('Weeks 7-9: 60% OFF', '第7至9周享6折'),
-    text('Week 10: FREE', '第10周免费'),
+    {
+      key: 'remaining',
+      label: text(
+        `${weekTierPromoQuota.remaining} spaces left`,
+        `剩余 ${weekTierPromoQuota.remaining} 个名额`
+      ),
+      detail: text(
+        `of the first ${weekTierPromoQuota.initialQuota}`,
+        `共前 ${weekTierPromoQuota.initialQuota} 个`
+      ),
+      emphasis: true,
+    },
+    { key: 'weeks-4-6', label: text('Weeks 4-6: 50% OFF', '第4至6周享半价') },
+    { key: 'weeks-7-9', label: text('Weeks 7-9: 60% OFF', '第7至9周享6折') },
+    { key: 'week-10', label: text('Week 10: FREE', '第10周免费') },
   ]
   const weekTierPromoLeadLine = text(
     'Then weeks 7-9 jump to 60% OFF, and week 10 is FREE.',
     '之后第7至9周升级为6折，第10周免费。'
   )
   const weekTierPromoRulesLine = text(
-    `${WEEK_TIER_PROMO.cap} ${WEEK_TIER_PROMO.detail}`,
-    '限前30位营员。仅适用于同一位营员的日营整周学费；午餐不打折，过夜营不参与此优惠。'
+    `${weekTierPromoQuota.remaining} spaces left in the first ${weekTierPromoQuota.initialQuota}. ${WEEK_TIER_PROMO.detail}`,
+    `当前前 ${weekTierPromoQuota.initialQuota} 个名额中还剩 ${weekTierPromoQuota.remaining} 个。仅适用于同一位营员的日营整周学费；午餐不打折，过夜营不参与此优惠。`
   )
   const weekTierPromoGrowthLine = text(
     WEEK_TIER_PROMO.growth,
@@ -4055,8 +4187,9 @@ export default function HomePage() {
       <p className="specialOfferLead">{lead}</p>
       <div className="specialOfferPillRow">
         {weekTierPromoPills.map((pill) => (
-          <span key={pill} className="specialOfferPill">
-            {pill}
+          <span key={pill.key} className={`specialOfferPill ${pill.emphasis ? 'specialOfferPillRemaining' : ''}`}>
+            <strong>{pill.label}</strong>
+            {pill.detail ? <small>{pill.detail}</small> : null}
           </span>
         ))}
       </div>
@@ -4191,7 +4324,7 @@ export default function HomePage() {
     return fullWeekDiscountAmount > 0 ? `${currency(fullWeekDiscountAmount)} OFF` : '$0 OFF'
   }, [fullWeekDiscountAmount])
   const discountEndDateSpokenLabel = useMemo(() => {
-    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    const end = parseDateLocal(displayedDiscountEndDate)
     if (!end) {
       return {
         en: 'the discount end date',
@@ -4202,7 +4335,7 @@ export default function HomePage() {
       en: end.toLocaleDateString('en-US', { month: 'long', day: 'numeric' }),
       zh: end.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' }),
     }
-  }, [adminConfig.tuition.discountEndDate])
+  }, [displayedDiscountEndDate])
   const surveyStepImageIndex =
     surveyStep === 1
       ? 0
@@ -4239,6 +4372,19 @@ export default function HomePage() {
     [adminConfig.media.heroImageUrl, adminConfig.media.surveyStepImageUrls, campGalleryItems]
   )
   const claimableDiscountTotal = getClaimableDiscountTotal()
+  const shouldShowDiscountClaimReminder =
+    discountActive && !registrationDiscountClaimed && Number(claimableDiscountTotal || 0) > 0
+  const discountClaimReminderMessage = !shouldShowDiscountClaimReminder
+    ? ''
+    : step >= registrationSteps.length
+      ? text(
+          `Claim ${currency(claimableDiscountTotal)} discount on this last step before you submit.`,
+          `请在提交前于最后一步领取 ${currency(claimableDiscountTotal)} 优惠。`
+        )
+      : text(
+          `Step ${registrationSteps.length} reminder: claim ${currency(claimableDiscountTotal)} discount on the last step.`,
+          `第 ${registrationSteps.length} 步提醒：请在最后一步领取 ${currency(claimableDiscountTotal)} 优惠。`
+        )
   const surveyEmailInvalid =
     surveyStep === 1 && surveyMessage.toLowerCase().includes('valid email')
   const surveyDiscountReminder =
@@ -4537,6 +4683,31 @@ export default function HomePage() {
             {pageHeroLogo}
           </div>
           <p className="desktopSideRailEyebrow">Registration</p>
+          <div className="desktopSideRailLinks desktopRegistrationRailLinks">
+            <a href="/" className="desktopSideRailLink desktopRegistrationRailHomeLink">
+              {text('Back to Home Page', '返回主页')}
+            </a>
+          </div>
+          <div className="desktopRailLocationSwitch" aria-label="Desktop location switch">
+            <span className="desktopRailLocationLabel">{text('Location', '地点')}</span>
+            <div className="desktopRailLocationTabs" role="tablist" aria-label="Desktop camp location">
+              {registrationLocationOptions.map((option) => {
+                const active = registration.location === option.value
+                return (
+                  <button
+                    key={`desktop-rail-location-${option.value}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className={`desktopRailLocationTab ${active ? 'active' : ''}`}
+                    onClick={() => updateContact('location', option.value)}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <div className="desktopRegistrationRailSteps">
             {registrationSteps.map((item) => {
               const isComplete = isRegistrationStepComplete(item.id)
@@ -5539,8 +5710,8 @@ export default function HomePage() {
             '6月30日前报名4个及以上整周。'
           ),
           note: text(
-            'Limited to the first 30 enrollments. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.',
-            '仅限前30个报名名额。仅限整周。适用于营员的普通营或竞赛集训营整周学费。'
+            `${weekTierPromoQuota.remaining} spaces left in the first ${weekTierPromoQuota.initialQuota}. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.`,
+            `当前前 ${weekTierPromoQuota.initialQuota} 个名额中还剩 ${weekTierPromoQuota.remaining} 个。仅限整周。适用于营员的普通营或竞赛集训营整周学费。`
           ),
           ctaLabel: text('See Week Options', '查看周次选择'),
           onCta: jumpToRegistration,
@@ -5630,8 +5801,8 @@ export default function HomePage() {
             '6月30日前报名4个及以上整周。'
           ),
           note: text(
-            'Limited to the first 30 enrollments. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.',
-            '仅限前30个报名名额。仅限整周。适用于营员的普通营或竞赛集训营整周学费。'
+            `${weekTierPromoQuota.remaining} spaces left in the first ${weekTierPromoQuota.initialQuota}. Full weeks only. Applies to a camper’s full-week general camp or competition boot camp tuition.`,
+            `当前前 ${weekTierPromoQuota.initialQuota} 个名额中还剩 ${weekTierPromoQuota.remaining} 个。仅限整周。适用于营员的普通营或竞赛集训营整周学费。`
           ),
         })}
         <div className="heroActions">
@@ -6286,6 +6457,12 @@ export default function HomePage() {
                 </span>
                 <span className="registrationLocationPill">{selectedLocationLabel}</span>
                 <h3>{stepShortTitle}</h3>
+                {shouldShowDiscountClaimReminder ? (
+                  <div className="registrationDiscountReminderBar">
+                    <strong>{step >= registrationSteps.length ? text('Final-step discount', '最后一步优惠') : text('Discount reminder', '优惠提醒')}</strong>
+                    <span>{discountClaimReminderMessage}</span>
+                  </div>
+                ) : null}
               </div>
               <div className="registrationStepVisual">
                 {activeRegistrationStepImage ? (
@@ -6302,23 +6479,43 @@ export default function HomePage() {
             </div>
           {step === 1 ? (
             <div className="grid registrationStepOneGrid">
-              <label>
-                      <span className="requiredFieldLabel">{text('Camp location', '营地地点')} {locationMissing ? <span className="requiredDot" /> : null}</span>
-                <select
-                  id="reg-location"
-                  className={locationMissing ? 'fieldIncomplete' : ''}
-                  value={registration.location}
-                  onChange={(event) => updateContact('location', event.target.value)}
-                  required
-                >
-                  <option value="">{text('Select location', '选择地点')}</option>
-                  {registrationLocationOptions.map((option) => (
-                    <option key={`location-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="full">
+                <span className="requiredFieldLabel">
+                  {text('Camp location', '营地地点')} {locationMissing ? <span className="requiredDot" /> : null}
+                </span>
+                <div className={`locationFolderTabs ${locationMissing ? 'fieldIncompleteGroup' : ''}`} role="tablist" aria-label="Camp location">
+                  {registrationLocationOptions.map((option) => {
+                    const active = registration.location === option.value
+                    return (
+                      <button
+                        key={`location-tab-${option.value}`}
+                        id={`reg-location-${option.value}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        className={`locationFolderTab ${active ? 'active' : ''}`}
+                        onClick={() => updateContact('location', option.value)}
+                      >
+                        <span className="locationFolderTabLabel">{option.label}</span>
+                        <span className="locationFolderTabSubhead">
+                          {text('Open weeks only', '仅显示开放周次')}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="subhead">
+                  {registration.location
+                    ? text(
+                        `${selectedLocationLabel} is active. Step 2 and lunch will only use ${selectedLocationLabel} registration weeks for each camper.`,
+                        `${selectedLocationLabel} 已启用。第 2 步和午餐步骤只会使用 ${selectedLocationLabel} 的开放周次。`
+                      )
+                    : text(
+                        'Choose a location tab before continuing. Changing tabs clears week and lunch selections so campers cannot stay enrolled in two locations for the same week.',
+                        '继续前请先选择地点标签。切换标签会清空周次和午餐选择，避免同一营员在同一周同时占用两个地点。'
+                      )}
+                </p>
+              </div>
 
               {registration.location.trim() ? (
                 <div className="full locationFacilityBlock">
@@ -6647,41 +6844,70 @@ export default function HomePage() {
                 <div className="weekCardList">
                   {registrationWeeks.map((week, weekIndex) => {
                     const entry = activeStudent.schedule[week.id]
+                    const weekConflict = getWeekConflictForStudent(activeStudent, week, allRegistrationWeeksById)
                     const weekSelectionSummary = getWeekSelectionSummary(entry, week)
                     const weekDayKeys = week.days.map((item) => item.key)
                     const weekIsFull = weekDayKeys.every((day) => (entry?.days?.[day] || 'NONE') === 'FULL')
                     const selectedCampType = entry?.campType || ''
                     const panelKey = `${activeStudent.id}:${week.id}`
-                    const expanded = expandedWeekKey === panelKey
+                    const expanded = expandedWeekKey === panelKey && !weekConflict
                     const hasSelection = Object.values(entry?.days || {}).some((mode) => mode && mode !== 'NONE')
 
                     return (
-                      <article key={week.id} className="weekCard">
+                      <article key={week.id} className={`weekCard ${expanded ? 'weekCardActive' : ''}`}>
                         <button
                           type="button"
-                          className={`weekHead ${expanded ? 'selected' : ''} ${hasSelection ? 'hasSelection' : 'empty'}`}
+                          className={`weekHead ${expanded ? 'selected' : ''} ${weekConflict ? 'conflictLocked' : hasSelection ? 'hasSelection' : 'empty'}`}
                           data-week-head={panelKey}
-                          onClick={() => setExpandedWeekKey(expanded ? '' : panelKey)}
+                          onClick={() => {
+                            if (weekConflict) {
+                              setMessage(
+                                `This camper is already registered for ${formatWeekLabel(weekConflict.week)} at ${weekConflict.locationLabel}.`
+                              )
+                              return
+                            }
+                            setExpandedWeekKey(expanded ? '' : panelKey)
+                          }}
                         >
                           <span className="weekHeadText">
                             <strong>
                               Week {weekIndex + 1}: {week.programLabel}
                             </strong>
                             <span>{formatWeekLabel(week)}</span>
-                            <em>
-                              {expanded ? 'Tap to close this week for ' : 'Open this week to choose camp type and days for '}
-                              <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
-                            </em>
+                            {weekConflict ? (
+                              <em>
+                                {text('This week is locked for', '这一周已锁定：')}{' '}
+                                <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
+                              </em>
+                            ) : (
+                              <em>
+                                {expanded ? 'Tap to close this week for ' : 'Open this week to choose camp type and days for '}
+                                <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
+                              </em>
+                            )}
                             {weekSelectionSummary ? (
                               <span className="weekStatusChip">{weekSelectionSummary}</span>
                             ) : null}
-                            <span className={`weekSelectionStateChip ${hasSelection ? 'selected' : 'empty'}`}>
-                              {hasSelection ? text('Registered', '已选择') : text('Not selected yet', '尚未选择')}
+                            {weekConflict ? (
+                              <span className="weekConflictChip">
+                                {text(`Already registered at ${weekConflict.locationLabel}`, `已在 ${weekConflict.locationLabel} 报名`)}
+                              </span>
+                            ) : null}
+                            <span className={`weekSelectionStateChip ${weekConflict ? 'conflict' : hasSelection ? 'selected' : 'empty'}`}>
+                              {weekConflict
+                                ? text('Conflict locked', '冲突已锁定')
+                                : hasSelection
+                                  ? text('Registered', '已选择')
+                                  : text('Not selected yet', '尚未选择')}
                             </span>
                           </span>
                           <span className="weekHeadTapCta" aria-hidden="true">
                             <span className="weekHeadTapIcon">☝</span>
-                            <span>{text(expanded ? 'Tap to collapse' : 'Tap to register', expanded ? '点按收起' : '点按报名')}</span>
+                            <span>
+                              {weekConflict
+                                ? text('Locked by Burlington', '已被 Burlington 锁定')
+                                : text(expanded ? 'Tap to collapse' : 'Tap to register', expanded ? '点按收起' : '点按报名')}
+                            </span>
                           </span>
                         </button>
                         {expanded ? (
@@ -6840,7 +7066,7 @@ export default function HomePage() {
                       const weekProvidedLunchDays = weekIncludedLunchDays + weekPaidLunchDays
                       const weekPackDays = Math.max(0, weekRegisteredDays - weekProvidedLunchDays)
                       return (
-                        <article key={row.weekId} className="weekCard">
+                        <article key={row.weekId} className={`weekCard ${expanded ? 'weekCardActive' : ''}`}>
                           <button
                             type="button"
                             className={`weekHead ${expanded ? 'selected' : ''} ${weekPaidLunchDays > 0 ? 'lunchSelected' : visited ? 'visited' : 'needsAttention'}`}
@@ -6977,6 +7203,9 @@ export default function HomePage() {
                     Your registration form has been submitted successfully for{' '}
                     <strong>{getLocationLabel(submittedRegistrationRecord?.location)}</strong>.
                   </p>
+                  <p className="registrationSubmittedEmphasis">
+                    This spot is already registered. Please do not submit this same registration again.
+                  </p>
                   <div className="registrationSubmittedActions">
                     <button
                       type="button"
@@ -7027,38 +7256,18 @@ export default function HomePage() {
                 </div>
               ) : null}
               {!registrationIsSubmitted ? (
-                <p className="subhead">Location selected: <strong>{selectedLocationLabel}</strong></p>
+                <p className="subhead">
+                  Location selected: <strong>{selectedLocationLabel}</strong>
+                  {registration.location === 'acton'
+                    ? ` · Acton General Camp is ${currency(600)} regular or ${currency(500)} per week once you claim the final-step discount.`
+                    : ''}
+                </p>
               ) : null}
               {adminConfig.tuition.discountEndDate ? (
                 <p className="subhead">
                   Discount pricing applies through {discountEndDateSpokenLabel.en}.{' '}
                   {discountActive ? 'Discount is currently active.' : 'Discount has ended; regular pricing applies.'}
                 </p>
-              ) : null}
-              {discountActive && !registrationIsSubmitted ? (
-                <div className={`stepFourDiscountClaim ${registrationDiscountClaimed ? 'claimed' : ''}`}>
-                  <div>
-                    <strong>{registrationDiscountClaimed ? 'Early-bird discount claimed' : 'Claim early-bird discount'}</strong>
-                    <p>
-                      {registrationDiscountClaimed
-                        ? `You've claimed ${currency(claimableDiscountTotal)} in early-bird pricing through ${discountEndDateSpokenLabel.en}.`
-                        : `You've earned ${currency(claimableDiscountTotal)} in early-bird pricing. Claim before ${discountEndDateSpokenLabel.en}.`}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="button stepFourClaimBtn"
-                    onClick={() => {
-                      setRegistrationDiscountClaimed(true)
-                      setShowSubmitDiscountReminder(false)
-                    }}
-                    disabled={registrationDiscountClaimed}
-                  >
-                    {registrationDiscountClaimed
-                      ? `Early-Bird Claimed (${currency(claimableDiscountTotal)})`
-                      : `Claim ${currency(claimableDiscountTotal)} Early-Bird`}
-                  </button>
-                </div>
               ) : null}
               {!registrationIsSubmitted
                 ? renderWeekTierPromoCard({
@@ -7131,9 +7340,26 @@ export default function HomePage() {
                                     <div className="discountedUnitPrice">
                                       <span className="discountedUnitPriceRegular">{currency(row.regularPrice)}</span>
                                       <span className="discountedUnitPriceNew">{currency(row.effectivePrice)}</span>
+                                      {row.discountedPriceLabel ? (
+                                        <span className="discountedUnitPriceHint">{row.discountedPriceLabel}</span>
+                                      ) : null}
                                     </div>
                                   ) : (
-                                    currency(row.effectivePrice)
+                                  <div className="discountedUnitPrice">
+                                      {discountActive && row.discountedPrice < row.regularPrice ? (
+                                        <span className="discountedUnitPriceRegular">{currency(row.regularPrice)}</span>
+                                      ) : null}
+                                      <span className="discountedUnitPriceNew">
+                                        {currency(
+                                          discountActive && row.discountedPrice < row.regularPrice
+                                            ? row.discountedPrice
+                                            : row.effectivePrice
+                                        )}
+                                      </span>
+                                      {row.discountedPriceLabel ? (
+                                        <span className="discountedUnitPriceHint">{row.discountedPriceLabel}</span>
+                                      ) : null}
+                                    </div>
                                   )}
                                 </td>
                                 <td>{row.discountLineTotal > 0 ? `-${currency(row.discountLineTotal)}` : '-'}</td>
@@ -7188,6 +7414,11 @@ export default function HomePage() {
                 : null}
               {!registrationIsSubmitted ? (
               <p className="totalLine grand">
+                {shouldShowDiscountClaimReminder ? (
+                  <span className="grandDiscountPreview">
+                    {text('Available to claim on this registration:', '本次报名可领取优惠：')} -{currency(claimableDiscountTotal)} ·{' '}
+                  </span>
+                ) : null}
                 Grand total:{' '}
                 {currency(
                   summaries.reduce((sum, item) => {
@@ -7200,6 +7431,35 @@ export default function HomePage() {
                   }, 0)
                 )}
               </p>
+              ) : null}
+              {discountActive && !registrationIsSubmitted ? (
+                <div className={`stepFourDiscountClaim stepFourDiscountClaimInline ${registrationDiscountClaimed ? 'claimed' : 'claimReady'}`}>
+                  <div>
+                    <strong>
+                      {registrationDiscountClaimed
+                        ? 'Final-step discount claimed'
+                        : 'Final step: claim your early-bird discount'}
+                    </strong>
+                    <p>
+                      {registrationDiscountClaimed
+                        ? `You claimed ${currency(claimableDiscountTotal)} on this last step. Eligible weeks now use the discounted price through ${discountEndDateSpokenLabel.en}.`
+                        : `Claim it right below your totals before you submit. Eligible weeks will switch to the discounted price immediately, including Acton General Camp at ${currency(500)} per week.`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`button stepFourClaimBtn ${registrationDiscountClaimed ? '' : 'stepFourClaimBtnSparkle'}`}
+                    onClick={() => {
+                      setRegistrationDiscountClaimed(true)
+                      setShowSubmitDiscountReminder(false)
+                    }}
+                    disabled={registrationDiscountClaimed}
+                  >
+                    {registrationDiscountClaimed
+                      ? `Discount Claimed (${currency(claimableDiscountTotal)})`
+                      : `Claim Final-Step Discount ${currency(claimableDiscountTotal)}`}
+                  </button>
+                </div>
               ) : null}
               {!registrationIsSubmitted ? (
               <div className="summaryActionRow registrationStepFourActions">
@@ -7262,7 +7522,7 @@ export default function HomePage() {
               <div className="submitActionGroup submitActionGroupCentered">
                 {discountActive && !registrationDiscountClaimed ? (
                   <div className="submitDiscountNudge">
-                    <span>Don't forget to claim discount before submitting.</span>
+                    <span>Claim the discount on this last step before submitting so your eligible weeks switch to the lower price.</span>
                     <button
                       type="button"
                       className="button secondary submitDiscountClaimBtn"
@@ -7280,7 +7540,7 @@ export default function HomePage() {
                     {submitting ? 'Submitting...' : 'Submit registration'}
                   </button>
                   {showSubmitDiscountReminder ? (
-                    <p className="submitDiscountInlineNote">Don&apos;t forget to claim discount.</p>
+                    <p className="submitDiscountInlineNote">Claim the discount on this last step before submitting.</p>
                   ) : null}
                 </div>
               </div>
@@ -7386,6 +7646,10 @@ export default function HomePage() {
             (address TBA). Outings and external activity costs are charged separately.
           </p>
           <p>
+            Train More, Save More does not apply to overnight camp. If a second sibling enrolls, the overnight sibling
+            discount is {OVERNIGHT_SIBLING_DISCOUNT_PCT}% off that second camper&apos;s camp tuition.
+          </p>
+          <p>
             Capacity: <strong>12 campers max per overnight week.</strong>
           </p>
         </div>
@@ -7410,10 +7674,12 @@ export default function HomePage() {
             <article key={`overnight-${item.day}`} className="scheduleItem">
               <strong><span className="scheduleDayTag">{item.day}</span></strong>
               <div className="scheduleThemeGrid">
-                <div className="scheduleThemeBlock">
-                  <p className="scheduleThemeLabel">AM Theme</p>
-                  <p className="scheduleThemeTitle">{item.amTheme}</p>
-                </div>
+                {item.amTheme && item.amTheme !== 'No AM session' ? (
+                  <div className="scheduleThemeBlock">
+                    <p className="scheduleThemeLabel">AM Theme</p>
+                    <p className="scheduleThemeTitle">{item.amTheme}</p>
+                  </div>
+                ) : null}
                 <div className="scheduleThemeBlock">
                   <p className="scheduleThemeLabel">PM Theme</p>
                   <p className="scheduleThemeTitle">{item.pmTheme}</p>
@@ -7651,8 +7917,23 @@ export default function HomePage() {
             </p>
             <div className="paymentOptionsOverlayMethods">
               {PAYMENT_METHOD_OPTIONS.map((option) => (
-                <div key={`payment-option-${option.value}`} className="paymentOptionsOverlayMethodCard">
+                <div
+                  key={`payment-option-${option.value}`}
+                  className={`paymentOptionsOverlayMethodCard${option.value === 'credit-card' ? ' paymentOptionsOverlayMethodCard--featured' : ''}`}
+                >
                   <strong>{option.label}</strong>
+                  {option.value === 'credit-card' ? (
+                    <>
+                      <p>Open the secure card checkout in a separate frame without leaving this registration page.</p>
+                      <button
+                        type="button"
+                        className="button registrationCompactAction paymentOptionsInlineButton"
+                        onClick={openCreditCardOverlay}
+                      >
+                        Open Credit Card Checkout
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -7664,6 +7945,46 @@ export default function HomePage() {
             >
               Open Full Payment Page
             </a>
+          </div>
+        </div>
+      ) : null}
+
+      {showRegistrationSections && creditCardOverlayOpen ? (
+        <div
+          className="summaryOverlayBackdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Secure credit card checkout"
+          onClick={() => setCreditCardOverlayOpen(false)}
+        >
+          <div className="creditCardOverlayPanel" onClick={(event) => event.stopPropagation()}>
+            <div className="summaryOverlayBar">
+              <strong>Secure Credit Card Checkout</strong>
+              <div className="summaryOverlayActions">
+                <a
+                  className="button secondary registrationCompactAction"
+                  href={getCreditCardCheckoutLink()}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in New Tab
+                </a>
+                <button
+                  type="button"
+                  className="button secondary registrationCompactAction"
+                  onClick={() => setCreditCardOverlayOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="creditCardOverlayIntro">
+              <p className="paymentOptionsOverlayAmount">Amount due: {currency(reviewGrandTotal)}</p>
+              <p className="paymentOptionsOverlayCopy">
+                Complete card payment below. The secure checkout stays inside this frame so your registration page remains open behind it.
+              </p>
+            </div>
+            <iframe title="Secure credit card checkout" src={getEmbeddedCreditCardCheckoutLink()} />
           </div>
         </div>
       ) : null}
