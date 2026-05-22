@@ -1,6 +1,11 @@
 import { defaultAdminConfig } from '../../../../lib/campAdmin'
 import { buildLeadJourneyMessage } from '../../../../lib/emailJourneyRenderer'
 import {
+  getRoundTwoOfferCopy,
+  getRoundTwoTrainMoreSaveMoreCopy,
+  getRoundTwoWushuBenefitsCopy,
+} from '../../../../lib/roundTwoCampaign'
+import {
   createRequestSupabaseClient,
   supabaseServer,
   supabaseServerEnabled,
@@ -171,6 +176,7 @@ async function getJourneyTemplates() {
       dayLabel: typeof item.dayLabel === 'string' ? item.dayLabel : fallback.dayLabel,
       title: typeof item.title === 'string' ? item.title : fallback.title,
       subject: typeof item.subject === 'string' ? item.subject : fallback.subject,
+      imageUrl: typeof item.imageUrl === 'string' ? item.imageUrl : fallback.imageUrl,
       videoUrl: typeof item.videoUrl === 'string' ? item.videoUrl : fallback.videoUrl,
       body: typeof item.body === 'string' ? item.body : fallback.body,
     }
@@ -205,12 +211,7 @@ function buildFallbackLeadRecommendationFromPayload(payload) {
 }
 
 function buildTrainMoreSaveMoreLeadCopy() {
-  return [
-    'Train More, Save More:',
-    '- Add more full weeks to lower the effective weekly cost.',
-    '- Families use it when they want stronger consistency, stronger progress, and better summer value.',
-    '- Current early-bird pricing also includes $100 OFF.',
-  ].join('\n')
+  return getRoundTwoTrainMoreSaveMoreCopy()
 }
 
 function buildRegistrationLeadProgramHighlights() {
@@ -223,6 +224,14 @@ function buildRegistrationLeadProgramHighlights() {
     '- Best fit for athletes who want more focused taolu training, technical corrections, and stronger competition progress.',
     '- Helpful for families thinking about Competition Team preparation and a more intensive training track.',
   ].join('\n')
+}
+
+function getRoundTwoLeadTokens() {
+  return {
+    round_two_offer: getRoundTwoOfferCopy(),
+    train_more_save_more: buildTrainMoreSaveMoreLeadCopy(),
+    wushu_why_start: getRoundTwoWushuBenefitsCopy(),
+  }
 }
 
 function isArchivedRegistrationRecord(record) {
@@ -299,6 +308,7 @@ async function buildLeadStepPreview({ run, payload, templates, scheduleDays, ste
     train_more_save_more: buildTrainMoreSaveMoreLeadCopy(),
     program_highlights: buildRegistrationLeadProgramHighlights(),
     app_launch_date: 'June 20',
+    ...getRoundTwoLeadTokens(),
   }
 
   const subject = renderTemplate(template.subject, tokens)
@@ -308,6 +318,7 @@ async function buildLeadStepPreview({ run, payload, templates, scheduleDays, ste
     tokens,
     logoUrl: branding?.welcomeLogoUrl || '',
     landingCarouselImageUrls: branding?.landingCarouselImageUrls || [],
+    heroImageUrl: template?.imageUrl || '',
     stepNumber,
   })
   return {
@@ -650,27 +661,27 @@ function buildRegistrationLeadTemplate(stepNumber = 1) {
     1: {
       subject: 'You Left Off in Summer Camp Registration - Your Weeks Are Still There',
       body:
-        'Hi {parent_name},\n\nYou started the summer camp registration form but did not finish, so we wanted to make it easy to pick back up.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nIf you want help choosing the best week mix, just reply and we will help.',
+        'Hi {parent_name},\n\nYou started the summer camp registration form but did not finish, so we wanted to make it easy to pick back up.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nIf you want help choosing the best week mix, just reply and we will help.',
     },
     2: {
       subject: 'Your Camp Weeks Are Started - Want Help Finishing Registration?',
       body:
-        'Hi {parent_name},\n\nQuick follow-up from our team. You already started the summer camp registration form, and we saved the direction you were heading.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks right now:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nFinish here:\n{registration_link}',
+        'Hi {parent_name},\n\nQuick follow-up from our team. You already started the summer camp registration form, and we saved the direction you were heading.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks right now:\n{selected_weeks}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nFinish here:\n{registration_link}',
     },
     3: {
       subject: 'Here Is the Summer Camp Plan You Started',
       body:
-        'Hi {parent_name},\n\nYou were already partway through the summer camp registration flow, so this is a friendly reminder of the plan you started.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nContinue registration here:\n{registration_link}',
+        'Hi {parent_name},\n\nYou were already partway through the summer camp registration flow, so this is a friendly reminder of the plan you started.\n\nHere is where you left off:\n{left_off_summary}\n\nSelected weeks so far:\n{selected_weeks}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nContinue registration here:\n{registration_link}',
     },
     4: {
       subject: 'Pick Up Your Summer Camp Registration Where You Left Off',
       body:
-        'Hi {parent_name},\n\nYou are already closer than most families because you started the summer camp registration form.\n\nHere is where you left off:\n{left_off_summary}\n\nCurrent weeks selected:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nResume here:\n{registration_link}',
+        'Hi {parent_name},\n\nYou are already closer than most families because you started the summer camp registration form.\n\nHere is where you left off:\n{left_off_summary}\n\nCurrent weeks selected:\n{selected_weeks}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nResume here:\n{registration_link}',
     },
     5: {
       subject: 'Final Reminder to Finish the Summer Camp Registration You Started',
       body:
-        'Hi {parent_name},\n\nFinal quick reminder from us. You started the summer camp registration flow, and we would still love to help you finish it.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nReply if you want us to guide you.',
+        'Hi {parent_name},\n\nFinal quick reminder from us. You started the summer camp registration flow, and we would still love to help you finish it.\n\nHere is where you left off:\n{left_off_summary}\n\nWeeks selected so far:\n{selected_weeks}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nProgram Highlights:\n{program_highlights}\n\nPick back up here:\n{registration_link}\n\nReply if you want us to guide you.',
     },
   }
   return templates[Math.max(1, Math.min(5, Number(stepNumber || 1)))] || templates[1]

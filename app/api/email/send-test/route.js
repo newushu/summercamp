@@ -167,6 +167,7 @@ export async function POST(request) {
         },
         logoUrl,
         landingCarouselImageUrls: [],
+        heroImageUrl: template?.imageUrl || '',
         stepNumber,
       })
       bodyText = renderedMessage.bodyText

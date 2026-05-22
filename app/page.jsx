@@ -8,6 +8,8 @@ import {
   formatDateLabel,
   formatWeekLabel,
   getSelectedWeeks,
+  ROUND_TWO_DISCOUNT_NAME,
+  ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT,
 } from '../lib/campAdmin'
 import {
   WEEK_TIER_PROMO,
@@ -1414,24 +1416,24 @@ export default function HomePage() {
       return {
         hasDate: true,
         active: true,
-        labelEn: 'Discount active',
-        labelZh: '优惠进行中',
-        detailEn: `Discount ends ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        detailZh: `优惠截止至 ${end.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}`,
-        ctaEn: 'Claim discount here',
-        ctaZh: '点此领取优惠',
+        labelEn: ROUND_TWO_DISCOUNT_NAME,
+        labelZh: '第二轮早鸟优惠',
+        detailEn: `$${ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT} off per full week through ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        detailZh: `整周每周立减 $${ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT}，截止至 ${end.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}`,
+        ctaEn: 'Claim Round 2 here',
+        ctaZh: '点此领取第二轮优惠',
       }
     }
     const daysAgo = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
     return {
       hasDate: true,
       active: false,
-      labelEn: `Discount expired (${daysAgo} day${daysAgo === 1 ? '' : 's'} ago)`,
-      labelZh: `优惠已结束（${daysAgo}天前）`,
-      detailEn: 'You may still be able to get it. Click below to register and check.',
-      detailZh: '你仍有可能获得优惠。点击下方报名并查看是否仍可申请。',
-      ctaEn: 'Still want the discount? Click here',
-      ctaZh: '仍想领取优惠？点这里',
+      labelEn: `${ROUND_TWO_DISCOUNT_NAME} ended (${daysAgo} day${daysAgo === 1 ? '' : 's'} ago)`,
+      labelZh: `第二轮早鸟优惠已结束（${daysAgo}天前）`,
+      detailEn: 'Round 2 early-bird pricing has ended. Register to see current pricing options.',
+      detailZh: '第二轮早鸟优惠已结束。报名后可查看当前可用价格方案。',
+      ctaEn: 'See current pricing',
+      ctaZh: '查看当前价格',
     }
   }, [countdownNow, displayedDiscountEndDate])
   const overnightPricingRows = useMemo(() => {
@@ -1555,6 +1557,13 @@ export default function HomePage() {
     [enabledLocationLabels]
   )
   const fullWeekRegularPrice = Number(adminConfig.tuition.regular.fullWeek || 0)
+  const actonGeneralClaimedWeekPrice = useMemo(() => {
+    const { regularPrice, discountedPrice } = getCampRateForLocation('acton', 'general', 'fullWeek', adminConfig.tuition)
+    if (Number(discountedPrice || 0) > 0) {
+      return Math.min(Number(regularPrice || 0), Number(discountedPrice || 0))
+    }
+    return Number(regularPrice || 0)
+  }, [adminConfig.tuition])
   const weekTierPromoQuota = useMemo(
     () => getWeekTierPromoQuotaStatus(countdownNow || new Date()),
     [countdownNow]
@@ -5785,8 +5794,8 @@ export default function HomePage() {
           <div className="pricingPromoCard">
             <strong>
               {text(
-                `Early Bird Discount: Save ${currency(fullWeekDiscountAmount)} per full week before ${discountEndDateSpokenLabel.en}.`,
-                `早鸟优惠：在 ${discountEndDateSpokenLabel.zh} 前报名，整周每周立减 ${currency(fullWeekDiscountAmount)}。`
+                `${ROUND_TWO_DISCOUNT_NAME}: Save ${currency(fullWeekDiscountAmount)} per full week before ${discountEndDateSpokenLabel.en}.`,
+                `第二轮早鸟优惠：在 ${discountEndDateSpokenLabel.zh} 前报名，整周每周立减 ${currency(fullWeekDiscountAmount)}。`
               )}
             </strong>
             <p>{text('Reserve now to lock in the current offer.', '现在报名即可锁定当前优惠。')}</p>
@@ -5902,8 +5911,8 @@ export default function HomePage() {
         {discountActive ? (
           <p className="campTypeDiscountNote">
             {text(
-              `Early offer ends on ${discountEndDateSpokenLabel.en}. Claim your discount when you register.`,
-              `早鸟优惠截止至 ${discountEndDateSpokenLabel.zh}，报名时即可领取。`
+              `${ROUND_TWO_DISCOUNT_NAME} ends on ${discountEndDateSpokenLabel.en}. Claim your discount when you register.`,
+              `第二轮早鸟优惠截止至 ${discountEndDateSpokenLabel.zh}，报名时即可领取。`
             )}
           </p>
         ) : null}
@@ -7259,7 +7268,7 @@ export default function HomePage() {
                 <p className="subhead">
                   Location selected: <strong>{selectedLocationLabel}</strong>
                   {registration.location === 'acton'
-                    ? ` · Acton General Camp is ${currency(600)} regular or ${currency(500)} per week once you claim the final-step discount.`
+                    ? ` · Acton General Camp is ${currency(600)} regular or ${currency(actonGeneralClaimedWeekPrice)} per week once you claim the final-step discount.`
                     : ''}
                 </p>
               ) : null}
@@ -7443,7 +7452,7 @@ export default function HomePage() {
                     <p>
                       {registrationDiscountClaimed
                         ? `You claimed ${currency(claimableDiscountTotal)} on this last step. Eligible weeks now use the discounted price through ${discountEndDateSpokenLabel.en}.`
-                        : `Claim it right below your totals before you submit. Eligible weeks will switch to the discounted price immediately, including Acton General Camp at ${currency(500)} per week.`}
+                        : `Claim it right below your totals before you submit. Eligible weeks will switch to the discounted price immediately, including Acton General Camp at ${currency(actonGeneralClaimedWeekPrice)} per week.`}
                     </p>
                   </div>
                   <button
@@ -8150,7 +8159,7 @@ export default function HomePage() {
             </button>
           ) : null}
           <div className="discountCountdownMeta discountCountdownMetaPrimary">
-            <strong>{text(discountStatus.active ? 'Early-Bird' : 'Discount Update', discountStatus.active ? '早鸟优惠' : '优惠更新')}</strong>
+            <strong>{text(discountStatus.active ? ROUND_TWO_DISCOUNT_NAME : 'Discount Update', discountStatus.active ? '第二轮早鸟优惠' : '优惠更新')}</strong>
             {discountStatus.active ? (
               <>
                 <p className="discountAmountHero">
@@ -8201,9 +8210,6 @@ export default function HomePage() {
                   <span className="discountSecondaryBig">{text('50% OFF', '5折优惠')}</span>{' '}
                   {text('Full Weeks', '整周课程')}
                 </p>
-                <p className="discountSecondaryDeadline">
-                  {text('Enroll by June 30.', '请于6月30日前报名。')}
-                </p>
               </>
             ) : (
               <>
@@ -8211,7 +8217,7 @@ export default function HomePage() {
                   <span className="discountSecondaryBig">{text('Discount ended', '优惠已结束')}</span>
                 </p>
                 <p className="discountSecondaryDeadline">
-                  {text('You may still be able to get it. Click here to register and check.', '你仍有可能获得优惠。点击这里报名并查看。')}
+                  {text('Register to review the latest pricing and available offers.', '报名后可查看最新价格与可用优惠。')}
                 </p>
               </>
             )}

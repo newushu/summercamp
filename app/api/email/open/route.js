@@ -18,6 +18,9 @@ function buildEventType(flow = '', stepKey = '', stepNumber = 0) {
   if (normalizedFlow === 'lead') {
     return 'lead_journey_opened'
   }
+  if (normalizedFlow === 'ebr2') {
+    return 'early_bird_r2_opened'
+  }
   if (normalizedStepKey.startsWith('paid_')) {
     if (['paid_7d', 'paid_5d', 'paid_3d', 'paid_1d'].includes(normalizedStepKey)) {
       return 'paid_prep_opened'

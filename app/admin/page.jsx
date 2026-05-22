@@ -6,7 +6,14 @@ import {
   buildProgramWeekOptions,
   defaultAdminConfig,
   formatWeekLabel,
+  getLimitedDiscountCampaigns,
   getSelectedWeeks,
+  getDiscountCampaignMeta,
+  getTuitionForDiscountCampaign,
+  isLimitedDiscountActiveForDate,
+  LIMITED_DISCOUNT_CAMPAIGN_IDS,
+  normalizeDiscountCampaignOverride,
+  resolveDiscountCampaignId,
   resolveBootcampTuition,
 } from '../../lib/campAdmin'
 import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
@@ -23,6 +30,13 @@ import {
   buildReservationJourneyMessage,
 } from '../../lib/emailJourneyRenderer'
 import { getWeekTierPromoDisplayLines, getWeekTierPromoForStudent } from '../../lib/campPricing'
+import {
+  EARLY_BIRD_R2_JOURNEY_TYPE,
+  EARLY_BIRD_R2_STEPS,
+  getRoundTwoOfferCopy,
+  getRoundTwoTrainMoreSaveMoreCopy,
+  getRoundTwoWushuBenefitsCopy,
+} from '../../lib/roundTwoCampaign'
 import {
   getMediaBucketName,
   listMediaLibrary,
@@ -604,41 +618,46 @@ const premiumJourneyTemplates = [
     dayLabel: 'Immediately',
     title: 'Step 1 - Summer Camp Follow-Up',
     subject: 'Still Thinking About Summer Camp? Here Are the Highlights',
+    imageUrl: '',
     videoUrl: '',
     body:
-      'Hi {parent_name},\n\nWe noticed you checked out New England Wushu Summer Camp and wanted to send a quick follow-up in case you did not get to finish.\n\nFamilies usually choose us for four big reasons: strong coaching, fun team energy, lunch convenience, and daily photo/video updates through the Level Up app.\n\nA strong fit based on what we saw so far:\n{recommended_plan}\n\nYou can pick back up here anytime:\n{registration_link}\n\nIf you want help choosing the best weeks, just reply and we will guide you.',
+      'Hi {parent_name},\n\nWe noticed you checked out New England Wushu Summer Camp and wanted to send a quick follow-up in case you did not get to finish.\n\nFamilies usually choose us for four big reasons: strong coaching, fun team energy, lunch convenience, and daily photo/video updates through the Level Up app.\n\nA strong fit based on what we saw so far:\n{recommended_plan}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nYou can pick back up here anytime:\n{registration_link}\n\nIf you want help choosing the best weeks, just reply and we will guide you.',
   },
   {
     dayLabel: 'Day 1',
     title: 'Step 2 - Best-Fit Plan Reminder',
     subject: 'Your Recommended Camp Plan + Next Steps',
+    imageUrl: '',
     videoUrl: '',
     body:
-      'Hi {parent_name},\n\nQuick follow-up from our team. We can help you lock in the schedule that best matches your goals.\n\nRecommended fit:\n{recommended_plan}\n\nRegistration takes only a few minutes:\n{registration_link}\n\nIf you want help picking weeks, just reply and we will guide you.',
+      'Hi {parent_name},\n\nQuick follow-up from our team. We can help you lock in the schedule that best matches your goals.\n\nRecommended fit:\n{recommended_plan}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nRegistration takes only a few minutes:\n{registration_link}\n\nIf you want help picking weeks, just reply and we will guide you.',
   },
   {
     dayLabel: 'Day 3',
     title: 'Step 3 - Social Proof + Confidence',
     subject: 'Why Families Choose New England Wushu Summer Camp',
+    imageUrl: '',
     videoUrl: '',
     body:
-      'Hi {parent_name},\n\nFamilies tell us they value three things most: coaching quality, visible progress, and a positive team environment.\n\nYour camper can start with a plan matched to age and experience:\n{recommended_plan}\n\nStart registration when ready:\n{registration_link}\n\nWe are happy to answer any questions before you submit.',
+      'Hi {parent_name},\n\nFamilies tell us they value three things most: coaching quality, visible progress, and a positive team environment.\n\nYour camper can start with a plan matched to age and experience:\n{recommended_plan}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nStart registration when ready:\n{registration_link}\n\nWe are happy to answer any questions before you submit.',
   },
   {
     dayLabel: 'Day 5',
     title: 'Step 4 - Logistics + Readiness',
     subject: 'Camp Logistics Made Easy: Schedule, Lunch, and Daily Updates',
+    imageUrl: '',
     videoUrl: '',
     body:
-      'Hi {parent_name},\n\nTo make camp easier for families, we provide clear weekly scheduling, lunch options, and ongoing updates.\n\nYou can complete registration here:\n{registration_link}\n\nRecommended fit from your survey:\n{recommended_plan}\n\nIf you prefer, reply and we can help you choose the best starting weeks.',
+      'Hi {parent_name},\n\nTo make camp easier for families, we provide clear weekly scheduling, lunch options, and ongoing updates.\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nYou can complete registration here:\n{registration_link}\n\nRecommended fit from your survey:\n{recommended_plan}\n\nIf you prefer, reply and we can help you choose the best starting weeks.',
   },
   {
     dayLabel: 'Day 7',
     title: 'Step 5 - Final Invitation',
     subject: 'Final Invitation: Reserve Your Preferred Summer Camp Weeks',
+    imageUrl: '',
     videoUrl: '',
     body:
-      'Hi {parent_name},\n\nFinal check-in from us. If you still want a summer camp plan tailored to your goals, we would love to welcome your family.\n\nRecommended plan:\n{recommended_plan}\n\nComplete registration:\n{registration_link}\n\nIf now is not the right time, no problem. You can always return when ready.',
+      'Hi {parent_name},\n\nFinal check-in from us. If you still want a summer camp plan tailored to your goals, we would love to welcome your family.\n\nRecommended plan:\n{recommended_plan}\n\n{round_two_offer}\n\n{wushu_why_start}\n\n{train_more_save_more}\n\nComplete registration:\n{registration_link}\n\nIf now is not the right time, no problem. You can always return when ready.',
   },
 ]
 
@@ -648,6 +667,14 @@ const leadTrackerColumns = premiumJourneyTemplates.map((item, index) => ({
   label: `L${index + 1}`,
   timingLabel: item.dayLabel,
   description: item.dayLabel === 'Immediately' ? `Lead ${index + 1}: sends immediately` : `Lead ${index + 1}: ${item.dayLabel}`,
+}))
+
+const earlyBirdR2TrackerColumns = EARLY_BIRD_R2_STEPS.map((item) => ({
+  key: item.key,
+  stepNumber: item.stepNumber,
+  label: item.code,
+  timingLabel: item.dayLabel,
+  description: `${item.code}: ${item.dayLabel}`,
 }))
 
 const reservationTrackerColumns = reservationJourneyBlueprint.map((item, index) => ({
@@ -777,6 +804,9 @@ function getEmailEventFlowFilter(event = {}) {
   const registrationType = String(payload?.registrationType || '').trim().toLowerCase()
   const subject = String(event?.subject || '').toLowerCase()
 
+  if (String(payload?.journeyType || '').trim().toLowerCase() === EARLY_BIRD_R2_JOURNEY_TYPE || eventType.startsWith('early_bird_r2')) {
+    return 'campaign'
+  }
   if (eventType.startsWith('lead_') || eventType.includes('_lead')) {
     return 'lead'
   }
@@ -794,6 +824,9 @@ function getEmailEventJourneyFilter(event = {}) {
       : parseMaybeJson(event?.event_payload, {}) || {}
   const stageId = String(payload?.stageId || '').toLowerCase()
 
+  if (String(payload?.journeyType || '').trim().toLowerCase() === EARLY_BIRD_R2_JOURNEY_TYPE || eventType.startsWith('early_bird_r2')) {
+    return 'eb2'
+  }
   if (eventType.includes('paid_prep') || ['sevenday', 'fiveday', 'threeday', 'oneday'].includes(stageId)) {
     return 'p'
   }
@@ -822,7 +855,11 @@ function getEmailEventDisplayLabel(event = {}) {
       ? event.event_payload
       : parseMaybeJson(event?.event_payload, {}) || {}
   const stepKey = String(payload?.stepKey || '').trim().toLowerCase()
+  const campaignCode = String(payload?.campaignCode || '').trim().toUpperCase()
 
+  if (eventType === 'early_bird_r2_opened') {
+    return `Open receipt (${campaignCode || `EB20${stepNumber}`})`
+  }
   if (eventType === 'lead_journey_opened' && stepNumber > 0) {
     return `Open receipt (L${stepNumber})`
   }
@@ -848,6 +885,12 @@ function getEmailEventDisplayLabel(event = {}) {
   if (eventType === 'lead_journey_sent' && stepNumber > 0) {
     return `Sent (L${stepNumber})`
   }
+  if (eventType === 'early_bird_r2_sent') {
+    return `Sent (${campaignCode || `EB20${stepNumber}`})`
+  }
+  if (eventType === 'early_bird_r2_preview') {
+    return `Preview (${campaignCode || `EB20${stepNumber}`})`
+  }
   if (eventType === 'reservation_email_sent' && stepNumber > 0) {
     return `Sent (R${stepNumber})`
   }
@@ -867,6 +910,13 @@ function getLatestOpenedTrackerStep(row, flow = 'reservation') {
     const stepNumber = Number(String(latest.key || '').replace('step_', '') || 0)
     return {
       label: stepNumber > 0 ? `L${stepNumber}` : 'Lead',
+      at: latest.cell.at,
+    }
+  }
+  if (flow === 'campaign') {
+    const column = earlyBirdR2TrackerColumns.find((item) => item.key === latest.key)
+    return {
+      label: column?.label || 'EB2',
       at: latest.cell.at,
     }
   }
@@ -1444,6 +1494,8 @@ function buildJourneyProcessStepChips(stepCounts = {}, flow = 'reservation') {
           ['step_4', 'L4'],
           ['step_5', 'L5'],
         ]
+      : flow === 'campaign'
+        ? earlyBirdR2TrackerColumns.map((column) => [column.key, column.label])
       : [
           ['r1', 'R1'],
           ['r2', 'R2'],
@@ -1493,6 +1545,11 @@ const mediaSubtabBlueprint = [
 const accountingPaymentMethods = ['venmo', 'zelle', 'paypal', 'cash', 'check']
 const ACCOUNTING_ADMIN_COPY_EMAIL = 'calvin@newushu.com'
 const accountingEditorDayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+const accountingDiscountOverrideOptions = [
+  { value: '', label: 'Auto' },
+  { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_ONE, label: 'Redeem Round 1' },
+  { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_TWO, label: 'Redeem Round 2' },
+]
 const accountingEditorNextMode = {
   NONE: 'FULL',
   FULL: 'AM',
@@ -1537,15 +1594,6 @@ function addDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
 }
 
-function isLimitedDiscountActiveForDate(discountEndDate, createdAtIso) {
-  const endDate = parseDiscountDate(discountEndDate)
-  const created = new Date(createdAtIso || Date.now())
-  if (!endDate || Number.isNaN(created.getTime())) {
-    return false
-  }
-  return created.getTime() <= endDate.getTime()
-}
-
 function getWeekDayKeysForProgram(programKey) {
   if (programKey === 'overnight') {
     return ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
@@ -1584,6 +1632,23 @@ function getCanonicalWeekId(programKey, weekId) {
     return `${programKey}:${startDate}`
   }
   return rawWeekId
+}
+
+function resolveScheduleProgramKey(entry, weekId = '') {
+  const campType = String(entry?.campType || '').trim().toLowerCase()
+  const programKey = String(entry?.programKey || '').trim().toLowerCase()
+  const rawWeekId = String(weekId || '').trim().toLowerCase()
+
+  if (programKey === 'overnight' || campType === 'overnight' || rawWeekId.startsWith('overnight:')) {
+    return 'overnight'
+  }
+  if (campType === 'bootcamp' || programKey === 'bootcamp') {
+    return 'bootcamp'
+  }
+  if (campType === 'general' || programKey === 'general' || programKey === 'daycamp') {
+    return 'general'
+  }
+  return 'general'
 }
 
 function formatCalendarDate(value) {
@@ -1818,10 +1883,7 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
 
   for (const [weekId, entry] of sortedWeeks) {
     const week = weekById[weekId]
-    const programKey =
-      entry?.programKey === 'daycamp'
-        ? entry?.campType || 'general'
-        : entry?.programKey || entry?.campType || (String(weekId).startsWith('overnight:') ? 'overnight' : 'general')
+    const programKey = resolveScheduleProgramKey(entry, weekId)
     const weekLabel = weekNumberById[weekId]?.label || toWeekLabel(weekId, weekById)
     rows.push(`${weekLabel} (${toWeekLabel(weekId, weekById)})`)
 
@@ -1860,10 +1922,7 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
 }
 
 function resolveRosterProgramKey(scheduleItem) {
-  if (scheduleItem?.programKey === 'daycamp') {
-    return scheduleItem?.entry?.campType || 'general'
-  }
-  return scheduleItem?.programKey || scheduleItem?.entry?.campType || 'general'
+  return resolveScheduleProgramKey(scheduleItem?.entry || scheduleItem, scheduleItem?.weekId || scheduleItem?.sourceWeekId || '')
 }
 
 function shouldShowInRoster(row) {
@@ -1932,6 +1991,27 @@ function getStudentScheduleForAccounting(student) {
   )
 }
 
+function getAccountingEntryForCamper(accountingEntries, camperIndex, camperName) {
+  const entries = Array.isArray(accountingEntries) ? accountingEntries : []
+  return (
+    entries.find((item) => Number(item?.camper_index) === Number(camperIndex)) ||
+    entries.find((item) => String(item?.camper_name || '').trim() === String(camperName || '').trim()) ||
+    {}
+  )
+}
+
+function resolveAccountingSubmittedAt(record, rawMeta = {}, payload = {}) {
+  const registrationSubmittedAt = String(payload?.submittedAt || '').trim()
+  if (registrationSubmittedAt) {
+    return registrationSubmittedAt
+  }
+  const rawSubmittedAt = String(rawMeta?.submittedAt || '').trim()
+  if (rawSubmittedAt) {
+    return rawSubmittedAt
+  }
+  return String(record?.created_at || '').trim()
+}
+
 function formatAdminDateTime(value) {
   if (!value) {
     return '-'
@@ -1944,13 +2024,15 @@ function buildCamperPricing({
   student,
   siblingDiscountEligible,
   tuition,
-  discountActive,
+  discountCampaignId,
   lunchPrice,
   weekById,
 }) {
-  const regular = tuition.regular || {}
-  const discount = tuition.discount || {}
-  const bootcampTuition = resolveBootcampTuition(tuition)
+  const discountActive = Boolean(discountCampaignId)
+  const effectiveTuition = getTuitionForDiscountCampaign(tuition, discountCampaignId)
+  const regular = effectiveTuition.regular || {}
+  const discount = effectiveTuition.discount || {}
+  const bootcampTuition = resolveBootcampTuition(effectiveTuition)
   const schedule = getStudentScheduleForAccounting(student)
   const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
 
@@ -1975,10 +2057,7 @@ function buildCamperPricing({
   }
 
   for (const [weekId, entry] of Object.entries(schedule)) {
-    const programKey =
-      entry?.programKey === 'daycamp'
-        ? entry?.campType || 'general'
-        : entry?.programKey || entry?.campType || (String(weekId).startsWith('overnight:') ? 'overnight' : 'general')
+    const programKey = resolveScheduleProgramKey(entry, weekId)
     const canonicalWeekId = getCanonicalWeekId(programKey, weekId)
     const resolvedWeek = weekById[canonicalWeekId] || weekById[weekId] || null
     const dayKeys = Object.keys(entry?.days || {})
@@ -2127,6 +2206,7 @@ function buildCamperPricing({
   const weekTierPromo = student
     ? getWeekTierPromoForStudent(student, weekById, tuition, {
         applyLimitedDiscount: discountActive,
+        discountCampaignId,
       })
     : { eligible: false, amount: 0, breakdown: [] }
   const weekTierPromoAmount = roundMoney(Math.max(0, Number(weekTierPromo.amount || 0)))
@@ -2158,6 +2238,76 @@ function buildCamperPricing({
   totals.regularOvernight = roundMoney(totals.regularOvernight)
   totals.lunchCost = roundMoney(totals.lunchCost)
   return totals
+}
+
+function buildStudentAccountingPricingList({
+  students,
+  accountingEntries,
+  createdAt,
+  tuition,
+  lunchPrice,
+  weekById,
+  discountEndDate,
+}) {
+  const normalizedStudents =
+    Array.isArray(students) && students.length > 0
+      ? students
+      : [{ fullName: 'Camper', schedule: {}, lunch: {} }]
+  const pricingSeed = normalizedStudents.map((student, index) => {
+    const camperName = String(student?.fullName || '').trim() || `Camper ${index + 1}`
+    const entry = getAccountingEntryForCamper(accountingEntries, index, camperName)
+    const discountCampaignOverride = normalizeDiscountCampaignOverride(entry?.discount_campaign_override)
+    const discountCampaignId = resolveDiscountCampaignId({
+      createdAt,
+      discountEndDate,
+      overrideId: discountCampaignOverride,
+    })
+
+    return {
+      student,
+      index,
+      camperName,
+      entry,
+      discountCampaignOverride,
+      discountCampaignId,
+    }
+  })
+
+  const siblingEligibleIds = new Set(
+    pricingSeed
+      .map((item) => ({
+        studentId: String(item.student?.id || `fallback-${item.index}`),
+        studentIndex: item.index,
+        tuitionSubtotal: buildCamperPricing({
+          student: item.student,
+          siblingDiscountEligible: false,
+          tuition,
+          discountCampaignId: item.discountCampaignId,
+          lunchPrice,
+          weekById,
+        }).tuitionSubtotal,
+      }))
+      .sort((a, b) => {
+        if (a.tuitionSubtotal !== b.tuitionSubtotal) {
+          return a.tuitionSubtotal - b.tuitionSubtotal
+        }
+        return a.studentIndex - b.studentIndex
+      })
+      .slice(0, Math.max(0, normalizedStudents.length - 1))
+      .map((item) => item.studentId)
+  )
+
+  return pricingSeed.map((item) => ({
+    ...item,
+    pricing: buildCamperPricing({
+      student: item.student,
+      siblingDiscountEligible: siblingEligibleIds.has(String(item.student?.id || `fallback-${item.index}`)),
+      tuition,
+      discountCampaignId: item.discountCampaignId,
+      lunchPrice,
+      weekById,
+    }),
+  }))
 }
 
 export default function AdminPage() {
@@ -2255,6 +2405,7 @@ export default function AdminPage() {
   const [previewingEventRowKey, setPreviewingEventRowKey] = useState('')
   const [updatingRunId, setUpdatingRunId] = useState(0)
   const [processingJourneyEmails, setProcessingJourneyEmails] = useState(false)
+  const [processingCampaignEmails, setProcessingCampaignEmails] = useState(false)
   const [repairingReservationRuns, setRepairingReservationRuns] = useState(false)
   const [assigningRunEmail, setAssigningRunEmail] = useState('')
   const [assigningRunKey, setAssigningRunKey] = useState('')
@@ -2482,6 +2633,25 @@ export default function AdminPage() {
     () => isLimitedDiscountActiveForDate(config.tuition.discountEndDate, new Date().toISOString()),
     [config.tuition.discountEndDate]
   )
+  const limitedDiscountCampaigns = useMemo(
+    () => getLimitedDiscountCampaigns(config.tuition.discountEndDate),
+    [config.tuition.discountEndDate]
+  )
+  const tuitionDiscountReferenceRows = useMemo(() => {
+    return limitedDiscountCampaigns.map((campaign) => {
+      const campaignTuition = getTuitionForDiscountCampaign(config.tuition, campaign.id)
+      const campaignBootcampTuition = resolveBootcampTuition(campaignTuition)
+      return {
+        id: campaign.id,
+        name: campaign.name,
+        endsAt: campaign.endsAt,
+        generalFullWeek: Number(campaignTuition?.discount?.fullWeek || 0),
+        bootcampFullWeek: Number(campaignBootcampTuition?.discount?.fullWeek || 0),
+        overnightWeek: Number(campaignTuition?.discount?.overnightWeek || 0),
+        weeklyDiscountAmount: Number(campaign.fullWeekDiscountAmount || 0),
+      }
+    })
+  }, [config.tuition, limitedDiscountCampaigns])
   const accountingPricingReference = useMemo(() => {
     const regular = config.tuition.regular || {}
     const discount = config.tuition.discount || {}
@@ -2715,6 +2885,130 @@ export default function AdminPage() {
       .map((row) => ({ ...row, criteria: buildLeadCriteria(row, row.isRegistered) }))
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
   }, [chronologicalEmailEvents, emailJourneyRuns, leadProfiles, registrationRecords])
+  const earlyBirdR2TrackerRows = useMemo(() => {
+    const trackerMap = new Map()
+    const registrationNameByEmail = new Map(
+      registrationRecords
+        .map((record) => [
+          normalizeAdminEmail(record?.guardian_email),
+          String(record?.guardian_name || '').trim(),
+        ])
+        .filter(([email, name]) => email && name)
+    )
+    const nowIso = new Date().toISOString()
+
+    const ensureRow = (email) => {
+      const normalized = normalizeAdminEmail(email)
+      if (!normalized) return null
+      if (!trackerMap.has(normalized)) {
+        trackerMap.set(normalized, {
+          parentName: registrationNameByEmail.get(normalized) || '',
+          email: normalized,
+          runId: null,
+          source: '',
+          audienceType: '',
+          createdAt: '',
+          nextSendAt: nowIso,
+          status: '',
+          steps: Object.fromEntries(earlyBirdR2TrackerColumns.map((column) => [column.key, buildTrackerCell()])),
+        })
+      }
+      return trackerMap.get(normalized)
+    }
+
+    for (const lead of leadProfiles) {
+      const row = ensureRow(lead?.email)
+      if (!row) continue
+      row.source = row.source || String(lead?.source || 'lead')
+      row.audienceType = row.audienceType || 'lead'
+      row.createdAt = row.createdAt || String(lead?.created_at || nowIso)
+      row.nextSendAt = row.nextSendAt || row.createdAt || nowIso
+    }
+
+    for (const record of registrationRecords) {
+      const row = ensureRow(record?.guardian_email)
+      if (!row) continue
+      row.parentName = row.parentName || String(record?.guardian_name || '').trim()
+      row.source = row.source || 'registration'
+      row.audienceType = 'registered_family'
+      row.createdAt = row.createdAt || String(record?.created_at || nowIso)
+      row.nextSendAt = row.nextSendAt || row.createdAt || nowIso
+    }
+
+    for (const run of emailJourneyRuns) {
+      const email = normalizeAdminEmail(run?.email)
+      if (!email) continue
+      const statusValue = String(run?.status || '')
+      if (statusValue !== 'campaign_eb2_active' && statusValue !== 'campaign_eb2_closed') {
+        continue
+      }
+      const row = ensureRow(email)
+      if (!row) continue
+      row.runId = Number(run?.id || 0) || row.runId
+      row.status = statusValue
+      row.createdAt = run?.created_at || row.createdAt
+      row.nextSendAt = run?.next_send_at || row.nextSendAt
+    }
+
+    for (const event of chronologicalEmailEvents) {
+      const payload =
+        typeof event?.event_payload === 'object' && event?.event_payload
+          ? event.event_payload
+          : parseMaybeJson(event?.event_payload, {}) || {}
+      const eventType = String(event?.event_type || '')
+      const journeyType = String(payload?.journeyType || '')
+      if (journeyType !== EARLY_BIRD_R2_JOURNEY_TYPE && !eventType.startsWith('early_bird_r2')) {
+        continue
+      }
+
+      const row = ensureRow(event?.email)
+      if (!row) continue
+      row.parentName = String(payload?.parentName || row.parentName || '').trim()
+      row.source = String(payload?.source || row.source || '')
+      row.audienceType = String(payload?.audienceType || row.audienceType || '')
+      row.createdAt = row.createdAt || event?.event_at || ''
+      if (Number(event?.run_id || 0) > 0) {
+        row.runId = Number(event.run_id)
+      }
+
+      const step = earlyBirdR2TrackerColumns.find(
+        (column) =>
+          column.stepNumber === Number(event?.step_number || 0) ||
+          String(payload?.stepKey || '').trim().toLowerCase() === column.key
+      )
+      if (!step) {
+        continue
+      }
+
+      if (eventType === 'early_bird_r2_sent') {
+        row.steps[step.key] = buildTrackerCell('sent', event?.event_at)
+      } else if (eventType === 'early_bird_r2_opened') {
+        row.steps[step.key] = upgradeTrackerCellToOpened(row.steps[step.key], event?.event_at)
+      } else if (eventType === 'early_bird_r2_preview' && row.steps[step.key].status !== 'sent') {
+        row.steps[step.key] = buildTrackerCell('preview', event?.event_at)
+      }
+    }
+
+    for (const row of trackerMap.values()) {
+      const currentStep = emailJourneyRuns.find((item) => Number(item?.id || 0) === Number(row.runId || 0))?.current_step || 0
+      const nextColumn = earlyBirdR2TrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (nextColumn && String(row.status || '') === 'campaign_eb2_active') {
+        row.steps[nextColumn.key] = buildTrackerCell('scheduled', row.nextSendAt || '')
+      } else if (nextColumn && !row.runId) {
+        row.steps[nextColumn.key] = buildTrackerCell('scheduled', row.nextSendAt || row.createdAt || nowIso)
+      }
+      if (String(row.status || '') === 'campaign_eb2_closed' && !nextColumn && currentStep >= earlyBirdR2TrackerColumns.length) {
+        const lastColumn = earlyBirdR2TrackerColumns[earlyBirdR2TrackerColumns.length - 1]
+        if (row.steps[lastColumn.key]?.status === 'pending') {
+          row.steps[lastColumn.key] = buildTrackerCell('closed', row.createdAt || '')
+        }
+      }
+    }
+
+    return Array.from(trackerMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    )
+  }, [chronologicalEmailEvents, emailJourneyRuns, registrationRecords])
   const weekById = useMemo(() => {
     const map = {}
     for (const week of [...weekOptions.general, ...weekOptions.bootcamp, ...weekOptions.overnight]) {
@@ -3301,52 +3595,25 @@ export default function AdminPage() {
       const rawMeta = parseMaybeJson(record.medical_notes, {}) || {}
       const registrationType = String(rawMeta?.registrationType || '').trim()
       const payload = rawMeta?.registration || {}
+      const submittedAt = resolveAccountingSubmittedAt(record, rawMeta, payload)
       const students = Array.isArray(payload.students) && payload.students.length > 0 ? payload.students : []
       const parentName = (payload.parentName || record.guardian_name || '').trim() || 'Parent/Guardian'
       const parentEmail = (payload.contactEmail || record.guardian_email || '').trim()
-      const discountActive = isLimitedDiscountActiveForDate(config.tuition.discountEndDate, record.created_at)
       const accountingEntries = Array.isArray(record.accounting_entries) ? record.accounting_entries : []
       const normalizedStudents = students.length > 0 ? students : [{ fullName: record.guardian_name || 'Camper', schedule: {}, lunch: {} }]
-      const siblingEligibleIds = new Set(
-        normalizedStudents
-          .map((student, index) => ({
-            studentId: String(student?.id || `fallback-${index}`),
-            studentIndex: index,
-            tuitionSubtotal: buildCamperPricing({
-              student,
-              studentIndex: index,
-              siblingDiscountEligible: false,
-              tuition: config.tuition,
-              discountActive,
-              lunchPrice: config.tuition.lunchPrice,
-              weekById,
-            }).tuitionSubtotal,
-          }))
-          .sort((a, b) => {
-            if (a.tuitionSubtotal !== b.tuitionSubtotal) {
-              return a.tuitionSubtotal - b.tuitionSubtotal
-            }
-            return a.studentIndex - b.studentIndex
-          })
-          .slice(0, Math.max(0, normalizedStudents.length - 1))
-          .map((item) => item.studentId)
-      )
+      const pricingList = buildStudentAccountingPricingList({
+        students: normalizedStudents,
+        accountingEntries,
+        createdAt: submittedAt,
+        tuition: config.tuition,
+        lunchPrice: config.tuition.lunchPrice,
+        weekById,
+        discountEndDate: config.tuition.discountEndDate,
+      })
 
-      normalizedStudents.forEach((student, index) => {
-        const camperName = String(student?.fullName || '').trim() || `Camper ${index + 1}`
-        const pricing = buildCamperPricing({
-          student,
-          studentIndex: index,
-          siblingDiscountEligible: siblingEligibleIds.has(String(student?.id || `fallback-${index}`)),
-          tuition: config.tuition,
-          discountActive,
-          lunchPrice: config.tuition.lunchPrice,
-          weekById,
-        })
-        const entry =
-          accountingEntries.find((item) => Number(item?.camper_index) === index) ||
-          accountingEntries.find((item) => String(item?.camper_name || '').trim() === camperName) ||
-          {}
+      pricingList.forEach(({ student, index, camperName, entry, pricing, discountCampaignId, discountCampaignOverride }) => {
+        const discountCampaign = getDiscountCampaignMeta(discountCampaignId, config.tuition.discountEndDate)
+        const discountActive = Boolean(discountCampaignId)
         const manualDiscount = Math.max(0, Number(entry.manual_discount || 0))
         const paymentState = deriveAccountingPaymentState({
           entry,
@@ -3368,6 +3635,9 @@ export default function AdminPage() {
           weekNumberById,
         })
         const totalBreakdownLines = [
+          discountCampaign
+            ? `Early bird applied: ${discountCampaign.name} (-$${Number(discountCampaign.fullWeekDiscountAmount || 0).toFixed(0)} full-week)`
+            : 'Early bird applied: none',
           `General Camp: ${money(pricing.general)}`,
           `General counts: ${formatWeekCountSummary(pricing.countsByProgram.general, 'general')}`,
           `Boot Camp: ${money(pricing.bootcamp)}`,
@@ -3417,7 +3687,8 @@ export default function AdminPage() {
           registrationId: record.id,
           camperIndex: index,
           registrationType,
-          createdAt: record.created_at,
+          createdAt: submittedAt,
+          createdAtRaw: record.created_at,
           location: String(payload.location || '').trim(),
           parentName,
           parentEmail,
@@ -3432,7 +3703,7 @@ export default function AdminPage() {
           selectedWeekIds,
           scheduleByWeek: pricing.scheduleByWeek,
           weekProgramDetails: pricing.weekDetails,
-          weeksCount: selectedWeekIds.length,
+          weeksCount: pricing.weekDetails.length,
           weekLabels: selectedWeekIds.map((weekId) => toWeekLabel(weekId, weekById)),
           weekChipDetails,
           weekOverlayLines,
@@ -3440,6 +3711,9 @@ export default function AdminPage() {
           lunchDaysCount: pricing.paidLunchCount,
           lunchCost: pricing.lunchCost,
           regularPriceTotal: pricing.regularTotal,
+          tuitionBeforeSiblingDiscount: roundMoney(
+            Number(pricing.general || 0) + Number(pricing.bootcamp || 0) + Number(pricing.overnight || 0)
+          ),
           tuitionBeforeManualDiscount: paymentState.tuitionBase,
           tuitionAfterManualDiscount: paymentState.tuitionAfterManualDiscount,
           weekTierPromoAmount: pricing.weekTierPromoAmount,
@@ -3450,6 +3724,9 @@ export default function AdminPage() {
           tuitionTotal: pricing.total,
           siblingDiscountPct: pricing.siblingDiscountPct,
           siblingDiscountAmount: pricing.siblingDiscount,
+          discountCampaignId,
+          discountCampaignLabel: discountCampaign?.name || 'No early bird discount',
+          discountCampaignOverride,
           totalBreakdownLines,
           invoiceCalendarLines,
           manualDiscount,
@@ -3700,6 +3977,37 @@ export default function AdminPage() {
     }
     return counts
   }, [leadJourneyTrackerRows])
+  const earlyBirdR2DueCounts = useMemo(() => {
+    const counts = Object.fromEntries(earlyBirdR2TrackerColumns.map((column) => [column.key, 0]))
+    const now = Date.now()
+    for (const row of earlyBirdR2TrackerRows) {
+      if (!row.createdAt || String(row.status || '').startsWith('test_')) continue
+      const nextColumn = earlyBirdR2TrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = String(row?.nextSendAt || '').trim()
+      const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+      if (!Number.isNaN(dueTime) && dueTime <= now) {
+        counts[nextColumn.key] += 1
+      }
+    }
+    return counts
+  }, [earlyBirdR2TrackerRows])
+  const earlyBirdR2UpcomingCounts = useMemo(() => {
+    const counts = Object.fromEntries(earlyBirdR2TrackerColumns.map((column) => [column.key, 0]))
+    const now = Date.now()
+    const upcomingBoundary = now + 24 * 60 * 60 * 1000
+    for (const row of earlyBirdR2TrackerRows) {
+      if (!row.createdAt || String(row.status || '').startsWith('test_')) continue
+      const nextColumn = earlyBirdR2TrackerColumns.find((column) => !isTrackerStepHandled(row.steps[column.key]?.status))
+      if (!nextColumn) continue
+      const dueAt = String(row?.nextSendAt || '').trim()
+      const dueTime = dueAt ? new Date(dueAt).getTime() : NaN
+      if (!Number.isNaN(dueTime) && dueTime > now && dueTime <= upcomingBoundary) {
+        counts[nextColumn.key] += 1
+      }
+    }
+    return counts
+  }, [earlyBirdR2TrackerRows])
   const reservationDueKeyByRegistrationId = useMemo(() => {
     const map = {}
     const unpaidHourOffsets = [0, 12, 36, 66, 72]
@@ -3786,17 +4094,20 @@ export default function AdminPage() {
     return counts
   }, [reservationUpcomingKeyByRegistrationId])
   const trackingDueSummary = useMemo(() => {
+    const campaign = Object.values(earlyBirdR2DueCounts).reduce((sum, value) => sum + Number(value || 0), 0)
     const lead = Object.values(leadDueCounts).reduce((sum, value) => sum + Number(value || 0), 0)
     const reservation = Object.values(reservationDueCounts).reduce((sum, value) => sum + Number(value || 0), 0)
+    const campaignUpcoming = Object.values(earlyBirdR2UpcomingCounts).reduce((sum, value) => sum + Number(value || 0), 0)
     const leadUpcoming = Object.values(leadUpcomingCounts).reduce((sum, value) => sum + Number(value || 0), 0)
     const reservationUpcoming = Object.values(reservationUpcomingCounts).reduce((sum, value) => sum + Number(value || 0), 0)
     return {
+      campaign,
       lead,
       reservation,
-      upcoming: leadUpcoming + reservationUpcoming,
-      total: lead + reservation,
+      upcoming: campaignUpcoming + leadUpcoming + reservationUpcoming,
+      total: campaign + lead + reservation,
     }
-  }, [leadDueCounts, leadUpcomingCounts, reservationDueCounts, reservationUpcomingCounts])
+  }, [earlyBirdR2DueCounts, earlyBirdR2UpcomingCounts, leadDueCounts, leadUpcomingCounts, reservationDueCounts, reservationUpcomingCounts])
   const standardReservationDueCount = useMemo(
     () =>
       standardReservationJourneyTrackerRows.reduce(
@@ -3925,10 +4236,14 @@ export default function AdminPage() {
         methodTotals[row.paymentMethod] += Number(row.paidAmount || 0)
       }
     }
+    const roundTwoRows = source.filter((row) => row.discountCampaignId === LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_TWO)
     return {
       totalTuition: source.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
       totalPaid: source.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
       totalOwed: source.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
+      roundTwoRevenue: roundTwoRows.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
+      roundTwoOwed: roundTwoRows.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
+      roundTwoTuition: roundTwoRows.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
       methodTotals,
       activeRows: source.length,
       archivedRows: archivedAccountingRows.length,
@@ -4184,6 +4499,9 @@ export default function AdminPage() {
       selected_weeks: 'Jul 7-11\nJul 14-18',
       amount_due: '$1,680.00',
       app_launch_date: 'June 20',
+      round_two_offer: getRoundTwoOfferCopy(),
+      train_more_save_more: getRoundTwoTrainMoreSaveMoreCopy(),
+      wushu_why_start: getRoundTwoWushuBenefitsCopy(),
     }
   }
 
@@ -4288,6 +4606,7 @@ export default function AdminPage() {
       tokens: buildLeadPreviewTokens(),
       logoUrl: config.media?.welcomeLogoUrl || '',
       landingCarouselImageUrls: config.media?.landingCarouselImageUrls || [],
+      heroImageUrl: template?.imageUrl || '',
       stepNumber: stepIndex + 1,
     }).html
   }
@@ -4450,7 +4769,7 @@ export default function AdminPage() {
     }
 
     try {
-      const [leadResponse, reservationResponse] = await Promise.all([
+      const [leadResponse, reservationResponse, campaignResponse] = await Promise.all([
         fetch('/api/email/lead-journey', {
           method: 'POST',
           headers: {
@@ -4467,15 +4786,25 @@ export default function AdminPage() {
           },
           body: JSON.stringify({ action: 'process' }),
         }),
+        fetch('/api/email/early-bird-r2', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ action: 'process' }),
+        }),
       ])
 
       const leadResult = await leadResponse.json().catch(() => ({}))
       const reservationResult = await reservationResponse.json().catch(() => ({}))
+      const campaignResult = await campaignResponse.json().catch(() => ({}))
 
-      if (!leadResponse.ok || !reservationResponse.ok) {
+      if (!leadResponse.ok || !reservationResponse.ok || !campaignResponse.ok) {
         setErrorMessage(
           leadResult?.error ||
             reservationResult?.error ||
+            campaignResult?.error ||
             'Manual journey processing failed.'
         )
         setProcessingJourneyEmails(false)
@@ -4502,6 +4831,12 @@ export default function AdminPage() {
           checked: reservationResult?.processed || 0,
           stepCounts: reservationResult?.stepCounts || {},
         },
+        campaign: {
+          sent: campaignResult?.emailed || 0,
+          queued: campaignResult?.queued || 0,
+          checked: campaignResult?.processed || 0,
+          stepCounts: campaignResult?.stepCounts || {},
+        },
       })
       setSavedMessage('Processed due emails.')
       refreshEmailTracking()
@@ -4510,6 +4845,57 @@ export default function AdminPage() {
     }
 
     setProcessingJourneyEmails(false)
+  }
+
+  async function processDueCampaignEmails() {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for campaign processing.')
+      return
+    }
+
+    setProcessingCampaignEmails(true)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    const accessToken = session?.access_token || ''
+    if (sessionError || !accessToken) {
+      setErrorMessage('Admin session not found. Log in again and retry.')
+      setProcessingCampaignEmails(false)
+      return
+    }
+
+    try {
+      const response = await fetch('/api/email/early-bird-r2', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ action: 'process' }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result?.error || 'Campaign processing failed.')
+      }
+
+      const queued = Number(result?.queued || 0)
+      const emailed = Number(result?.emailed || 0)
+      const processed = Number(result?.processed || 0)
+      setSavedMessage(
+        `Round 2 campaign processed. ${emailed} email${emailed === 1 ? '' : 's'} sent. ${queued} new run${queued === 1 ? '' : 's'} queued. ${processed} active run${processed === 1 ? '' : 's'} checked.`
+      )
+      refreshEmailTracking()
+    } catch (error) {
+      setErrorMessage(error?.message || 'Campaign processing failed.')
+    }
+
+    setProcessingCampaignEmails(false)
   }
 
   async function repairMissingReservationRunsFromAdmin() {
@@ -4777,7 +5163,12 @@ export default function AdminPage() {
     setErrorMessage('')
 
     try {
-      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const url =
+        flow === 'lead'
+          ? '/api/email/lead-journey'
+          : flow === 'campaign'
+            ? '/api/email/early-bird-r2'
+            : '/api/email/reservation-journey'
       const body =
         flow === 'lead'
           ? {
@@ -4786,6 +5177,13 @@ export default function AdminPage() {
               runId: row?.runId || null,
               stepNumber: column?.stepNumber,
             }
+          : flow === 'campaign'
+            ? {
+                action: 'manual_send',
+                email: row?.email,
+                runId: row?.runId || null,
+                stepNumber: column?.stepNumber,
+              }
           : {
               action: 'manual_send',
               runId: row?.runId,
@@ -4841,7 +5239,12 @@ export default function AdminPage() {
     setErrorMessage('')
 
     try {
-      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const url =
+        flow === 'lead'
+          ? '/api/email/lead-journey'
+          : flow === 'campaign'
+            ? '/api/email/early-bird-r2'
+            : '/api/email/reservation-journey'
       const body =
         flow === 'lead'
           ? {
@@ -4850,11 +5253,21 @@ export default function AdminPage() {
               runId: row?.runId || null,
               stepNumber: column?.stepNumber,
             }
+          : flow === 'campaign'
+            ? {
+                action: 'preview_step',
+                email: row?.email,
+                runId: row?.runId || null,
+                stepNumber: column?.stepNumber,
+              }
           : {
               action: 'preview_step',
               runId: row?.runId,
               stepKey: column?.key,
               stepNumber: column?.stepNumber,
+              preferSentSnapshot:
+                row?.steps?.[column?.key || '']?.status === 'sent' ||
+                row?.steps?.[column?.key || '']?.status === 'opened',
             }
 
       const response = await fetch(url, {
@@ -4936,6 +5349,7 @@ export default function AdminPage() {
       eventType.startsWith('lead_journey_') ||
       eventType === 'test_sent_lead' ||
       eventType === 'test_preview_only_lead'
+    const isCampaignEvent = eventType.startsWith('early_bird_r2')
     const isReservationEvent =
       eventType === 'reservation_email_sent' ||
       eventType === 'reservation_email_preview' ||
@@ -4944,7 +5358,7 @@ export default function AdminPage() {
       eventType.startsWith('paid_prep_') ||
       eventType.startsWith('paid_followup_')
 
-    if (!isLeadEvent && !isReservationEvent) {
+    if (!isLeadEvent && !isCampaignEvent && !isReservationEvent) {
       setErrorMessage('This event row does not have a viewable email preview.')
       return
     }
@@ -4964,8 +5378,13 @@ export default function AdminPage() {
     setErrorMessage('')
 
     try {
-      const flow = isLeadEvent ? 'lead' : 'reservation'
-      const url = flow === 'lead' ? '/api/email/lead-journey' : '/api/email/reservation-journey'
+      const flow = isLeadEvent ? 'lead' : isCampaignEvent ? 'campaign' : 'reservation'
+      const url =
+        flow === 'lead'
+          ? '/api/email/lead-journey'
+          : flow === 'campaign'
+            ? '/api/email/early-bird-r2'
+            : '/api/email/reservation-journey'
       const reservationStepKey = buildReservationStepKey()
       const body =
         flow === 'lead'
@@ -4975,11 +5394,25 @@ export default function AdminPage() {
               runId: runId || null,
               stepNumber: Math.max(1, stepNumber || 1),
             }
+          : flow === 'campaign'
+            ? {
+                action: 'preview_step',
+                email: eventRow?.email,
+                runId: runId || null,
+                stepNumber: Math.max(1, stepNumber || 1),
+              }
           : {
               action: 'preview_step',
               runId,
               stepKey: reservationStepKey || undefined,
               stepNumber: reservationStepKey ? undefined : Math.max(1, stepNumber || 1),
+              eventId: Number(eventRow?.id || 0) || undefined,
+              preferSentSnapshot:
+                eventType === 'reservation_email_sent' ||
+                eventType === 'reservation_email_opened' ||
+                eventType === 'reservation_email_preview' ||
+                eventType === 'test_sent_reservation' ||
+                eventType === 'test_preview_only_reservation',
             }
 
       const response = await fetch(url, {
@@ -5056,8 +5489,27 @@ export default function AdminPage() {
       .filter(Boolean)
   }
 
+  function buildCampaignCalendarEntries(row) {
+    return EARLY_BIRD_R2_STEPS.map((step) => {
+      const scheduledAt = addDaysToIso(row?.createdAt, Number(step.dayOffset || 0))
+      if (!scheduledAt) {
+        return null
+      }
+      return {
+        label: step.code,
+        scheduledAt,
+        status: row?.steps?.[step.key]?.status || 'pending',
+      }
+    }).filter(Boolean)
+  }
+
   function openJourneyCalendar({ flow, row }) {
-    const entries = flow === 'lead' ? buildLeadCalendarEntries(row) : buildReservationCalendarEntries(row)
+    const entries =
+      flow === 'lead'
+        ? buildLeadCalendarEntries(row)
+        : flow === 'campaign'
+          ? buildCampaignCalendarEntries(row)
+          : buildReservationCalendarEntries(row)
     setJourneyCalendarState({
       open: true,
       title: `${row?.email || 'Journey'} Calendar`,
@@ -5153,6 +5605,9 @@ export default function AdminPage() {
       tuition_paid_amount: Math.max(0, Number(updates.tuition_paid_amount ?? base.tuition_paid_amount ?? 0)),
       lunch_paid_amount: Math.max(0, Number(updates.lunch_paid_amount ?? base.lunch_paid_amount ?? 0)),
       manual_discount: Math.max(0, Number(updates.manual_discount ?? base.manual_discount ?? 0)),
+      discount_campaign_override: normalizeDiscountCampaignOverride(
+        updates.discount_campaign_override ?? base.discount_campaign_override ?? ''
+      ),
       payment_method: String(updates.payment_method ?? base.payment_method ?? '').trim().toLowerCase(),
       archived: Boolean(updates.archived ?? base.archived ?? false),
     }
@@ -5192,10 +5647,24 @@ export default function AdminPage() {
       return false
     }
 
+    const sourceMeta = parseMaybeJson(sourceRecord.medical_notes, {}) || {}
+    const sourceRegistration = sourceMeta?.registration || {}
+    const submittedAt = resolveAccountingSubmittedAt(sourceRecord, sourceMeta, sourceRegistration)
+    const sourceStudents = Array.isArray(sourceRegistration.students) ? sourceRegistration.students : []
+    const pricingList = buildStudentAccountingPricingList({
+      students: sourceStudents,
+      accountingEntries: merged,
+      createdAt: submittedAt,
+      tuition: config.tuition,
+      lunchPrice: config.tuition.lunchPrice,
+      weekById,
+      discountEndDate: config.tuition.discountEndDate,
+    })
+    const updatedPricing = pricingList.find((item) => Number(item.index) === Number(row.camperIndex))
     const normalizedPaymentState = deriveAccountingPaymentState({
       entry: next,
-      tuitionTotal: Number(row.tuitionBeforeManualDiscount || 0) + Number(row.lunchCost || 0),
-      lunchTotal: Number(row.lunchCost || 0),
+      tuitionTotal: Number(updatedPricing?.pricing?.total || row.totalAfterManualDiscount || 0),
+      lunchTotal: Number(updatedPricing?.pricing?.lunchCost || row.lunchCost || 0),
       manualDiscount: Number(next.manual_discount || 0),
     })
     const shouldMarkPaid = normalizedPaymentState.shouldStopRegistrationEmails && next.archived === false
@@ -5215,6 +5684,10 @@ export default function AdminPage() {
     setAccountingDrafts((current) => ({
       ...current,
       [row.key]: {
+        discountCampaignOverride:
+          updates.discountCampaignOverride ??
+          current[row.key]?.discountCampaignOverride ??
+          String(row.discountCampaignOverride || ''),
         manualDiscount:
           updates.manualDiscount ?? current[row.key]?.manualDiscount ?? Number(row.manualDiscount || 0),
         paidAmount:
@@ -5236,6 +5709,7 @@ export default function AdminPage() {
       return
     }
     const hasChanges =
+      String(draft.discountCampaignOverride || '') !== String(row.discountCampaignOverride || '') ||
       Number(draft.manualDiscount || 0) !== Number(row.manualDiscount || 0) ||
       Number(draft.paidAmount || 0) !== Number(row.paidAmount || 0) ||
       Number(draft.tuitionPaidAmount || 0) !== Number(row.tuitionPaidAmount || 0) ||
@@ -5254,12 +5728,14 @@ export default function AdminPage() {
       row,
       row.registrationType === 'overnight-only'
         ? {
+            discount_campaign_override: String(draft.discountCampaignOverride || ''),
             manual_discount: Number(draft.manualDiscount || 0),
             paid_amount: Number(draft.paidAmount || 0),
             payment_method: String(draft.paymentMethod || ''),
             archived: Boolean(draft.archived),
           }
         : {
+            discount_campaign_override: String(draft.discountCampaignOverride || ''),
             manual_discount: Number(draft.manualDiscount || 0),
             tuition_paid_amount: Number(draft.tuitionPaidAmount || 0),
             lunch_paid_amount: Number(draft.lunchPaidAmount || 0),
@@ -5356,6 +5832,7 @@ export default function AdminPage() {
     const sourceRecord = registrationRecords.find((item) => Number(item.id) === Number(row.registrationId))
     const rawMeta = sourceRecord ? parseMaybeJson(sourceRecord.medical_notes, {}) || {} : {}
     const payload = rawMeta?.registration || {}
+    const submittedAt = resolveAccountingSubmittedAt(sourceRecord, rawMeta, payload)
     if (!payload || !Array.isArray(payload.students) || payload.students.length === 0) {
       throw new Error('Registration summary payload not found for this row.')
     }
@@ -5369,6 +5846,7 @@ export default function AdminPage() {
     const accountingSummary = {
       title: `Current Accounting Snapshot for ${row.camperName || 'Camper'}`,
       rows: [
+        { label: 'Early bird campaign', value: row.discountCampaignLabel || 'No early bird discount' },
         { label: 'Tuition after discounts', value: money(row.tuitionAfterManualDiscount) },
         { label: 'Lunch total', value: money(row.lunchCost) },
         { label: 'Registration total', value: money(row.totalAfterManualDiscount) },
@@ -5391,8 +5869,10 @@ export default function AdminPage() {
       }),
       applyLimitedDiscount: isLimitedDiscountActiveForDate(
         config.tuition.discountEndDate,
-        sourceRecord?.created_at
+        submittedAt,
+        row.discountCampaignOverride
       ),
+      discountCampaignId: row.discountCampaignId,
       businessName: config.tuition.businessName || 'New England Wushu',
       businessAddress: config.tuition.businessAddress || '',
       accountingSummary,
@@ -8621,12 +9101,13 @@ export default function AdminPage() {
         <h2>Tuition table</h2>
         <div className="adminGrid">
           <label>
-            Discount end date
+            Round 2 end date
             <input
               type="date"
               value={config.tuition.discountEndDate}
               onChange={(event) => updateTuitionField('discountEndDate', event.target.value)}
             />
+            <small>Round 1 ended on May 20, 2026. This field controls Round 2.</small>
           </label>
           <label>
             Boot Camp pricing
@@ -8675,6 +9156,34 @@ export default function AdminPage() {
               placeholder="Street address, city, state, zip"
             />
           </label>
+        </div>
+        <div className="tuitionTableWrap">
+          <h3>Early Bird Discount Windows</h3>
+          <p className="subhead">Reference only. These prices are calculated from the tuition fields above and used by accounting based on the registration date.</p>
+          <table className="tuitionTable">
+            <thead>
+              <tr>
+                <th>Campaign</th>
+                <th>Ends</th>
+                <th>Weekly Discount</th>
+                <th>General Full Week</th>
+                <th>Boot Camp Full Week</th>
+                <th>Overnight Week 1</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tuitionDiscountReferenceRows.map((campaign) => (
+                <tr key={`discount-window-${campaign.id}`}>
+                  <td>{campaign.name}</td>
+                  <td>{campaign.endsAt || '-'}</td>
+                  <td>{money(campaign.weeklyDiscountAmount)}</td>
+                  <td>{money(campaign.generalFullWeek)}</td>
+                  <td>{money(campaign.bootcampFullWeek)}</td>
+                  <td>{money(campaign.overnightWeek)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         <div className="tuitionTableWrap">
           <table className="tuitionTable">
@@ -9094,6 +9603,19 @@ export default function AdminPage() {
                 />
               </label>
               <label className="full">
+                Email image URL (optional)
+                <input
+                  value={activeLeadJourneyTemplate?.imageUrl || ''}
+                  onChange={(event) => updateLeadJourneyTemplateField(activeJourneyTab, 'imageUrl', event.target.value)}
+                  placeholder="https://..."
+                />
+                {renderBucketImagePicker(
+                  `${activeJourneyStepLabel} email image`,
+                  activeLeadJourneyTemplate?.imageUrl || '',
+                  (value) => updateLeadJourneyTemplateField(activeJourneyTab, 'imageUrl', value)
+                )}
+              </label>
+              <label className="full">
                 YouTube URL (optional)
                 <input
                   value={activeLeadJourneyTemplate?.videoUrl || ''}
@@ -9342,14 +9864,17 @@ export default function AdminPage() {
           <article className="accountingStatCard">
             <span>Total Tuition</span>
             <strong>{money(accountingTotals.totalTuition)}</strong>
+            <small>Round 2 tuition total: {money(accountingTotals.roundTwoTuition)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Total Paid</span>
             <strong>{money(accountingTotals.totalPaid)}</strong>
+            <small>Round 2 revenue: {money(accountingTotals.roundTwoRevenue)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Total Owed</span>
             <strong>{money(accountingTotals.totalOwed)}</strong>
+            <small>Round 2 owed: {money(accountingTotals.roundTwoOwed)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Active Rows</span>
@@ -9422,6 +9947,7 @@ export default function AdminPage() {
                   <th>Lunch Days</th>
                   <th>Tuition</th>
                   <th>Lunch</th>
+                  <th>Discount</th>
                   <th>Manual Discount</th>
                   <th>Paid Tuition</th>
                   <th>Paid Lunch</th>
@@ -9433,7 +9959,7 @@ export default function AdminPage() {
               <tbody>
                 {activeAccountingRows.length === 0 ? (
                   <tr>
-                    <td colSpan="12" className="accountingEmptyCell">
+                    <td colSpan="13" className="accountingEmptyCell">
                       No submitted camper rows yet.
                     </td>
                   </tr>
@@ -9441,12 +9967,14 @@ export default function AdminPage() {
                   activeAccountingRows.map((row) => {
                     const key = `${row.registrationId}-${row.camperIndex}`
                     const draft = accountingDrafts[row.key]
+                    const discountCampaignOverrideValue = draft?.discountCampaignOverride ?? row.discountCampaignOverride
                     const manualDiscountValue = draft?.manualDiscount ?? row.manualDiscount
                     const tuitionPaidValue = draft?.tuitionPaidAmount ?? String(row.tuitionPaidAmount ?? 0)
                     const lunchPaidValue = draft?.lunchPaidAmount ?? String(row.lunchPaidAmount ?? 0)
                     const paymentMethodValue = draft?.paymentMethod ?? row.paymentMethod
                     const archivedValue = draft?.archived ?? row.archived
                     const hasPendingAccountingChanges =
+                      String(discountCampaignOverrideValue || '') !== String(row.discountCampaignOverride || '') ||
                       Number(manualDiscountValue || 0) !== Number(row.manualDiscount || 0) ||
                       Number(tuitionPaidValue || 0) !== Number(row.tuitionPaidAmount || 0) ||
                       Number(lunchPaidValue || 0) !== Number(row.lunchPaidAmount || 0) ||
@@ -9490,6 +10018,7 @@ export default function AdminPage() {
                             `${key}-tuition-breakdown`,
                             money(row.tuitionAfterManualDiscount),
                             [
+                              `Base tuition before sibling discount: ${money(row.tuitionBeforeSiblingDiscount)}`,
                               `Tuition before manual discount: ${money(row.tuitionBeforeManualDiscount)}`,
                               ...(row.weekTierPromoLines || []).map((item) => `${item.label}: -${money(item.amount)}`),
                               row.siblingDiscountAmount > 0
@@ -9503,6 +10032,22 @@ export default function AdminPage() {
                           )}
                         </td>
                         <td>{money(row.lunchCost)}</td>
+                        <td>
+                          <select
+                            value={discountCampaignOverrideValue}
+                            onChange={(event) =>
+                              updateAccountingDraft(row, { discountCampaignOverride: event.target.value })
+                            }
+                            disabled={updatingAccountingKey === key}
+                          >
+                            {accountingDiscountOverrideOptions.map((option) => (
+                              <option key={`discount-override-${key}-${option.value || 'auto'}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <div><small>{row.discountCampaignLabel}</small></div>
+                        </td>
                         <td>
                           <input
                             type="number"
@@ -9675,6 +10220,7 @@ export default function AdminPage() {
                   <th>Lunch Days</th>
                   <th>Tuition</th>
                   <th>Lunch</th>
+                  <th>Discount</th>
                   <th>Manual Discount</th>
                   <th>Paid Tuition</th>
                   <th>Paid Lunch</th>
@@ -9686,7 +10232,7 @@ export default function AdminPage() {
               <tbody>
                 {archivedAccountingRows.length === 0 ? (
                   <tr>
-                    <td colSpan="12" className="accountingEmptyCell">
+                    <td colSpan="13" className="accountingEmptyCell">
                       No archived camper rows yet.
                     </td>
                   </tr>
@@ -9736,6 +10282,7 @@ export default function AdminPage() {
                             `${key}-archived-tuition-breakdown`,
                             money(row.tuitionAfterManualDiscount),
                             [
+                              `Base tuition before sibling discount: ${money(row.tuitionBeforeSiblingDiscount)}`,
                               `Tuition before manual discount: ${money(row.tuitionBeforeManualDiscount)}`,
                               ...(row.weekTierPromoLines || []).map((item) => `${item.label}: -${money(item.amount)}`),
                               row.siblingDiscountAmount > 0
@@ -9749,6 +10296,7 @@ export default function AdminPage() {
                           )}
                         </td>
                         <td>{money(row.lunchCost)}</td>
+                        <td>{row.discountCampaignLabel}</td>
                         <td>
                           {money(row.manualDiscount)}
                         </td>
@@ -10612,7 +11160,7 @@ export default function AdminPage() {
           Paid-family follow-up emails now anchor from the paid date, while pre-camp emails still anchor from each enrolled camp week.
         </p>
         <p className="subhead">
-          Use <strong>Send Due Journey Emails Now</strong> to manually send any due lead-nurture or reservation emails. The processor checks threshold timing and only sends steps that are due and not already sent.
+          Use <strong>Send Due Journey Emails Now</strong> to manually send any due lead-nurture, Round 2 campaign, or reservation emails. The processor checks threshold timing and only sends steps that are due and not already sent.
         </p>
         <div className="adminActions">
           <button
@@ -10643,6 +11191,9 @@ export default function AdminPage() {
             Due emails: <strong className="trackerDueCountBadge">{trackingDueSummary.total}</strong>
           </span>
           <span>
+            Campaigns: <strong className="trackerDueCountBadge">{trackingDueSummary.campaign}</strong>
+          </span>
+          <span>
             Leads: <strong className="trackerDueCountBadge">{trackingDueSummary.lead}</strong>
           </span>
           <span>
@@ -10667,6 +11218,13 @@ export default function AdminPage() {
           <span>Unread replies: {emailReplies.filter((item) => item.is_unread).length}</span>
         </div>
         <div className="adminSubTabs trackingSubTabs" role="tablist" aria-label="Tracking sections">
+          <button
+            type="button"
+            className={`adminSubTabBtn ${activeTrackingSubtab === 'campaign' ? 'active' : ''}`}
+            onClick={() => setActiveTrackingSubtab('campaign')}
+          >
+            Campaign ({trackingDueSummary.campaign} due)
+          </button>
           <button
             type="button"
             className={`adminSubTabBtn ${activeTrackingSubtab === 'lead' ? 'active' : ''}`}
@@ -10711,6 +11269,110 @@ export default function AdminPage() {
         </div>
 
         <div className="trackingStack">
+          {activeTrackingSubtab === 'campaign' ? (
+          <article className="previewCard trackerCard">
+            <h3>Round 2 Campaign Tracker</h3>
+            <p className="subhead">Broadcast journey for the Round 2 early-bird promotion across all saved lead and registration emails.</p>
+            <p className="subhead">Use the manual button below to send all due Round 2 campaign steps now. It creates missing campaign runs, then sends the next due campaign email for each eligible contact on the rolling 4-day schedule, followed by the 7-day, 3-day, 24-hour, and final-day reminders before the deadline.</p>
+            <div className="adminActions">
+              <button
+                type="button"
+                className="button"
+                onClick={processDueCampaignEmails}
+                disabled={processingCampaignEmails}
+              >
+                {processingCampaignEmails ? 'Sending due Round 2 emails...' : 'Send Due Round 2 Emails Now'}
+              </button>
+              <span>
+                Due campaign emails: <strong className="trackerDueCountBadge">{trackingDueSummary.campaign}</strong>
+              </span>
+            </div>
+            {earlyBirdR2TrackerRows.length === 0 ? (
+              <p className="subhead">No Round 2 campaign runs yet. Click <strong>Send Due Round 2 Emails Now</strong> to create the campaign audience and send the currently due step.</p>
+            ) : (
+              <div className="tuitionTableWrap trackerTableWrap">
+                <table className="tuitionTable trackerTable trackerTableCompact">
+                  <thead>
+                    <tr>
+                      <th className="trackerMetaCol trackerActionCol">Action</th>
+                      <th className="trackerMetaCol">Name</th>
+                      <th className="trackerMetaCol trackerEmailCol">Email</th>
+                      <th className="trackerMetaCol">Audience</th>
+                      <th className="trackerMetaCol">Source</th>
+                      <th className="trackerMetaCol trackerRunCol">Run</th>
+                      {earlyBirdR2TrackerColumns.map((column) => (
+                        <th key={column.key} title={column.description} className="trackerStepHeader">
+                          <span>
+                            {column.label}
+                            {earlyBirdR2DueCounts[column.key] > 0 ? (
+                              <em className="trackerDueCountBadge">{earlyBirdR2DueCounts[column.key]}</em>
+                            ) : null}
+                            {earlyBirdR2UpcomingCounts[column.key] > 0 ? (
+                              <em className="trackerUpcomingCountBadge">{earlyBirdR2UpcomingCounts[column.key]}</em>
+                            ) : null}
+                          </span>
+                          <small>{column.timingLabel}</small>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {earlyBirdR2TrackerRows.map((row) => (
+                      <tr key={`campaign-track-${row.email}`}>
+                        <td className="trackerActionCol">
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => openJourneyCalendar({ flow: 'campaign', row })}
+                          >
+                            View Calendar
+                          </button>
+                        </td>
+                        <td>{row.parentName || '-'}</td>
+                        <td className="trackerEmailCol">{row.email}</td>
+                        <td>{row.audienceType === 'registered_family' ? 'Registered family' : 'Lead'}</td>
+                        <td>{row.source || '-'}</td>
+                        <td className="trackerRunCol">{row.runId ? `#${row.runId}` : '-'}</td>
+                        {earlyBirdR2TrackerColumns.map((column) => (
+                          <td key={`${row.email}-${column.key}`} className="trackerStepCell">
+                            <div className="trackerCellActions">
+                              <span
+                                className={`trackerBadge ${row.steps[column.key]?.status || 'pending'}`}
+                                title={row.steps[column.key]?.at ? new Date(row.steps[column.key].at).toLocaleString() : ''}
+                              >
+                                {getTrackerCellLabel(row.steps[column.key])}
+                              </span>
+                              {row.steps[column.key]?.at ? (
+                                <small className="trackerCellTimestamp">{formatTrackerCellTimestamp(row.steps[column.key].at)}</small>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="trackerCellSendBtn"
+                                onClick={() => previewJourneyCell({ flow: 'campaign', row, column })}
+                                disabled={previewingJourneyCellKey === `campaign-${row.runId || row.email}-${column.key}`}
+                              >
+                                {previewingJourneyCellKey === `campaign-${row.runId || row.email}-${column.key}` ? 'Loading...' : 'View Email'}
+                              </button>
+                              <button
+                                type="button"
+                                className="trackerCellSendBtn"
+                                onClick={() => manuallySendJourneyCell({ flow: 'campaign', row, column })}
+                                disabled={sendingJourneyCellKey === `campaign-${row.runId || row.email}-${column.key}`}
+                              >
+                                {sendingJourneyCellKey === `campaign-${row.runId || row.email}-${column.key}` ? 'Sending...' : 'Send'}
+                              </button>
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+          ) : null}
+
           {activeTrackingSubtab === 'lead' ? (
           <article className="previewCard trackerCard">
             <h3>Lead Journey Tracker</h3>
@@ -11322,6 +11984,7 @@ export default function AdminPage() {
               Flow
               <select value={eventFlowFilter} onChange={(event) => setEventFlowFilter(event.target.value)}>
                 <option value="all">All flows</option>
+                <option value="campaign">Campaign</option>
                 <option value="lead">Lead</option>
                 <option value="registration">Registration</option>
                 <option value="overnight">Overnight</option>
@@ -11331,6 +11994,7 @@ export default function AdminPage() {
               Journey
               <select value={eventJourneyFilter} onChange={(event) => setEventJourneyFilter(event.target.value)}>
                 <option value="all">All journeys</option>
+                <option value="eb2">EB2 journey</option>
                 <option value="p">P journey</option>
                 <option value="a">A journey</option>
                 <option value="other">Other</option>
@@ -11360,6 +12024,7 @@ export default function AdminPage() {
                       <td>
                         {(
                           String(row?.event_type || '').startsWith('lead_journey_') ||
+                          String(row?.event_type || '').startsWith('early_bird_r2') ||
                           String(row?.event_type || '') === 'test_sent_lead' ||
                           String(row?.event_type || '') === 'test_preview_only_lead' ||
                           String(row?.event_type || '') === 'reservation_email_sent' ||
@@ -11543,6 +12208,14 @@ export default function AdminPage() {
                 <span className="adminProcessChip accent">REV {journeyProcessSummary.lead.revived}</span>
                 <span className="adminProcessChip accent">NEW {journeyProcessSummary.lead.newRuns}</span>
                 <span className="adminProcessChip accent">BOOT {journeyProcessSummary.lead.bootstrapped}</span>
+              </div>
+              <div className="adminProcessGroup">
+                <span className="adminProcessLabel">Campaign</span>
+                {buildJourneyProcessStepChips(journeyProcessSummary.campaign.stepCounts, 'campaign').map((chip) => (
+                  <span key={`campaign-${chip.key}`} className="adminProcessChip success">{chip.label} {chip.count}</span>
+                ))}
+                <span className="adminProcessChip">Q {journeyProcessSummary.campaign.queued}</span>
+                <span className="adminProcessChip">CHK {journeyProcessSummary.campaign.checked}</span>
               </div>
               <div className="adminProcessGroup">
                 <span className="adminProcessLabel">Reservation</span>

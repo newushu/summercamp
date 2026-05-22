@@ -606,7 +606,7 @@ function buildLevelUpHtml(payload) {
       <p style="margin:0 0 10px;color:#7c2d12;">${escapeHtml(rewardLines[0])}</p>
       <p style="margin:0 0 10px;color:#7c2d12;">${escapeHtml(rewardLines[1])}</p>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #fde68a;color:#92400e;">
-        <strong>Level Up app:</strong> Download opens June 20 for lunch access, daily photos and videos, progress updates, and instructor notes.
+        <strong>Level Up app:</strong> Families get access on June 20 for lunch access, daily photos and videos, progress updates, and instructor notes.
       </div>
     `,
   })
@@ -849,7 +849,7 @@ function buildStepContent({ firstName, stepNumber, reservationDeadlineLabel, sum
     ...getLevelUpRewardsLines(payload),
     '',
     'Level Up app:',
-    'Download opens June 20 for lunch booking, progress photos/videos, and instructor notes.',
+    'Families get access on June 20 for lunch booking, progress photos/videos, and instructor notes.',
     '',
     'Payment Methods:',
     PAYMENT_METHODS_TEXT,
@@ -1747,14 +1747,56 @@ async function getRunJourneyEvents(runId) {
   return Array.isArray(data) ? data : []
 }
 
-async function buildReservationStepPreview({ run = null, email = '', payload, stepNumber }) {
+async function getReservationJourneyEventSnapshot({ runId = 0, stepNumber = 0, eventId = 0 }) {
+  if (Number(eventId || 0) > 0) {
+    const { data, error } = await supabaseServer
+      .from('email_journey_events')
+      .select('id, run_id, step_number, event_type, subject, body_preview, event_payload, event_at')
+      .eq('id', Number(eventId))
+      .maybeSingle()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return data || null
+  }
+
+  if (Number(runId || 0) <= 0 || Number(stepNumber || 0) <= 0) {
+    return null
+  }
+
+  const { data, error } = await supabaseServer
+    .from('email_journey_events')
+    .select('id, run_id, step_number, event_type, subject, body_preview, event_payload, event_at')
+    .eq('run_id', Number(runId))
+    .in('event_type', ['reservation_email_sent', 'reservation_email_preview', 'test_sent_reservation', 'test_preview_only_reservation'])
+    .eq('step_number', Number(stepNumber))
+    .order('event_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data || null
+}
+
+async function buildReservationStepPreview({ run = null, email = '', payload, stepNumber, useLiveAccounting = true }) {
   const recipientEmail = String(email || run?.email || '').trim().toLowerCase()
   if (!recipientEmail) {
     throw new Error('Recipient email is required.')
   }
   const config = await getMergedAdminConfigForJourneys()
   const attachedRegistration = run?.id ? await findRegistrationForRun(run) : null
-  const currentDetails = buildCurrentReservationDetails(payload, config, attachedRegistration)
+  const currentDetails = useLiveAccounting
+    ? buildCurrentReservationDetails(payload, config, attachedRegistration)
+    : {
+        summaryLines: Array.isArray(payload?.summaryLines) ? payload.summaryLines : [],
+        amountDue: Number(payload?.amountDue || 0),
+        camperNames: Array.isArray(payload?.camperNames) ? payload.camperNames : [],
+      }
   const effectivePayload = {
     ...payload,
     summaryLines: currentDetails.summaryLines,
@@ -1881,9 +1923,13 @@ async function sendReservationStepEmail({ run = null, email = '', payload, stepN
         previewOnly: sendResult.previewOnly,
         error: sendResult.error,
         amountDue: preview.amountDue,
+        summaryLines: preview.effectivePayload?.summaryLines || [],
         attachedPdf: attachments.length > 0 && !usedAttachmentFallback,
         attemptedPdfAttachment: attachments.length > 0,
         usedAttachmentFallback,
+        renderedSubject: content.subject,
+        renderedBodyText: content.bodyText,
+        renderedHtml: html,
       },
     })
   }
@@ -2990,7 +3036,7 @@ async function manuallySendReservationStep({ runId = 0, stepKey = '', stepNumber
   }
 }
 
-async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 }) {
+async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0, preferSentSnapshot = false, eventId = 0 }) {
   if (Number(runId || 0) <= 0) {
     throw new Error('A reservation run is required.')
   }
@@ -3067,6 +3113,54 @@ async function previewReservationStep({ runId = 0, stepKey = '', stepNumber = 0 
   }
 
   const targetStep = Math.max(1, Math.min(5, Number(stepNumber || 1)))
+  if (preferSentSnapshot) {
+    const storedEvent = await getReservationJourneyEventSnapshot({
+      runId: run.id,
+      stepNumber: targetStep,
+      eventId,
+    })
+    const storedPayload =
+      typeof storedEvent?.event_payload === 'object' && storedEvent?.event_payload
+        ? storedEvent.event_payload
+        : parseMaybeJson(storedEvent?.event_payload, {}) || {}
+
+    if (String(storedPayload?.renderedHtml || '').trim()) {
+      return {
+        runId: run.id,
+        stepNumber: targetStep,
+        subject: String(storedPayload?.renderedSubject || storedEvent?.subject || ''),
+        bodyText: String(storedPayload?.renderedBodyText || storedEvent?.body_preview || ''),
+        html: String(storedPayload?.renderedHtml || ''),
+      }
+    }
+
+    const historicalPayload = {
+      ...payload,
+      summaryLines: Array.isArray(storedPayload?.summaryLines)
+        ? storedPayload.summaryLines
+        : Array.isArray(payload?.summaryLines)
+          ? payload.summaryLines
+          : [],
+      amountDue:
+        storedPayload?.amountDue != null
+          ? Number(storedPayload.amountDue || 0)
+          : Number(payload?.amountDue || 0),
+    }
+    const historicalPreview = await buildReservationStepPreview({
+      run,
+      payload: historicalPayload,
+      stepNumber: targetStep,
+      useLiveAccounting: false,
+    })
+    return {
+      runId: run.id,
+      stepNumber: targetStep,
+      subject: historicalPreview.content.subject,
+      bodyText: historicalPreview.content.bodyText,
+      html: historicalPreview.html,
+    }
+  }
+
   const preview = await buildReservationStepPreview({ run, payload, stepNumber: targetStep })
   return {
     runId: run.id,
@@ -3505,6 +3599,8 @@ export async function POST(request) {
         runId: body?.runId,
         stepKey: body?.stepKey,
         stepNumber: body?.stepNumber,
+        preferSentSnapshot: Boolean(body?.preferSentSnapshot),
+        eventId: body?.eventId,
       })
       return Response.json({ ok: true, action, ...result }, { status: 200 })
     }
