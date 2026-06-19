@@ -7805,6 +7805,121 @@ textarea:focus {
   overflow-x: auto;
 }
 
+.manualAccountingHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.manualAccountingHeader h3 {
+  margin: 0;
+}
+
+.manualAccountingGrid {
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.manualAccountingGrid label,
+.manualAccountingFull {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.manualAccountingGrid input,
+.manualAccountingGrid select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.62rem 0.7rem;
+  font-size: 0.86rem;
+}
+
+.manualAccountingFull {
+  grid-column: 1 / -1;
+}
+
+.manualAccountingLabel {
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.manualAccountingPreview {
+  grid-column: span 2;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #eff6ff;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.manualCamperStack {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.manualCamperCard {
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.manualCamperHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.manualCamperHeader strong {
+  color: #0f172a;
+  font-size: 0.94rem;
+}
+
+.manualCamperGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.manualWeekChipRow .modeChip {
+  max-width: 190px;
+  white-space: normal;
+  text-align: center;
+}
+
+.manualAccountingPreview span {
+  color: #1d4ed8;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.manualAccountingPreview strong {
+  color: #0f172a;
+  font-size: 1.25rem;
+}
+
+.manualAccountingPreview small {
+  color: #475569;
+  font-size: 0.76rem;
+}
+
 .accountingTableScroll {
   overflow: auto;
   max-height: min(72vh, 1100px);
@@ -8266,6 +8381,35 @@ textarea:focus {
 .rosterTableRow small {
   color: #64748b;
   font-size: 0.73rem;
+}
+
+.lunchExportWeekCard {
+  margin: 0;
+}
+
+.lunchExportTableHead,
+.lunchExportTableRow {
+  grid-template-columns: minmax(180px, 1.4fr) repeat(5, minmax(64px, 0.45fr)) minmax(120px, 0.75fr);
+  align-items: center;
+}
+
+.lunchPaymentStatus {
+  display: inline-flex;
+  width: max-content;
+  border-radius: 999px;
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.lunchPaymentStatus.paid {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.lunchPaymentStatus.unpaid {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .adminWeekList {

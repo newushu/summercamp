@@ -1542,6 +1542,13 @@ const mediaSubtabBlueprint = [
   { id: 'library', label: 'Media Library' },
 ]
 
+const accountingSubtabBlueprint = [
+  { id: 'table', label: 'Accounting Table' },
+  { id: 'general-export', label: 'General Camp Export' },
+  { id: 'bootcamp-export', label: 'Competition Team Export' },
+  { id: 'lunch-export', label: 'Lunch Export' },
+]
+
 const accountingPaymentMethods = ['venmo', 'zelle', 'paypal', 'cash', 'check']
 const ACCOUNTING_ADMIN_COPY_EMAIL = 'calvin@newushu.com'
 const accountingEditorDayKeys = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -1549,6 +1556,12 @@ const accountingDiscountOverrideOptions = [
   { value: '', label: 'Auto' },
   { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_ONE, label: 'Redeem Round 1' },
   { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_TWO, label: 'Redeem Round 2' },
+]
+const manualAccountingSelectionOptions = [
+  { value: 'fullWeek', label: 'Full Week' },
+  { value: 'fullDay', label: 'Full Days' },
+  { value: 'amHalf', label: 'AM Half Days' },
+  { value: 'pmHalf', label: 'PM Half Days' },
 ]
 const accountingEditorNextMode = {
   NONE: 'FULL',
@@ -2310,6 +2323,122 @@ function buildStudentAccountingPricingList({
   }))
 }
 
+function buildEmptyManualAccountingDraft() {
+  return {
+    parentName: '',
+    parentEmail: '',
+    parentPhone: '',
+    location: 'burlington',
+    discountCampaignOverride: '',
+    manualDiscount: 0,
+    tuitionPaidAmount: '',
+    lunchPaidAmount: '',
+    paymentMethod: '',
+    campers: [buildEmptyManualAccountingCamper()],
+  }
+}
+
+function buildEmptyManualAccountingCamper() {
+  return {
+    id: `manual-camper-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    camperName: '',
+    camperDob: '',
+    weekIds: [],
+    campType: 'general',
+    selectionType: 'fullWeek',
+    days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: true }), {}),
+    lunch: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: false }), {}),
+  }
+}
+
+function buildManualAccountingStudent(camperDraft, weeksById = {}) {
+  const weekIds = Array.isArray(camperDraft?.weekIds) ? camperDraft.weekIds.filter(Boolean) : []
+  const mode =
+    camperDraft?.selectionType === 'amHalf'
+      ? 'AM'
+      : camperDraft?.selectionType === 'pmHalf'
+        ? 'PM'
+        : 'FULL'
+  const fullWeek = camperDraft?.selectionType === 'fullWeek'
+  const schedule = {}
+  const lunch = {}
+
+  for (const weekId of weekIds) {
+    const selectedWeek = weeksById[weekId] || null
+    const dayKeys = Array.isArray(selectedWeek?.days)
+      ? selectedWeek.days.map((day) => normalizeAccountingEditorDayKey(day?.key))
+      : accountingEditorDayKeys
+    const selectedDays = dayKeys.filter((day) => Boolean(camperDraft?.days?.[day]))
+    const days = dayKeys.reduce((acc, day) => {
+      acc[day] = fullWeek || selectedDays.includes(day) ? mode : 'NONE'
+      return acc
+    }, {})
+
+    schedule[weekId] = {
+      weekId,
+      programKey: 'daycamp',
+      campType: camperDraft?.campType === 'bootcamp' ? 'bootcamp' : 'general',
+      days,
+    }
+
+    for (const day of dayKeys) {
+      if (!isIncludedLunchDay(day) && Boolean(camperDraft?.lunch?.[day]) && days[day] !== 'NONE') {
+        lunch[`${weekId}:${day}`] = true
+      }
+    }
+  }
+
+  return {
+    id: String(camperDraft?.id || `manual-${Date.now()}`),
+    fullName: String(camperDraft?.camperName || '').trim() || 'Manual Camper',
+    dob: String(camperDraft?.camperDob || '').trim(),
+    schedule,
+    lunch,
+    allergies: '',
+    medication: '',
+    previousInjury: '',
+    healthNotes: '',
+    activitySelections: [],
+  }
+}
+
+function buildAccountingDayCampWeeksForLocation(programs = {}, location = '') {
+  const generalProgram = getGeneralProgramForLocation(programs.general, location)
+  const generalWeeks = getSelectedWeeks('general', generalProgram)
+  const bootcampWeeks = getSelectedWeeks('bootcamp', programs.bootcamp)
+  const dayCampMap = new Map()
+
+  for (const week of generalWeeks) {
+    const id = `daycamp:${week.start}`
+    dayCampMap.set(id, {
+      id,
+      start: week.start,
+      end: week.end,
+      programKey: 'daycamp',
+      programLabel: 'Camp Week',
+      days: Array.isArray(week.days)
+        ? week.days.map((day) => ({
+            ...day,
+            key: normalizeAccountingEditorDayKey(day?.key),
+          }))
+        : [],
+      availableCampTypes: ['general'],
+    })
+  }
+
+  for (const week of bootcampWeeks) {
+    const id = `daycamp:${week.start}`
+    const existing = dayCampMap.get(id)
+    if (existing) {
+      existing.availableCampTypes = existing.availableCampTypes.includes('bootcamp')
+        ? existing.availableCampTypes
+        : [...existing.availableCampTypes, 'bootcamp']
+    }
+  }
+
+  return Array.from(dayCampMap.values()).sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')))
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [config, setConfig] = useState(getInitialState)
@@ -2319,6 +2448,7 @@ export default function AdminPage() {
   const [activeJourneyFlow, setActiveJourneyFlow] = useState('lead')
   const [activeReservationJourneyTab, setActiveReservationJourneyTab] = useState(0)
   const [activePaidEnrollmentJourneyTab, setActivePaidEnrollmentJourneyTab] = useState(0)
+  const [activeAccountingSubtab, setActiveAccountingSubtab] = useState('table')
   const [paidEnrollmentPreviewTrack, setPaidEnrollmentPreviewTrack] = useState('general')
   const [activeReservationTrackerView, setActiveReservationTrackerView] = useState('standard')
   const [activeTrackingSubtab, setActiveTrackingSubtab] = useState('lead')
@@ -2348,6 +2478,8 @@ export default function AdminPage() {
   const [emailEvents, setEmailEvents] = useState([])
   const [registrationRecords, setRegistrationRecords] = useState([])
   const [accountingDrafts, setAccountingDrafts] = useState({})
+  const [manualAccountingDraft, setManualAccountingDraft] = useState(buildEmptyManualAccountingDraft)
+  const [manualAccountingExpanded, setManualAccountingExpanded] = useState(false)
   const [leadProfiles, setLeadProfiles] = useState([])
   const [loadingAccounting, setLoadingAccounting] = useState(false)
   const [loadingLeads, setLoadingLeads] = useState(false)
@@ -3536,41 +3668,12 @@ export default function AdminPage() {
   }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
   const accountingEditRegistrationWeeks = useMemo(() => {
     const location = String(accountingEditState.registration?.location || '').trim()
-    const generalProgram = getGeneralProgramForLocation(config.programs.general, location)
-    const generalWeeks = getSelectedWeeks('general', generalProgram)
-    const bootcampWeeks = getSelectedWeeks('bootcamp', config.programs.bootcamp)
-    const dayCampMap = new Map()
-
-    for (const week of generalWeeks) {
-      const id = `daycamp:${week.start}`
-      dayCampMap.set(id, {
-        id,
-        start: week.start,
-        end: week.end,
-        programKey: 'daycamp',
-        programLabel: 'Camp Week',
-        days: Array.isArray(week.days)
-          ? week.days.map((day) => ({
-              ...day,
-              key: normalizeAccountingEditorDayKey(day?.key),
-            }))
-          : [],
-        availableCampTypes: ['general'],
-      })
-    }
-
-    for (const week of bootcampWeeks) {
-      const id = `daycamp:${week.start}`
-      const existing = dayCampMap.get(id)
-      if (existing) {
-        existing.availableCampTypes = existing.availableCampTypes.includes('bootcamp')
-          ? existing.availableCampTypes
-          : [...existing.availableCampTypes, 'bootcamp']
-      }
-    }
-
-    return Array.from(dayCampMap.values()).sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')))
+    return buildAccountingDayCampWeeksForLocation(config.programs, location)
   }, [accountingEditState.registration?.location, config.programs.bootcamp, config.programs.general])
+  const manualAccountingRegistrationWeeks = useMemo(
+    () => buildAccountingDayCampWeeksForLocation(config.programs, manualAccountingDraft.location),
+    [config.programs, manualAccountingDraft.location]
+  )
   const accountingEditWeeksById = useMemo(
     () =>
       accountingEditRegistrationWeeks.reduce((acc, week) => {
@@ -3578,6 +3681,14 @@ export default function AdminPage() {
         return acc
       }, {}),
     [accountingEditRegistrationWeeks]
+  )
+  const manualAccountingWeeksById = useMemo(
+    () =>
+      manualAccountingRegistrationWeeks.reduce((acc, week) => {
+        acc[week.id] = week
+        return acc
+      }, {}),
+    [manualAccountingRegistrationWeeks]
   )
   const accountingEditStudent = useMemo(() => {
     if (!accountingEditState.registration || !accountingEditState.row) {
@@ -3817,6 +3928,50 @@ export default function AdminPage() {
     () => overnightAccountingSummary.weeks.find((item) => item.week.id === activeOvernightSummaryWeekId) || null,
     [activeOvernightSummaryWeekId, overnightAccountingSummary.weeks]
   )
+  const manualAccountingPreview = useMemo(() => {
+    const students = (Array.isArray(manualAccountingDraft.campers) ? manualAccountingDraft.campers : [])
+      .map((camper) => buildManualAccountingStudent(camper, manualAccountingWeeksById))
+    const discountCampaignId = resolveDiscountCampaignId({
+      createdAt: new Date().toISOString(),
+      discountEndDate: config.tuition.discountEndDate,
+      overrideId: normalizeDiscountCampaignOverride(manualAccountingDraft.discountCampaignOverride),
+    })
+    const pricingList = buildStudentAccountingPricingList({
+      students,
+      accountingEntries: students.map((student, index) => ({
+        camper_index: index,
+        camper_name: student.fullName,
+        discount_campaign_override: normalizeDiscountCampaignOverride(manualAccountingDraft.discountCampaignOverride),
+      })),
+      createdAt: new Date().toISOString(),
+      tuition: config.tuition,
+      lunchPrice: config.tuition.lunchPrice,
+      weekById: manualAccountingWeeksById,
+      discountEndDate: config.tuition.discountEndDate,
+    })
+    const pricing = pricingList.reduce(
+      (acc, item) => ({
+        total: acc.total + Number(item.pricing?.total || 0),
+        lunchCost: acc.lunchCost + Number(item.pricing?.lunchCost || 0),
+      }),
+      { total: 0, lunchCost: 0 }
+    )
+    const paymentState = deriveAccountingPaymentState({
+      entry: {
+        tuition_paid_amount: Number(manualAccountingDraft.tuitionPaidAmount || 0),
+        lunch_paid_amount: Number(manualAccountingDraft.lunchPaidAmount || 0),
+      },
+      tuitionTotal: pricing.total,
+      lunchTotal: pricing.lunchCost,
+      manualDiscount: Number(manualAccountingDraft.manualDiscount || 0),
+    })
+    return {
+      discountCampaignId,
+      discountCampaign: getDiscountCampaignMeta(discountCampaignId, config.tuition.discountEndDate),
+      pricing,
+      paymentState,
+    }
+  }, [config.tuition, manualAccountingDraft, manualAccountingWeeksById])
   const rosterEntries = useMemo(() => {
     const entries = []
     for (const row of [...activeAccountingRows, ...activeOvernightAccountingRows]) {
@@ -3946,6 +4101,84 @@ export default function AdminPage() {
       },
     }
   }, [rosterEntries, weekById, weekOptions])
+  const lunchExportSummary = useMemo(() => {
+    const groupsByWeekId = {}
+    for (const week of [...weekOptions.general, ...weekOptions.bootcamp]) {
+      const daycampId = `daycamp:${week.start}`
+      groupsByWeekId[week.id] = groupsByWeekId[week.id] || { week, rows: [] }
+      groupsByWeekId[daycampId] = groupsByWeekId[daycampId] || { week: { ...week, id: daycampId }, rows: [] }
+    }
+
+    for (const row of activeAccountingRows) {
+      const lunchItems = Array.isArray(row.lunchDays) ? row.lunchDays : []
+      for (const [itemIndex, item] of (Array.isArray(row.scheduleByWeek) ? row.scheduleByWeek : []).entries()) {
+        const weekId = String(item?.weekId || '').trim()
+        const week = weekById[weekId] || accountingEditWeeksById[weekId] || item?.week || null
+        const weekLabel = week ? formatWeekLabel(week) : toWeekLabel(weekId, weekById)
+        const matchingLunchItems = lunchItems.filter((lunchLine) => String(lunchLine || '').includes(weekLabel))
+        const dayValues = accountingEditorDayKeys.reduce((acc, day) => {
+          const mode =
+            item?.entry?.days?.[day] ||
+            item?.entry?.days?.[day.toLowerCase()] ||
+            item?.entry?.days?.[day.toUpperCase()] ||
+            'NONE'
+          if (!mode || mode === 'NONE') {
+            acc[day] = ''
+            return acc
+          }
+          if (isIncludedLunchDay(day)) {
+            acc[day] = 'BBQ'
+            return acc
+          }
+          const dayNeedle = `· ${day.toUpperCase()} lunch`
+          acc[day] = matchingLunchItems.some((lunchLine) => String(lunchLine || '').includes(dayNeedle)) ? 'Yes' : ''
+          return acc
+        }, {})
+        if (!Object.values(dayValues).some(Boolean)) continue
+        const groupKey = weekId || weekLabel
+        if (!groupsByWeekId[groupKey]) {
+          groupsByWeekId[groupKey] = { week: week || { id: groupKey, start: '', end: '' }, rows: [] }
+        }
+        const uniqueRowKey = `${row.key}:lunch:${groupKey}:${itemIndex}`
+        const existingIndex = groupsByWeekId[groupKey].rows.findIndex((itemRow) => itemRow.rowKey === row.key)
+        const nextLunchRow = {
+          key: uniqueRowKey,
+          rowKey: row.key,
+          camperName: row.camperName,
+          parentName: row.parentName,
+          phone: row.parentPhone,
+          lunchItems: matchingLunchItems,
+          dayValues,
+          paid: Number(row.lunchPaidAmount || 0),
+          owed: Number(row.lunchOwedAmount || 0),
+          status: Number(row.lunchOwedAmount || 0) > 0 ? 'Unpaid' : 'Paid',
+        }
+        if (existingIndex >= 0) {
+          groupsByWeekId[groupKey].rows[existingIndex] = {
+            ...groupsByWeekId[groupKey].rows[existingIndex],
+            dayValues: accountingEditorDayKeys.reduce((acc, day) => {
+              acc[day] = groupsByWeekId[groupKey].rows[existingIndex].dayValues?.[day] || nextLunchRow.dayValues?.[day] || ''
+              return acc
+            }, {}),
+            lunchItems: Array.from(new Set([
+              ...(groupsByWeekId[groupKey].rows[existingIndex].lunchItems || []),
+              ...matchingLunchItems,
+            ])),
+          }
+        } else {
+          groupsByWeekId[groupKey].rows.push(nextLunchRow)
+        }
+      }
+    }
+
+    return Object.values(groupsByWeekId)
+      .filter((group) => group.rows.length > 0)
+      .sort((a, b) => String(a.week?.start || a.week?.id || '').localeCompare(String(b.week?.start || b.week?.id || '')))
+      .map((group) => ({
+        ...group,
+        rows: group.rows.sort((a, b) => String(a.camperName || '').localeCompare(String(b.camperName || ''))),
+      }))
+  }, [accountingEditWeeksById, activeAccountingRows, weekById, weekOptions.bootcamp, weekOptions.general])
   const leadDueCounts = useMemo(() => {
     const counts = Object.fromEntries(leadTrackerColumns.map((column) => [column.key, 0]))
     const now = Date.now()
@@ -5703,6 +5936,158 @@ export default function AdminPage() {
     }))
   }
 
+  function updateManualAccountingDraft(updates = {}) {
+    setManualAccountingDraft((current) => ({
+      ...current,
+      ...updates,
+    }))
+  }
+
+  function updateManualAccountingCamper(camperId, updates = {}) {
+    setManualAccountingDraft((current) => ({
+      ...current,
+      campers: (Array.isArray(current.campers) ? current.campers : []).map((camper) =>
+        camper.id === camperId
+          ? {
+              ...camper,
+              ...updates,
+              days: {
+                ...camper.days,
+                ...(updates.days || {}),
+              },
+              lunch: {
+                ...camper.lunch,
+                ...(updates.lunch || {}),
+              },
+            }
+          : camper
+      ),
+    }))
+  }
+
+  function addManualAccountingCamper() {
+    setManualAccountingDraft((current) => ({
+      ...current,
+      campers: [...(Array.isArray(current.campers) ? current.campers : []), buildEmptyManualAccountingCamper()],
+    }))
+  }
+
+  function removeManualAccountingCamper(camperId) {
+    setManualAccountingDraft((current) => {
+      const campers = (Array.isArray(current.campers) ? current.campers : []).filter((camper) => camper.id !== camperId)
+      return {
+        ...current,
+        campers: campers.length > 0 ? campers : [buildEmptyManualAccountingCamper()],
+      }
+    })
+  }
+
+  function toggleManualAccountingCamperWeek(camperId, weekId) {
+    setManualAccountingDraft((current) => ({
+      ...current,
+      campers: (Array.isArray(current.campers) ? current.campers : []).map((camper) => {
+        if (camper.id !== camperId) return camper
+        const weekIds = Array.isArray(camper.weekIds) ? camper.weekIds : []
+        return {
+          ...camper,
+          weekIds: weekIds.includes(weekId) ? weekIds.filter((item) => item !== weekId) : [...weekIds, weekId],
+        }
+      }),
+    }))
+  }
+
+  async function addManualAccountingRow() {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for accounting row creation.')
+      return
+    }
+
+    const parentName = String(manualAccountingDraft.parentName || '').trim()
+    const parentEmail = String(manualAccountingDraft.parentEmail || '').trim()
+    const camperDrafts = Array.isArray(manualAccountingDraft.campers) ? manualAccountingDraft.campers : []
+    const validCampers = camperDrafts.filter(
+      (camper) => String(camper?.camperName || '').trim() && Array.isArray(camper?.weekIds) && camper.weekIds.length > 0
+    )
+    if (!parentName || !parentEmail || !/\S+@\S+\.\S+/.test(parentEmail) || validCampers.length === 0) {
+      setErrorMessage('Fill parent name, valid email, and at least one camper with one selected week.')
+      return
+    }
+
+    const students = validCampers.map((camper) => buildManualAccountingStudent(camper, manualAccountingWeeksById))
+    if (students.some((student) => Object.keys(student.schedule || {}).length === 0)) {
+      setErrorMessage('Choose at least one camp day before adding a row.')
+      return
+    }
+
+    setUpdatingAccountingKey('manual-new-row')
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const submittedAt = new Date().toISOString()
+    const accountingEntries = students.map((student, index) => ({
+      camper_index: index,
+      camper_name: student.fullName,
+      archived: false,
+      paid_amount:
+        index === 0
+          ? roundMoney(Number(manualAccountingDraft.tuitionPaidAmount || 0) + Number(manualAccountingDraft.lunchPaidAmount || 0))
+          : 0,
+      tuition_paid_amount: index === 0 ? Math.max(0, Number(manualAccountingDraft.tuitionPaidAmount || 0)) : 0,
+      lunch_paid_amount: index === 0 ? Math.max(0, Number(manualAccountingDraft.lunchPaidAmount || 0)) : 0,
+      manual_discount: index === 0 ? Math.max(0, Number(manualAccountingDraft.manualDiscount || 0)) : 0,
+      discount_campaign_override: normalizeDiscountCampaignOverride(manualAccountingDraft.discountCampaignOverride),
+      payment_method: accountingPaymentMethods.includes(String(manualAccountingDraft.paymentMethod || '').trim().toLowerCase())
+        ? String(manualAccountingDraft.paymentMethod || '').trim().toLowerCase()
+        : '',
+    }))
+    const registrationPayload = {
+      source: 'admin_manual_accounting_row',
+      submittedAt,
+      registration: {
+        submittedAt,
+        location: String(manualAccountingDraft.location || 'burlington').trim(),
+        parentName,
+        contactEmail: parentEmail,
+        contactPhone: String(manualAccountingDraft.parentPhone || '').trim(),
+        paymentMethod: accountingEntries[0]?.payment_method || '',
+        students,
+      },
+    }
+    const firstCamperName = students[0]?.fullName || 'Manual Camper'
+
+    const response = await supabase
+      .from('registrations')
+      .insert({
+        camper_first_name: firstCamperName.split(/\s+/)[0] || firstCamperName,
+        camper_last_name: firstCamperName.split(/\s+/).slice(1).join(' '),
+        guardian_name: parentName,
+        guardian_email: parentEmail,
+        guardian_phone: String(manualAccountingDraft.parentPhone || '').trim(),
+        medical_notes: JSON.stringify(registrationPayload),
+        accounting_entries: accountingEntries,
+      })
+      .select('id, guardian_name, guardian_email, created_at, medical_notes, accounting_entries')
+      .single()
+
+    if (response.error) {
+      setErrorMessage(`Manual accounting row failed: ${response.error.message}`)
+      setUpdatingAccountingKey('')
+      return
+    }
+
+    setRegistrationRecords((current) => [
+      {
+        ...response.data,
+        accounting_entries: Array.isArray(response.data?.accounting_entries) ? response.data.accounting_entries : [],
+      },
+      ...current,
+    ])
+    setManualAccountingDraft(buildEmptyManualAccountingDraft())
+    setManualAccountingExpanded(false)
+    setSavedMessage('Manual accounting row added.')
+    setUpdatingAccountingKey('')
+  }
+
   async function saveAccountingDraft(row) {
     const draft = accountingDrafts[row.key]
     if (!draft) {
@@ -6301,6 +6686,57 @@ export default function AdminPage() {
       setSavedMessage(`${title} PDF exported.`)
     } catch (error) {
       setErrorMessage(error?.message || 'Roster PDF export failed.')
+    }
+
+    setExportingRosterKey('')
+  }
+
+  function exportLunchPdf(weekId = '') {
+    const groups = lunchExportSummary.filter((group) => !weekId || String(group.week?.id || '') === String(weekId))
+    if (groups.length === 0) {
+      setErrorMessage('No lunch rows are available to export yet.')
+      return
+    }
+
+    const exportKey = weekId ? `lunch:${weekId}` : 'lunch:all'
+    setExportingRosterKey(exportKey)
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      const title = weekId
+        ? `${formatWeekLabel(groups[0].week)} Lunch Export`
+        : 'Weekly Lunch Export'
+      const sections = [
+        {
+          title,
+          summary: `${groups.reduce((sum, group) => sum + group.rows.length, 0)} lunch camper row${groups.reduce((sum, group) => sum + group.rows.length, 0) === 1 ? '' : 's'}`,
+          accentColor: [0.878, 0.969, 0.949],
+          groups: groups.map((group) => ({
+            title: group.week ? formatWeekLabel(group.week) : 'Unmapped week',
+            subtitle: `${group.rows.length} camper${group.rows.length === 1 ? '' : 's'} with lunch`,
+            rows: group.rows.map((row) => ({
+              camperName: row.camperName,
+              parentName: `${row.parentName} | ${row.phone || 'No phone'}`,
+              location: accountingEditorDayKeys.map((day) => `${day === 'Thu' ? 'R' : day[0]}: ${row.dayValues?.[day] || '-'}`).join(' | '),
+              selectionSummary: `${row.status}: lunch paid ${money(row.paid)} | remaining ${money(row.owed)}`,
+              paymentMethod: row.status === 'Unpaid' ? `UNPAID ${money(row.owed)}` : 'PAID',
+              email: '',
+            })),
+          })),
+        },
+      ]
+      const pdfBase64 = buildRosterSummaryPdfBase64({
+        title,
+        subtitle: 'Weekly lunch printout',
+        generatedAtLabel: new Date().toLocaleString(),
+        sections,
+      })
+      const dateLabel = new Date().toISOString().slice(0, 10)
+      downloadPdfBase64(`${normalizeRosterFilenamePart(title)}-${dateLabel}.pdf`, pdfBase64)
+      setSavedMessage(`${title} PDF exported.`)
+    } catch (error) {
+      setErrorMessage(error?.message || 'Lunch PDF export failed.')
     }
 
     setExportingRosterKey('')
@@ -9782,19 +10218,32 @@ export default function AdminPage() {
         <p className="subhead">
           Camper-level accounting from submitted registrations. Archive rows when complete, and restore anytime.
         </p>
+        <div className="adminSubTabs accountingSubTabs" role="tablist" aria-label="Registration accounting sections">
+          {accountingSubtabBlueprint.map((tab) => (
+            <button
+              key={`accounting-subtab-${tab.id}`}
+              type="button"
+              className={`adminSubTabBtn ${activeAccountingSubtab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveAccountingSubtab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {activeAccountingSubtab === 'general-export' || activeAccountingSubtab === 'bootcamp-export' ? (
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
-            <h3>Weekly Roster Summary</h3>
+            <h3>{activeAccountingSubtab === 'general-export' ? 'General Camp Weekly Export' : 'Competition Team Camp Weekly Export'}</h3>
             <p className="subhead">
-              Shows all registered campers with saved week selections, whether paid or unpaid. Export one polished PDF per program or a merged all-camp roster packet.
+              Each week is separated like a folder so you can open one week, check rows, and export that weekly roster.
             </p>
           </div>
           <div className="rosterSummaryHero">
             <div>
-              <strong>Merged Camp Roster</strong>
+              <strong>{activeAccountingSubtab === 'general-export' ? 'General Camp Export' : 'Competition Team Camp Export'}</strong>
               <p className="subhead">
-                {rosterSummary.merged.totalCampers} registered camper{rosterSummary.merged.totalCampers === 1 ? '' : 's'} across{' '}
-                {rosterSummary.merged.activeWeeks} active program-weeks.
+                {rosterSummary.byProgram[activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp']?.totalCampers || 0} camper rows across{' '}
+                {rosterSummary.byProgram[activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp']?.activeWeeks || 0} active weeks.
               </p>
             </div>
             <div className="adminActions">
@@ -9817,10 +10266,10 @@ export default function AdminPage() {
               <button
                 type="button"
                 className="button"
-                onClick={() => exportRosterPdf({ mode: 'merged' })}
-                disabled={exportingRosterKey === 'merged'}
+                onClick={() => exportRosterPdf({ mode: 'program', programKey: activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp' })}
+                disabled={exportingRosterKey === (activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp')}
               >
-                {exportingRosterKey === 'merged' ? 'Exporting...' : 'Export Merged PDF'}
+                {exportingRosterKey === (activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp') ? 'Exporting...' : 'Export Program PDF'}
               </button>
               <button
                 type="button"
@@ -9833,9 +10282,100 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="rosterProgramStack">
-            {Object.keys(rosterProgramMeta).map((programKey) => renderRosterProgramCard(programKey))}
+            {renderRosterProgramCard(activeAccountingSubtab === 'general-export' ? 'general' : 'bootcamp')}
           </div>
         </div>
+        ) : null}
+        {activeAccountingSubtab === 'lunch-export' ? (
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Weekly Lunch Export</h3>
+            <p className="subhead">
+              Print one lunch sheet per week for paid lunches and included Thursday BBQ rows.
+            </p>
+          </div>
+          <div className="rosterSummaryHero">
+            <div>
+              <strong>Lunch Printouts</strong>
+              <p className="subhead">
+                {lunchExportSummary.reduce((sum, group) => sum + group.rows.length, 0)} lunch rows across {lunchExportSummary.length} week{lunchExportSummary.length === 1 ? '' : 's'}.
+              </p>
+            </div>
+            <div className="adminActions">
+              <button
+                type="button"
+                className="button"
+                onClick={() => exportLunchPdf()}
+                disabled={exportingRosterKey === 'lunch:all' || lunchExportSummary.length === 0}
+              >
+                {exportingRosterKey === 'lunch:all' ? 'Exporting...' : 'Export All Lunch Weeks'}
+              </button>
+            </div>
+          </div>
+          <div className="rosterProgramStack">
+            {lunchExportSummary.length === 0 ? (
+              <div className="rosterProgramEmpty">
+                <p className="subhead">No lunch rows yet.</p>
+              </div>
+            ) : (
+              lunchExportSummary.map((group) => (
+                <article key={`lunch-export-${group.week?.id || 'unknown'}`} className="rosterWeekCard lunchExportWeekCard">
+                  <div className="rosterWeekCardHeader">
+                    <div>
+                      <strong>{group.week ? formatWeekLabel(group.week) : 'Unmapped week'}</strong>
+                      <span>{group.rows.length} lunch row{group.rows.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="rosterWeekActions">
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => exportLunchPdf(group.week?.id || '')}
+                        disabled={exportingRosterKey === `lunch:${group.week?.id || ''}`}
+                      >
+                        {exportingRosterKey === `lunch:${group.week?.id || ''}` ? 'Exporting...' : 'Export Week Lunch'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="rosterTable">
+                    <div className="rosterTableHead lunchExportTableHead">
+                      <span>Name</span>
+                      <span>M</span>
+                      <span>T</span>
+                      <span>W</span>
+                      <span>R</span>
+                      <span>F</span>
+                      <span>Status</span>
+                    </div>
+                    <div className="rosterTableBody">
+                      {group.rows.map((row) => (
+                        <div key={row.key} className="rosterTableRow lunchExportTableRow">
+                          <span>
+                            <strong>{row.camperName}</strong>
+                            <small>{row.parentName}{row.phone ? ` · ${row.phone}` : ''}</small>
+                          </span>
+                          <span>{row.dayValues?.Mon || '-'}</span>
+                          <span>{row.dayValues?.Tue || '-'}</span>
+                          <span>{row.dayValues?.Wed || '-'}</span>
+                          <span>{row.dayValues?.Thu || '-'}</span>
+                          <span>{row.dayValues?.Fri || '-'}</span>
+                          <span>
+                            <strong className={`lunchPaymentStatus ${row.status === 'Unpaid' ? 'unpaid' : 'paid'}`}>
+                              {row.status}
+                            </strong>
+                            <small>Remaining {money(row.owed)}</small>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
+        ) : null}
+        {activeAccountingSubtab === 'table' ? (
+        <>
         <div className="adminActions">
           <button
             type="button"
@@ -9931,6 +10471,253 @@ export default function AdminPage() {
               )}
             </article>
           ))}
+        </div>
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <div className="manualAccountingHeader">
+              <div>
+                <h3>Add Manual Registration Row</h3>
+                <p className="subhead">Add a family manually, including multiple weeks and siblings. DOB is optional.</p>
+              </div>
+              <button
+                type="button"
+                className="button"
+                onClick={() => setManualAccountingExpanded((current) => !current)}
+              >
+                {manualAccountingExpanded ? 'Collapse Add Row' : 'Add Row'}
+              </button>
+            </div>
+          </div>
+          {manualAccountingExpanded ? (
+          <div className="manualAccountingGrid">
+            <label>
+              Parent
+              <input
+                value={manualAccountingDraft.parentName}
+                onChange={(event) => updateManualAccountingDraft({ parentName: event.target.value })}
+                placeholder="Parent name"
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={manualAccountingDraft.parentEmail}
+                onChange={(event) => updateManualAccountingDraft({ parentEmail: event.target.value })}
+                placeholder="parent@example.com"
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                value={manualAccountingDraft.parentPhone}
+                onChange={(event) => updateManualAccountingDraft({ parentPhone: event.target.value })}
+                placeholder="Phone"
+              />
+            </label>
+            <label>
+              Location
+              <select
+                value={manualAccountingDraft.location}
+                onChange={(event) => updateManualAccountingDraft({ location: event.target.value })}
+              >
+                <option value="burlington">Burlington</option>
+                <option value="acton">Acton</option>
+                <option value="wellesley">Wellesley</option>
+              </select>
+            </label>
+            <label>
+              Discount
+              <select
+                value={manualAccountingDraft.discountCampaignOverride}
+                onChange={(event) => updateManualAccountingDraft({ discountCampaignOverride: event.target.value })}
+              >
+                {accountingDiscountOverrideOptions.map((option) => (
+                  <option key={`manual-discount-${option.value || 'auto'}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Method
+              <select
+                value={manualAccountingDraft.paymentMethod}
+                onChange={(event) => updateManualAccountingDraft({ paymentMethod: event.target.value })}
+              >
+                <option value="">Select</option>
+                {accountingPaymentMethods.map((method) => (
+                  <option key={`manual-method-${method}`} value={method}>
+                    {method.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Manual Discount
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualAccountingDraft.manualDiscount}
+                onChange={(event) => updateManualAccountingDraft({ manualDiscount: Number(event.target.value || 0) })}
+              />
+            </label>
+            <label>
+              Paid Tuition
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualAccountingDraft.tuitionPaidAmount}
+                onChange={(event) => updateManualAccountingDraft({ tuitionPaidAmount: event.target.value })}
+              />
+            </label>
+            <label>
+              Paid Lunch
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualAccountingDraft.lunchPaidAmount}
+                onChange={(event) => updateManualAccountingDraft({ lunchPaidAmount: event.target.value })}
+              />
+            </label>
+            <div className="manualAccountingFull manualCamperStack">
+              {(Array.isArray(manualAccountingDraft.campers) ? manualAccountingDraft.campers : []).map((camper, camperIndex) => (
+                <article key={camper.id} className="manualCamperCard">
+                  <div className="manualCamperHeader">
+                    <strong>Camper {camperIndex + 1}</strong>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() => removeManualAccountingCamper(camper.id)}
+                      disabled={(manualAccountingDraft.campers || []).length <= 1}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="manualCamperGrid">
+                    <label>
+                      Camper
+                      <input
+                        value={camper.camperName}
+                        onChange={(event) => updateManualAccountingCamper(camper.id, { camperName: event.target.value })}
+                        placeholder="Camper name"
+                      />
+                    </label>
+                    <label>
+                      DOB Optional
+                      <input
+                        type="date"
+                        value={camper.camperDob}
+                        onChange={(event) => updateManualAccountingCamper(camper.id, { camperDob: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Program
+                      <select
+                        value={camper.campType}
+                        onChange={(event) => updateManualAccountingCamper(camper.id, { campType: event.target.value })}
+                      >
+                        <option value="general">General Camp</option>
+                        <option value="bootcamp">Competition Boot Camp</option>
+                      </select>
+                    </label>
+                    <label>
+                      Selection
+                      <select
+                        value={camper.selectionType}
+                        onChange={(event) => {
+                          const selectionType = event.target.value
+                          updateManualAccountingCamper(camper.id, {
+                            selectionType,
+                            days:
+                              selectionType === 'fullWeek'
+                                ? accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: true }), {})
+                                : camper.days,
+                          })
+                        }}
+                      >
+                        {manualAccountingSelectionOptions.map((option) => (
+                          <option key={`manual-selection-${camper.id}-${option.value}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="manualAccountingFull">
+                    <span className="manualAccountingLabel">Weeks</span>
+                    <div className="chipRow manualWeekChipRow">
+                      {manualAccountingRegistrationWeeks.map((week) => (
+                        <button
+                          key={`manual-week-${camper.id}-${week.id}`}
+                          type="button"
+                          className={`modeChip ${camper.weekIds?.includes(week.id) ? 'active full' : ''}`}
+                          onClick={() => toggleManualAccountingCamperWeek(camper.id, week.id)}
+                        >
+                          {formatWeekLabel(week)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="manualAccountingFull">
+                    <span className="manualAccountingLabel">Camp Days</span>
+                    <div className="chipRow">
+                      {accountingEditorDayKeys.map((day) => (
+                        <button
+                          key={`manual-day-${camper.id}-${day}`}
+                          type="button"
+                          className={`modeChip ${camper.days?.[day] ? 'active full' : ''}`}
+                          onClick={() => updateManualAccountingCamper(camper.id, { days: { [day]: !camper.days?.[day] } })}
+                          disabled={camper.selectionType === 'fullWeek'}
+                        >
+                          {day}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="manualAccountingFull">
+                    <span className="manualAccountingLabel">Lunch</span>
+                    <div className="chipRow">
+                      {accountingEditorDayKeys.map((day) => (
+                        <button
+                          key={`manual-lunch-${camper.id}-${day}`}
+                          type="button"
+                          className={`modeChip lunchChip ${isIncludedLunchDay(day) ? 'full' : camper.lunch?.[day] ? 'yes' : 'no'}`}
+                          onClick={() => updateManualAccountingCamper(camper.id, { lunch: { [day]: !camper.lunch?.[day] } })}
+                          disabled={isIncludedLunchDay(day) || !camper.days?.[day]}
+                        >
+                          {isIncludedLunchDay(day) ? `${day} BBQ INCLUDED` : `${day} Lunch ${camper.lunch?.[day] ? 'YES' : 'NO'}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </article>
+              ))}
+              <button type="button" className="button secondary" onClick={addManualAccountingCamper}>
+                Add Sibling
+              </button>
+            </div>
+            <div className="manualAccountingPreview">
+              <span>Auto Total</span>
+              <strong>{money(manualAccountingPreview.paymentState.totalAfterManualDiscount)}</strong>
+              <small>
+                Tuition {money(manualAccountingPreview.paymentState.tuitionAfterManualDiscount)} · Lunch {money(manualAccountingPreview.paymentState.lunchTotal)} · Owed {money(manualAccountingPreview.paymentState.totalOwedAmount)}
+              </small>
+              <small>{manualAccountingPreview.discountCampaign?.name || 'No early bird discount'}</small>
+              <button
+                type="button"
+                className="button"
+                onClick={addManualAccountingRow}
+                disabled={updatingAccountingKey === 'manual-new-row'}
+              >
+                {updatingAccountingKey === 'manual-new-row' ? 'Adding...' : 'Add Row'}
+              </button>
+            </div>
+          </div>
+          ) : null}
         </div>
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
@@ -10367,6 +11154,8 @@ export default function AdminPage() {
             </table>
           </div>
         </div>
+        </>
+        ) : null}
         {accountingOverlay.key ? (
           <div
             className="accountingOverlayWrap"
