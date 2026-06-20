@@ -1044,6 +1044,30 @@ async function processLeadJourneys() {
         continue
       }
 
+      const skipBefore = String(process.env.JOURNEY_CRON_SKIP_OVERDUE_BEFORE || '').trim()
+      if (skipBefore && run.next_send_at && new Date(run.next_send_at).getTime() < new Date(skipBefore).getTime()) {
+        const nextSendAt = computeNextSendAt(payload?.submittedAt || run.created_at, dueStep, scheduleDays)
+        const nextStatus = dueStep >= templates.length ? 'lead_closed' : 'lead_active'
+        await getSupabase().from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id || null,
+          email: run.email,
+          step_number: dueStep,
+          event_type: 'lead_step_auto_skipped',
+          subject: 'Lead step skipped (overdue before cron setup)',
+          body_preview: `Step ${dueStep} skipped — next_send_at was before the cron setup cutoff.`,
+          event_payload: { journeyType: 'lead_assistant', reason: 'overdue_before_cron_setup', skipBefore },
+        })
+        await getSupabase().from('email_journey_runs').update({
+          status: nextStatus,
+          current_step: dueStep,
+          next_send_at: nextStatus === 'lead_closed' ? null : nextSendAt,
+          updated_at: new Date().toISOString(),
+        }).eq('id', run.id)
+        if (nextStatus === 'lead_closed') closed += 1
+        continue
+      }
+
       await insertLeadAutoSkippedEvents(run, Number(run.current_step || 0) + 1, dueStep)
       await sendLeadStepEmail({
         run,
@@ -1289,5 +1313,22 @@ export async function POST(request) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
   } finally {
     setRequestSupabaseServer('')
+  }
+}
+
+export async function GET(request) {
+  const cronSecret = String(process.env.AUTOMATION_CRON_SECRET || '').trim()
+  const authHeader = request.headers.get('authorization') || ''
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!supabaseServerEnabled || !supabaseServer) {
+    return Response.json({ error: 'Supabase server client not configured.' }, { status: 500 })
+  }
+  try {
+    const result = await processLeadJourneys()
+    return Response.json({ ok: true, ...result })
+  } catch (error) {
+    return Response.json({ error: error.message || 'Cron run failed.' }, { status: 500 })
   }
 }

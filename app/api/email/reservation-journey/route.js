@@ -2771,6 +2771,30 @@ async function processDueReservationJourneys() {
         continue
       }
 
+      const skipBefore = String(process.env.JOURNEY_CRON_SKIP_OVERDUE_BEFORE || '').trim()
+      if (skipBefore && new Date(run.next_send_at).getTime() < new Date(skipBefore).getTime()) {
+        const nextStatus = dueStep >= 5 ? 'canceled_unpaid' : 'active'
+        const nextSendAt = nextSendAtIso(payload.submittedAt, dueStep, nextStatus)
+        await supabaseServer.from('email_journey_events').insert({
+          run_id: run.id,
+          profile_id: run.profile_id,
+          email: run.email,
+          step_number: dueStep,
+          event_type: 'reservation_step_auto_skipped',
+          subject: 'Reservation step skipped (overdue before cron setup)',
+          body_preview: `Step ${dueStep} skipped — next_send_at was before the cron setup cutoff.`,
+          event_payload: { phase: 'unpaid', reason: 'overdue_before_cron_setup', skipBefore },
+        })
+        await supabaseServer.from('email_journey_runs').update({
+          status: nextStatus,
+          current_step: dueStep,
+          next_send_at: nextSendAt,
+          updated_at: new Date().toISOString(),
+        }).eq('id', run.id)
+        if (nextStatus === 'canceled_unpaid') canceled += 1
+        continue
+      }
+
       await insertReservationAutoSkippedEvents(run, Number(run.current_step || 0) + 1, dueStep)
       await sendJourneyEmail({ run, payload, stepNumber: dueStep })
       emailed += 1
@@ -3650,5 +3674,22 @@ export async function POST(request) {
     return Response.json({ error: 'Invalid action. Use "enqueue", "process", "manual_send", "preview_step", "repair_missing_runs", "create_run_for_email", "attach_run_to_registration", or "set_tracker_visibility".' }, { status: 400 })
   } catch (error) {
     return Response.json({ error: error.message || 'Request failed.' }, { status: 500 })
+  }
+}
+
+export async function GET(request) {
+  const cronSecret = String(process.env.AUTOMATION_CRON_SECRET || '').trim()
+  const authHeader = request.headers.get('authorization') || ''
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!supabaseServerEnabled || !supabaseServer) {
+    return Response.json({ error: 'Supabase server client not configured.' }, { status: 500 })
+  }
+  try {
+    const result = await processDueReservationJourneys()
+    return Response.json({ ok: true, ...result })
+  } catch (error) {
+    return Response.json({ error: error.message || 'Cron run failed.' }, { status: 500 })
   }
 }
