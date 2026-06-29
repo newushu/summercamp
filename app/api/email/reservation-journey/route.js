@@ -276,9 +276,15 @@ function formatWeekRangeLabel(start, end) {
   if (!startDate || !endDate) {
     return String(start || '').trim() || String(end || '').trim() || 'Week selected'
   }
-  const startLabel = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const endLabel = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const startLabel = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const endLabel = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
   return `${startLabel} - ${endLabel}`
+}
+
+function formatWeekOf(dateStr) {
+  const date = parseDateOnly(dateStr)
+  if (!date) return String(dateStr || 'your upcoming week').trim()
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
 function calculateVenmoGoodsServicesTotal(amount) {
@@ -606,10 +612,19 @@ function buildLevelUpHtml(payload) {
       <p style="margin:0 0 10px;color:#7c2d12;">${escapeHtml(rewardLines[0])}</p>
       <p style="margin:0 0 10px;color:#7c2d12;">${escapeHtml(rewardLines[1])}</p>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid #fde68a;color:#92400e;">
-        <strong>Level Up app:</strong> Families get access on June 20 for lunch access, daily photos and videos, progress updates, and instructor notes.
+        <strong>Level Up app:</strong> Families get access throughout the summer for lunch booking, daily photos and videos, progress updates, and instructor notes.
       </div>
     `,
   })
+}
+
+function buildTrustBar() {
+  const items = ['&#10003; Expert coaching staff', '&#10003; Safe, structured environment', '&#10003; Burlington · Acton · Wellesley']
+  return `
+    <div style="margin:16px 0 0;padding:12px 16px;background:#f8fbff;border:1px solid #dbeafe;border-radius:14px;display:flex;flex-wrap:wrap;gap:10px;">
+      ${items.map((item) => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#1d4ed8;">${item}</span>`).join('')}
+    </div>
+  `
 }
 
 function buildEmailHtml({
@@ -630,54 +645,51 @@ function buildEmailHtml({
   const summaryHtml = buildRegistrationSummaryHtml(summaryLines)
   const amountDueHtml =
     Number.isFinite(Number(amountDue)) && Number(amountDue) > 0
-      ? `
-      <div style="margin:18px 0 0; padding:14px 16px; border:1px solid #fcd34d; border-radius:16px; background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
-        <p style="margin:0 0 6px; font-size:14px; font-weight:800; letter-spacing:0.04em; text-transform:uppercase; color:#92400e;">Amount Due</p>
-        <p style="margin:0; font-size:28px; font-weight:900; color:#b45309;">${escapeHtml(formatCurrency(amountDue))}</p>
-      </div>
-    `
+      ? `<div style="margin:18px 0 0;padding:14px 16px;border:1px solid #fcd34d;border-radius:16px;background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%);">
+          <p style="margin:0 0 6px;font-size:14px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#92400e;">Amount Due</p>
+          <p style="margin:0;font-size:28px;font-weight:900;color:#b45309;">${escapeHtml(formatCurrency(amountDue))}</p>
+        </div>`
       : ''
-
   const paymentMethodsHtml = showPaymentMethods ? buildPaymentMethodsHtml(amountDue) : ''
   const upsellHtml = buildUpsellHtml(payload)
   const levelUpHtml = buildLevelUpHtml(payload)
-
+  const trustBarHtml = buildTrustBar()
   return `
     <div style="margin:0;padding:20px;background:linear-gradient(180deg,#fff7ed 0%,#eff6ff 100%);color-scheme:light only;">
-      <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(194,65,12,0.12);font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
-        <div style="padding:15px 20px;background:linear-gradient(135deg,#f59e0b 0%,#f97316 36%,#0284c7 100%);color:#ffffff;">
-          ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;max-height:52px;margin:0 0 10px;" />` : ''}
-          <p style="margin:0;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;font-weight:800;">${escapeHtml(
-            CAMP_NAME
-          )}</p>
-          <p style="margin:6px 0 0;font-size:13px;opacity:0.95;">${escapeHtml(preview)}</p>
+      <div style="max-width:700px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:22px;overflow:hidden;box-shadow:0 24px 60px rgba(194,65,12,0.14);font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
+        <div style="padding:22px 24px 18px;background:linear-gradient(135deg,#ea580c 0%,#f59e0b 40%,#0284c7 100%);color:#ffffff;">
+          ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;max-height:56px;margin:0 0 12px;" />` : ''}
+          <p style="margin:0;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;font-weight:900;opacity:0.85;">${escapeHtml(CAMP_NAME)}</p>
+          <p style="margin:4px 0 0;font-size:22px;font-weight:900;line-height:1.2;letter-spacing:-0.01em;">Excellence in Martial Arts Education</p>
+          <p style="margin:8px 0 0;font-size:13px;opacity:0.9;font-weight:600;">${escapeHtml(preview)}</p>
         </div>
-        <div style="padding:22px 20px 14px;">
-          <div style="padding:16px 18px;border:1px solid #fde68a;border-radius:20px;background:linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%);">
-            <h2 style="margin:0 0 10px;font-size:27px;line-height:1.2;color:#0f172a;">${escapeHtml(heading)}</h2>
-            <p style="margin:0;font-size:15px;color:#7c2d12;">Important registration details, next steps, and family support in one place.</p>
+        <div style="padding:26px 24px 20px;">
+          <div style="padding:20px 22px;border:2px solid #fde68a;border-radius:20px;background:linear-gradient(180deg,#fffdf4 0%,#fff7d6 100%);box-shadow:0 8px 24px rgba(234,88,12,0.07);">
+            <h2 style="margin:0 0 10px;font-size:28px;line-height:1.2;color:#0f172a;font-weight:900;">${escapeHtml(heading)}</h2>
+            <p style="margin:0;font-size:15px;color:#7c2d12;font-weight:600;">Important registration details, next steps, and family support — all in one place.</p>
           </div>
-          ${
-            heroImageUrl
-              ? `<div style="margin:16px 0 0;border:1px solid #fde68a;border-radius:20px;overflow:hidden;background:#fff7ed;">
-                  <img src="${escapeHtml(heroImageUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;width:100%;max-height:260px;object-fit:cover;" />
-                </div>`
-              : ''
-          }
+          ${trustBarHtml}
+          ${heroImageUrl ? `<div style="margin:16px 0 0;border:1px solid #fde68a;border-radius:20px;overflow:hidden;background:#fff7ed;"><img src="${escapeHtml(heroImageUrl)}" alt="${escapeHtml(CAMP_NAME)}" style="display:block;width:100%;max-height:260px;object-fit:cover;" /></div>` : ''}
           ${greetingHtml}
           <div>${sectionHtml}</div>
-          <div style="margin:16px 0 0;padding:16px 18px;border:1px solid #bfdbfe;border-radius:18px;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);">
-            <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:linear-gradient(135deg,#0284c7 0%,#2563eb 100%);color:#ffffff;text-decoration:none;font-weight:800;">
-              ${escapeHtml(ctaLabel)}
+          <div style="margin:20px 0 0;padding:20px 22px;border:2px solid #0284c7;border-radius:18px;background:linear-gradient(135deg,#0284c7 0%,#2563eb 100%);text-align:center;box-shadow:0 12px 32px rgba(2,132,199,0.28);">
+            <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:14px 28px;border-radius:999px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-weight:900;font-size:16px;letter-spacing:0.01em;box-shadow:0 4px 16px rgba(15,23,42,0.14);">
+              ${escapeHtml(ctaLabel)} &#8594;
             </a>
+            <p style="margin:10px 0 0;font-size:12px;color:rgba(255,255,255,0.85);font-weight:600;">summer.newushu.com</p>
           </div>
           ${amountDueHtml}
           ${upsellHtml}
           ${levelUpHtml}
           ${summaryHtml}
           ${paymentMethodsHtml}
-          <div style="margin:16px 0 0;padding:12px 14px;border-top:1px solid #e2e8f0;color:#64748b;font-size:13px;">
-            Reply to this email if you want help adding weeks, confirming payment, or adjusting the schedule.
+          <div style="margin:24px 0 0;padding:18px 20px;border-top:2px solid #e2e8f0;background:#f8fbff;">
+            <p style="margin:0 0 10px;font-size:14px;color:#334155;line-height:1.6;">Questions? Simply <strong>reply to this email</strong> — our team responds quickly. We are happy to help with week adjustments, payment, scheduling, or any questions about your camper&#39;s program.</p>
+            <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">
+              <strong style="color:#0f172a;">New England Wushu Summer Camp</strong><br />
+              Burlington · Acton · Wellesley, MA<br />
+              <a href="https://summer.newushu.com" style="color:#2563eb;text-decoration:none;">summer.newushu.com</a>
+            </p>
           </div>
         </div>
       </div>
@@ -849,7 +861,7 @@ function buildStepContent({ firstName, stepNumber, reservationDeadlineLabel, sum
     ...getLevelUpRewardsLines(payload),
     '',
     'Level Up app:',
-    'Families get access on June 20 for lunch booking, progress photos/videos, and instructor notes.',
+    'Families get access throughout the summer for lunch booking, progress photos/videos, and instructor notes.',
     '',
     'Payment Methods:',
     PAYMENT_METHODS_TEXT,
@@ -1352,7 +1364,7 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
   const camperNames = Array.isArray(payload?.camperNames) ? payload.camperNames : []
   const camperLabel = camperNames.length > 0 ? camperNames.join(', ') : 'your camper'
   const stageWeek = stage?.weekStart ? { start: stage.weekStart } : normalizeCampWeeks(payload)[0]
-  const firstWeekLabel = stageWeek?.start || 'your selected week'
+  const weekOfLabel = formatWeekOf(stageWeek?.start) || 'your upcoming week'
   const track = detectCampJourneyTrack(payload)
   const isBootcampTrack = track === 'bootcamp' || track === 'mixed'
 
@@ -1388,16 +1400,16 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
 
   const generalStageMap = {
     sevenDay: {
-      heading: '7-Day Countdown - General Camp Preparation Snapshot',
-      subject: '7 Days Before General Camp: Fun Week Preview + Family Checklist',
-      preview: `${CAMP_NAME} 7-day general camp preparation`,
+      heading: `General Camp — Week of ${weekOfLabel}: Preparation Snapshot`,
+      subject: `Your Upcoming General Camp Week (${weekOfLabel}): Fun Preview + Family Checklist`,
+      preview: `${CAMP_NAME} — general camp week of ${weekOfLabel}`,
       ctaLabel: 'View Schedule & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        `Great news - ${camperLabel} is officially registered for General Camp, and your selected week starts ${firstWeekLabel}.`,
-        'This is a great start to your camper’s wushu journey, and camp next week will be a fun and productive way to build fundamentals.',
+        `Great news — ${camperLabel} is officially registered for General Camp, and your upcoming camp week starts the week of ${weekOfLabel}.`,
+        "This is a great start to your camper's wushu journey, and camp this week will be a fun and productive way to build fundamentals.",
         '',
         'Here is a quick reminder of some of the fun your camper will see during the week:',
         ...weeklyFunLines,
@@ -1405,15 +1417,15 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
       ],
     },
     fiveDay: {
-      heading: '5-Day Reminder - General Camp Week Is Almost Here',
-      subject: '5 Days Before General Camp: What To Pack + Week Highlights',
-      preview: `${CAMP_NAME} 5-day general camp preparation`,
+      heading: `General Camp — Week of ${weekOfLabel} Is Almost Here`,
+      subject: `Your Upcoming General Camp Week (${weekOfLabel}): What To Pack + Highlights`,
+      preview: `${CAMP_NAME} — general camp week of ${weekOfLabel}`,
       ctaLabel: 'Review Prep & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'General Camp is coming up fast. A few reminders for a smooth and fun week:',
+        `General Camp week of ${weekOfLabel} is coming up. A few reminders for a smooth and fun week:`,
         '- Label water bottle, athletic shoes, and comfortable training clothes.',
         '- Pack sunscreen or outdoor shoes if that helps for Tuesday park day.',
         '- Bring a change of clothes for Wednesday water balloon fun.',
@@ -1424,15 +1436,15 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
       ],
     },
     threeDay: {
-      heading: '3-Day Reminder - General Camp Final Checklist',
-      subject: '3 Days Before General Camp: Final Prep + Summer Growth Reminder',
-      preview: `${CAMP_NAME} 3-day general camp preparation`,
+      heading: `General Camp — Week of ${weekOfLabel}: Final Checklist`,
+      subject: `Your Upcoming General Camp (${weekOfLabel}): Final Prep Checklist`,
+      preview: `${CAMP_NAME} — general camp week of ${weekOfLabel}`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Three days to go before General Camp starts:',
+        `Camp week of ${weekOfLabel} is almost here. Final checklist:`,
         `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack daily training clothes and water bottle.',
         '- Keep Tuesday park day, Wednesday water balloon day, Thursday BBQ, and Friday showcase during pickup in mind.',
@@ -1442,15 +1454,15 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
       ],
     },
     oneDay: {
-      heading: '1-Day Reminder - See You Tomorrow At General Camp',
-      subject: 'General Camp Starts Tomorrow: Final Reminder + Welcome',
-      preview: `${CAMP_NAME} 1-day general camp preparation`,
+      heading: `General Camp — Week of ${weekOfLabel}: See You Tomorrow!`,
+      subject: `Your General Camp Week (${weekOfLabel}) Starts Tomorrow: Final Reminder`,
+      preview: `${CAMP_NAME} — general camp week of ${weekOfLabel}`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'General Camp starts tomorrow. Final reminder before arrival:',
+        `General Camp week of ${weekOfLabel} starts tomorrow. Final reminder before arrival:`,
         `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack training clothes, water bottle, and anything else your camper needs.',
         '- We are excited for a week of training, park day, water fun, BBQ, and the Friday showcase during pickup.',
@@ -1461,29 +1473,29 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
 
   const bootcampStageMap = {
     sevenDay: {
-      heading: '7-Day Countdown - Boot Camp Preparation Snapshot',
-      subject: '7 Days Before Boot Camp: Taolu Progress + Competition Prep',
-      preview: `${CAMP_NAME} 7-day boot camp preparation`,
+      heading: `Boot Camp — Week of ${weekOfLabel}: Preparation Snapshot`,
+      subject: `Your Upcoming Boot Camp Week (${weekOfLabel}): Taolu Progress + Competition Prep`,
+      preview: `${CAMP_NAME} — boot camp week of ${weekOfLabel}`,
       ctaLabel: 'View Schedule & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        `Great news - ${camperLabel} is officially registered for Competition Boot Camp, and your selected week starts ${firstWeekLabel}.`,
-        'Boot Camp next week is a strong chance to keep building taolu competition skills, tumbling skills, and sharper performance habits.',
+        `Great news — ${camperLabel} is officially registered for Competition Boot Camp, and your upcoming boot camp week starts the week of ${weekOfLabel}.`,
+        'Boot Camp this week is a strong chance to keep building taolu competition skills, tumbling skills, and sharper performance habits.',
         ...bootcampClose,
       ],
     },
     fiveDay: {
-      heading: '5-Day Reminder - Boot Camp Week Is Almost Here',
-      subject: '5 Days Before Boot Camp: Final Logistics + Skill Progress Focus',
-      preview: `${CAMP_NAME} 5-day boot camp preparation`,
+      heading: `Boot Camp — Week of ${weekOfLabel} Is Almost Here`,
+      subject: `Your Upcoming Boot Camp Week (${weekOfLabel}): Final Logistics + Skill Focus`,
+      preview: `${CAMP_NAME} — boot camp week of ${weekOfLabel}`,
       ctaLabel: 'Review Prep & Add Weeks',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Competition Boot Camp is coming up fast. A few reminders before the week begins:',
+        `Competition Boot Camp week of ${weekOfLabel} is coming up. A few reminders before the week begins:`,
         '- Pack training clothes, athletic shoes, and water bottle each day.',
         '- Athletes should come ready for technical reps, tumbling work, and focused corrections.',
         '- Summer camp is one of the best ways to stay current on skill sprint goals and keep progressing through the curriculum pathway.',
@@ -1493,15 +1505,15 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
       ],
     },
     threeDay: {
-      heading: '3-Day Reminder - Boot Camp Final Checklist',
-      subject: '3 Days Before Boot Camp: Final Prep + Competition Mindset',
-      preview: `${CAMP_NAME} 3-day boot camp preparation`,
+      heading: `Boot Camp — Week of ${weekOfLabel}: Final Checklist`,
+      subject: `Your Upcoming Boot Camp Week (${weekOfLabel}): Final Prep + Competition Mindset`,
+      preview: `${CAMP_NAME} — boot camp week of ${weekOfLabel}`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Three days to go before Competition Boot Camp starts:',
+        `Camp week of ${weekOfLabel} is almost here. Final checklist:`,
         `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack daily training gear and water bottle.',
         '- Athletes should be ready for taolu reps, tumbling progress, and steady work on skill tree and skill sprint items.',
@@ -1509,15 +1521,15 @@ function buildPaidPrepContent({ firstName, stage, payload }) {
       ],
     },
     oneDay: {
-      heading: '1-Day Reminder - See You Tomorrow At Boot Camp',
-      subject: 'Boot Camp Starts Tomorrow: Final Reminder + Ready To Train',
-      preview: `${CAMP_NAME} 1-day boot camp preparation`,
+      heading: `Boot Camp — Week of ${weekOfLabel}: See You Tomorrow!`,
+      subject: `Your Boot Camp Week (${weekOfLabel}) Starts Tomorrow: Final Reminder`,
+      preview: `${CAMP_NAME} — boot camp week of ${weekOfLabel}`,
       ctaLabel: 'Open Family Checklist',
       ctaHref: 'https://summer.newushu.com/register',
       lines: [
         `Hi ${firstName},`,
         '',
-        'Competition Boot Camp starts tomorrow. Final reminder before arrival:',
+        `Competition Boot Camp week of ${weekOfLabel} starts tomorrow. Final reminder before arrival:`,
         `- Camp runs ${DAY_CAMP_START_TIME}-${DAY_CAMP_END_TIME}, with pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
         '- Pack training clothes, water bottle, and anything needed for tumbling or conditioning work.',
         '- We are excited to help your athlete keep progressing in taolu, tumbling, and the broader curriculum pathway.',
@@ -1584,7 +1596,7 @@ function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
     },
     twoWeek: {
       heading: 'General Camp Momentum Check-In',
-      subject: 'You’re Signed Up for General Camp. Want Even More Growth This Summer?',
+      subject: 'You're Signed Up for General Camp. Want Even More Growth This Summer?',
       preview: `${CAMP_NAME} paid family follow-up`,
       ctaLabel: 'Add More Weeks',
       ctaHref: 'https://summer.newushu.com/register',
@@ -1658,7 +1670,7 @@ function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
     },
     twoWeek: {
       heading: 'Competition Boot Camp Momentum Check-In',
-      subject: 'You’re Signed Up for Boot Camp. Want Even More Taolu Progress This Summer?',
+      subject: 'You're Signed Up for Boot Camp. Want Even More Taolu Progress This Summer?',
       preview: `${CAMP_NAME} paid family follow-up`,
       ctaLabel: 'Add More Weeks',
       ctaHref: 'https://summer.newushu.com/register',
