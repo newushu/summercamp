@@ -19,6 +19,10 @@ import {
 import { buildRegistrationSummaryDocument } from '../../lib/registrationSummaryDocument'
 import { buildRosterSummaryPdfBase64 } from '../../lib/rosterSummaryPdf'
 import {
+  buildCamperDetailPagesPdfBase64,
+  buildLunchPurchaseTablePdfBase64,
+} from '../../lib/campGroupExportPdf'
+import {
   fetchAdminConfigFromSupabase,
   filterSelectedWeeksByDateWindow,
   saveAdminConfigToSupabase,
@@ -43,6 +47,7 @@ import {
   uploadFilesToMediaBucket,
 } from '../../lib/mediaLibraryApi'
 import { supabase, supabaseEnabled } from '../../lib/supabase'
+import { getLunchItemLabel, isLunchItemSelected } from '../../lib/lunchOptions'
 
 const programMeta = {
   general: {
@@ -1544,6 +1549,7 @@ const mediaSubtabBlueprint = [
 
 const accountingSubtabBlueprint = [
   { id: 'table', label: 'Accounting Table' },
+  { id: 'group-export', label: 'Group Export' },
   { id: 'general-export', label: 'General Camp Export' },
   { id: 'bootcamp-export', label: 'Competition Team Export' },
   { id: 'lunch-export', label: 'Lunch Export' },
@@ -1556,6 +1562,7 @@ const accountingDiscountOverrideOptions = [
   { value: '', label: 'Auto' },
   { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_ONE, label: 'Redeem Round 1' },
   { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_TWO, label: 'Redeem Round 2' },
+  { value: LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_THREE, label: 'Redeem Round 3' },
 ]
 const manualAccountingSelectionOptions = [
   { value: 'fullWeek', label: 'Full Week' },
@@ -1614,25 +1621,25 @@ function getWeekDayKeysForProgram(programKey) {
   return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
 }
 
-function normalizeDayKey(dayKey) {
-  const value = String(dayKey || '').trim().toLowerCase()
-  if (value.startsWith('mon')) return 'mon'
-  if (value.startsWith('tue')) return 'tue'
-  if (value.startsWith('wed')) return 'wed'
-  if (value.startsWith('thu')) return 'thu'
-  if (value.startsWith('fri')) return 'fri'
-  if (value.startsWith('sat')) return 'sat'
-  if (value.startsWith('sun')) return 'sun'
-  return value
-}
-
 function toWeekLabel(weekId, weekById) {
   const week = weekById[weekId]
   if (week) {
     return formatWeekLabel(week)
   }
-  const [, startDate = ''] = String(weekId || '').split(':')
+  const startDate = getDatePartFromWeekId(weekId)
   return startDate || weekId
+}
+
+function getDatePartFromWeekId(weekId) {
+  const rawWeekId = String(weekId || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawWeekId)) {
+    return rawWeekId
+  }
+  const datePart = rawWeekId
+    .split(':')
+    .reverse()
+    .find((part) => /^\d{4}-\d{2}-\d{2}$/.test(String(part || '').trim()))
+  return datePart || ''
 }
 
 function getCanonicalWeekId(programKey, weekId) {
@@ -1641,8 +1648,11 @@ function getCanonicalWeekId(programKey, weekId) {
     return ''
   }
   if (rawWeekId.startsWith('daycamp:')) {
-    const [, startDate = ''] = rawWeekId.split(':')
+    const startDate = getDatePartFromWeekId(rawWeekId)
     return `${programKey}:${startDate}`
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawWeekId)) {
+    return `${programKey}:${rawWeekId}`
   }
   return rawWeekId
 }
@@ -1676,7 +1686,7 @@ function formatCalendarDate(value) {
 }
 
 function isIncludedLunchDay(dayKey) {
-  return String(dayKey || '') === 'Thu'
+  return String(dayKey || '') === 'Fri'
 }
 
 function normalizeAccountingEditorDayKey(dayKey) {
@@ -1689,10 +1699,62 @@ function normalizeAccountingEditorDayKey(dayKey) {
   return String(dayKey || '').trim()
 }
 
+function getAccountingEditorDayMode(entry, dayKey) {
+  return (
+    entry?.days?.[dayKey] ||
+    entry?.days?.[String(dayKey || '').toLowerCase()] ||
+    entry?.days?.[String(dayKey || '').toUpperCase()] ||
+    'NONE'
+  )
+}
+
+function getAccountingEditorWeekKeyAliases(week) {
+  const id = String(week?.id || '').trim()
+  const start = String(week?.start || '').trim()
+  return Array.from(
+    new Set(
+      [
+        id,
+        start,
+        start ? `daycamp:${start}` : '',
+        start ? `daycamp:burlington:${start}` : '',
+        start ? `daycamp:acton:${start}` : '',
+        start ? `daycamp:wellesley:${start}` : '',
+        start ? `general:${start}` : '',
+        start ? `bootcamp:${start}` : '',
+      ].filter(Boolean)
+    )
+  )
+}
+
+function resolveAccountingEditorScheduleKey(student, week, preferredCampType = '') {
+  const schedule = typeof student?.schedule === 'object' && student?.schedule ? student.schedule : {}
+  const aliases = getAccountingEditorWeekKeyAliases(week)
+  const preferred = String(preferredCampType || '').trim().toLowerCase()
+  if (preferred) {
+    const matchingPreferred = aliases.find((key) => {
+      const entry = schedule[key]
+      return entry && resolveScheduleProgramKey(entry, key) === preferred
+    })
+    if (matchingPreferred) return matchingPreferred
+  }
+  return aliases.find((key) => schedule[key]) || aliases[0] || String(week?.id || '').trim()
+}
+
+function getAccountingEditorScheduleEntry(student, week, preferredCampType = '') {
+  const key = resolveAccountingEditorScheduleKey(student, week, preferredCampType)
+  return {
+    key,
+    entry: student?.schedule?.[key] || null,
+  }
+}
+
 function getLunchWeeksForStudent(student, weeksById) {
   const rows = []
   for (const [weekId, entry] of Object.entries(student?.schedule || {})) {
-    const week = weeksById?.[weekId]
+    const programKeyForWeek = resolveScheduleProgramKey(entry, weekId)
+    const canonicalWeekId = getCanonicalWeekId(programKeyForWeek, weekId)
+    const week = weeksById?.[weekId] || weeksById?.[canonicalWeekId] || weeksById?.[String(weekId || '').split(':').pop()]
     const programKey = week?.programKey || entry?.programKey
     if (programKey === 'overnight') {
       continue
@@ -1713,9 +1775,10 @@ function getLunchWeeksForStudent(student, weeksById) {
       return acc
     }, {})
 
-    const selectedDays = Object.entries(entry?.days || {})
-      .filter(([, mode]) => mode && mode !== 'NONE')
-      .map(([dayKey, mode]) => {
+    const selectedDays = accountingEditorDayKeys
+      .map((dayKey) => ({ dayKey, mode: getAccountingEditorDayMode(entry, dayKey) }))
+      .filter((day) => day.mode && day.mode !== 'NONE')
+      .map(({ dayKey, mode }) => {
         const normalizedDayKey = normalizeAccountingEditorDayKey(dayKey)
         const dayMeta = dayMetaByKey[normalizedDayKey] || {}
         return {
@@ -1723,6 +1786,7 @@ function getLunchWeeksForStudent(student, weeksById) {
           date: dayMeta.date || '',
           mode,
           key: `${weekId}:${normalizedDayKey}`,
+          canonicalKey: `${canonicalWeekId}:${normalizedDayKey}`,
         }
       })
       .sort((a, b) => accountingEditorDayKeys.indexOf(a.dayKey) - accountingEditorDayKeys.indexOf(b.dayKey))
@@ -1733,7 +1797,7 @@ function getLunchWeeksForStudent(student, weeksById) {
         week:
           week || {
             id: weekId,
-            start: '',
+            start: String(canonicalWeekId || weekId).split(':').pop(),
             end: '',
             programLabel: 'Camp Week',
             days: sourceDays,
@@ -1760,14 +1824,14 @@ function getWeekSelectionSummary(entry, week) {
 
   const weekDayKeysRaw = Array.isArray(week.days) ? week.days.map((day) => day.key).filter(Boolean) : []
   const weekDayKeys = weekDayKeysRaw.length > 0 ? weekDayKeysRaw : accountingEditorDayKeys
-  const fullWeekSelected = weekDayKeys.every((day) => (entry.days?.[day] || 'NONE') === 'FULL')
+  const fullWeekSelected = weekDayKeys.every((day) => getAccountingEditorDayMode(entry, day) === 'FULL')
   if (fullWeekSelected) {
     return 'Registered: Full Week'
   }
 
   const counts = { FULL: 0, AM: 0, PM: 0 }
   for (const day of weekDayKeys) {
-    const mode = entry.days?.[day] || 'NONE'
+    const mode = getAccountingEditorDayMode(entry, day)
     if (mode !== 'NONE') {
       counts[mode] += 1
     }
@@ -1798,7 +1862,7 @@ function buildOvernightAccountingInvoice(weeksSelected, regularWeekPrice, discou
   const activeDiscountedRate = discountActive
     ? Math.min(regularRate || discountedWeekPrice, Number(discountedWeekPrice || 0))
     : regularRate
-  const secondWeekDiscount = discountActive && normalizedWeeks >= 2 ? 100 : 0
+  const secondWeekDiscount = 0
   const regularSubtotal = normalizedWeeks * regularRate
   const discountedSubtotal = normalizedWeeks * activeDiscountedRate
   const total = Math.max(0, discountedSubtotal - secondWeekDiscount)
@@ -1916,7 +1980,7 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
       }
       const lunchKey = `${weekId}:${day.key}`
       const lunchLabel =
-        day.key === 'thursday' || day.key === 'Thu'
+        day.key === 'friday' || day.key === 'Fri'
           ? 'BBQ lunch included'
           : lunch[lunchKey]
             ? 'Lunch selected'
@@ -2075,7 +2139,17 @@ function buildCamperPricing({
     const resolvedWeek = weekById[canonicalWeekId] || weekById[weekId] || null
     const dayKeys = Object.keys(entry?.days || {})
     const resolvedDayKeys = dayKeys.length > 0 ? dayKeys : getWeekDayKeysForProgram(programKey)
-    const modes = resolvedDayKeys.map((dayKey) => entry?.days?.[dayKey] || 'NONE')
+    const modes = resolvedDayKeys.map(
+      (dayKey) =>
+        entry?.days?.[dayKey] ||
+        entry?.days?.[normalizeAccountingEditorDayKey(dayKey)] ||
+        entry?.days?.[String(dayKey || '').toLowerCase()] ||
+        'NONE'
+    )
+    const hasSelectedDay = modes.some((mode) => mode && mode !== 'NONE')
+    if (!hasSelectedDay) {
+      continue
+    }
     const fullWeekSelected = modes.every((mode) => mode === 'FULL')
     const counts = { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 }
 
@@ -2196,18 +2270,24 @@ function buildCamperPricing({
 
     if (programKey !== 'overnight') {
       for (const dayKey of resolvedDayKeys) {
-        const mode = entry?.days?.[dayKey] || 'NONE'
+        const mode =
+          entry?.days?.[dayKey] ||
+          entry?.days?.[normalizeAccountingEditorDayKey(dayKey)] ||
+          entry?.days?.[String(dayKey || '').toLowerCase()] ||
+          'NONE'
         if (mode === 'NONE') {
           continue
         }
-        const lunchKey = `${weekId}:${dayKey}`
-        if (normalizeDayKey(dayKey) === 'thu') {
-          totals.lunchDays.push(`${toWeekLabel(canonicalWeekId || weekId, weekById)} · Thu BBQ included`)
-          continue
-        }
-        if (lunch[lunchKey]) {
+        const normalizedLunchDayKey = normalizeAccountingEditorDayKey(dayKey)
+        const selectedLunch =
+          lunch[`${weekId}:${dayKey}`] ||
+          lunch[`${weekId}:${normalizedLunchDayKey}`] ||
+          lunch[`${canonicalWeekId || weekId}:${normalizedLunchDayKey}`]
+        if (isLunchItemSelected(selectedLunch)) {
           totals.paidLunchCount += 1
-          totals.lunchDays.push(`${toWeekLabel(canonicalWeekId || weekId, weekById)} · ${dayKey.slice(0, 3).toUpperCase()} lunch`)
+          totals.lunchDays.push(
+            `${toWeekLabel(canonicalWeekId || weekId, weekById)} · ${normalizedLunchDayKey.toUpperCase()} ${getLunchItemLabel(selectedLunch)}`
+          )
         }
       }
     }
@@ -2550,6 +2630,7 @@ export default function AdminPage() {
     key: '',
     label: '',
     items: [],
+    scheduleRows: [],
     top: 0,
     left: 0,
     pointerLeft: 24,
@@ -2852,17 +2933,9 @@ export default function AdminPage() {
           Number(discount.overnightWeek || 0) > 0 &&
           Number(discount.overnightWeek || 0) !== Number(regular.overnightWeek || 0),
         note: accountingDiscountActive
-          ? 'Week 1 uses the discounted overnight full-week price. Week 2 gets an extra $100 off.'
+          ? 'Round 3 applies the full-week discount to each overnight full week.'
           : 'Accounting uses overnight full-week pricing only.',
-        rows: accountingDiscountActive
-          ? [
-              {
-                label: 'Second Week Special',
-                value: Number(discount.overnightWeek || 0),
-                discountedValue: Math.max(0, Number(discount.overnightWeek || 0) - 100),
-              },
-            ]
-          : [],
+        rows: [],
       },
     ]
   }, [accountingDiscountActive, bootcampTuition.discount.amHalf, bootcampTuition.discount.fullDay, bootcampTuition.discount.fullWeek, bootcampTuition.discount.pmHalf, bootcampTuition.regular.amHalf, bootcampTuition.regular.fullDay, bootcampTuition.regular.fullWeek, bootcampTuition.regular.pmHalf, config.tuition.discount, config.tuition.discountEndDate, config.tuition.regular])
@@ -3143,8 +3216,16 @@ export default function AdminPage() {
   }, [chronologicalEmailEvents, emailJourneyRuns, registrationRecords])
   const weekById = useMemo(() => {
     const map = {}
+    const locationKeys = ['burlington', 'acton', 'wellesley']
     for (const week of [...weekOptions.general, ...weekOptions.bootcamp, ...weekOptions.overnight]) {
       map[week.id] = week
+      if (week.start) {
+        map[week.start] = week
+        map[`daycamp:${week.start}`] = week
+        for (const locationKey of locationKeys) {
+          map[`daycamp:${locationKey}:${week.start}`] = week
+        }
+      }
     }
     return map
   }, [weekOptions.bootcamp, weekOptions.general, weekOptions.overnight])
@@ -3657,9 +3738,19 @@ export default function AdminPage() {
     const map = {}
     weekOptions.general.forEach((week, index) => {
       map[week.id] = { number: index + 1, label: `General Camp Week ${index + 1}` }
+      if (week.start) {
+        map[week.start] = map[week.id]
+        map[`daycamp:${week.start}`] = map[week.id]
+        map[`daycamp:burlington:${week.start}`] = map[week.id]
+        map[`daycamp:acton:${week.start}`] = map[week.id]
+        map[`daycamp:wellesley:${week.start}`] = map[week.id]
+      }
     })
     weekOptions.bootcamp.forEach((week, index) => {
       map[week.id] = { number: index + 1, label: `Boot Camp Week ${index + 1}` }
+      if (week.start) {
+        map[`bootcamp:${week.start}`] = map[week.id]
+      }
     })
     weekOptions.overnight.forEach((week, index) => {
       map[week.id] = { number: index + 1, label: `Overnight Week ${index + 1}` }
@@ -3678,6 +3769,15 @@ export default function AdminPage() {
     () =>
       accountingEditRegistrationWeeks.reduce((acc, week) => {
         acc[week.id] = week
+        if (week.start) {
+        acc[week.start] = week
+        acc[`general:${week.start}`] = week
+        acc[`bootcamp:${week.start}`] = week
+        acc[`daycamp:${week.start}`] = week
+        acc[`daycamp:burlington:${week.start}`] = week
+        acc[`daycamp:acton:${week.start}`] = week
+        acc[`daycamp:wellesley:${week.start}`] = week
+      }
         return acc
       }, {}),
     [accountingEditRegistrationWeeks]
@@ -3733,10 +3833,17 @@ export default function AdminPage() {
           manualDiscount,
         })
         const selectedWeekIds = Array.from(new Set(pricing.weekIds))
-        const weekChipDetails = pricing.weekDetails.map((item) => ({
-          chipLabel: `${weekNumberById[item.weekId]?.label || item.label} · ${item.isFullWeek ? 'Full Week' : 'Partial'}`,
-          detailLines: item.detailLines,
-        }))
+        const weekChipDetails = pricing.weekDetails.map((item) => {
+          const weekNumberLabel = weekNumberById[item.weekId]?.label || ''
+          const dateLabel = item.label || toWeekLabel(item.weekId, weekById)
+          return {
+            chipLabel: `${weekNumberLabel ? `${weekNumberLabel}: ` : ''}${dateLabel} · ${item.isFullWeek ? 'Full Week' : 'Partial'}`,
+            detailLines: Array.from(new Set([
+              `Dates: ${dateLabel}`,
+              ...item.detailLines,
+            ])),
+          }
+        })
         const weekOverlayLines = weekChipDetails.flatMap((item) => [item.chipLabel, ...item.detailLines])
         const paymentMethod = String(entry.payment_method || '').trim().toLowerCase()
         const invoiceCalendarLines = buildAccountingCalendarLines({
@@ -3818,6 +3925,7 @@ export default function AdminPage() {
           weekLabels: selectedWeekIds.map((weekId) => toWeekLabel(weekId, weekById)),
           weekChipDetails,
           weekOverlayLines,
+          lunchSelections: typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {},
           lunchDays: pricing.lunchDays,
           lunchDaysCount: pricing.paidLunchCount,
           lunchCost: pricing.lunchCost,
@@ -4110,32 +4218,49 @@ export default function AdminPage() {
     }
 
     for (const row of activeAccountingRows) {
-      const lunchItems = Array.isArray(row.lunchDays) ? row.lunchDays : []
       for (const [itemIndex, item] of (Array.isArray(row.scheduleByWeek) ? row.scheduleByWeek : []).entries()) {
         const weekId = String(item?.weekId || '').trim()
         const week = weekById[weekId] || accountingEditWeeksById[weekId] || item?.week || null
         const weekLabel = week ? formatWeekLabel(week) : toWeekLabel(weekId, weekById)
-        const matchingLunchItems = lunchItems.filter((lunchLine) => String(lunchLine || '').includes(weekLabel))
+        const resolvedGroupKey = week?.id || weekId || weekLabel
+        const lunchSelections = typeof row.lunchSelections === 'object' && row.lunchSelections ? row.lunchSelections : {}
         const dayValues = accountingEditorDayKeys.reduce((acc, day) => {
           const mode =
             item?.entry?.days?.[day] ||
             item?.entry?.days?.[day.toLowerCase()] ||
             item?.entry?.days?.[day.toUpperCase()] ||
+            item?.entry?.days?.[
+              day === 'Mon'
+                ? 'monday'
+                : day === 'Tue'
+                  ? 'tuesday'
+                  : day === 'Wed'
+                    ? 'wednesday'
+                    : day === 'Thu'
+                      ? 'thursday'
+                      : day === 'Fri'
+                        ? 'friday'
+                        : day
+            ] ||
             'NONE'
           if (!mode || mode === 'NONE') {
             acc[day] = ''
             return acc
           }
-          if (isIncludedLunchDay(day)) {
-            acc[day] = 'BBQ'
-            return acc
-          }
-          const dayNeedle = `· ${day.toUpperCase()} lunch`
-          acc[day] = matchingLunchItems.some((lunchLine) => String(lunchLine || '').includes(dayNeedle)) ? 'Yes' : ''
+          const sourceWeekId = String(item?.sourceWeekId || '').trim()
+          const lowerDay = String(day || '').toLowerCase()
+          const selectedLunch =
+            lunchSelections[`${weekId}:${day}`] ||
+            lunchSelections[`${weekId}:${lowerDay}`] ||
+            lunchSelections[`${item?.sourceWeekId || ''}:${day}`] ||
+            lunchSelections[`${sourceWeekId}:${lowerDay}`] ||
+            lunchSelections[`${week?.id || ''}:${day}`] ||
+            lunchSelections[`${week?.id || ''}:${lowerDay}`]
+          acc[day] = getLunchItemLabel(selectedLunch)
           return acc
         }, {})
         if (!Object.values(dayValues).some(Boolean)) continue
-        const groupKey = weekId || weekLabel
+        const groupKey = resolvedGroupKey
         if (!groupsByWeekId[groupKey]) {
           groupsByWeekId[groupKey] = { week: week || { id: groupKey, start: '', end: '' }, rows: [] }
         }
@@ -4147,7 +4272,9 @@ export default function AdminPage() {
           camperName: row.camperName,
           parentName: row.parentName,
           phone: row.parentPhone,
-          lunchItems: matchingLunchItems,
+          lunchItems: accountingEditorDayKeys
+            .map((day) => (dayValues[day] ? `${day}: ${dayValues[day]}` : ''))
+            .filter(Boolean),
           dayValues,
           paid: Number(row.lunchPaidAmount || 0),
           owed: Number(row.lunchOwedAmount || 0),
@@ -4162,7 +4289,7 @@ export default function AdminPage() {
             }, {}),
             lunchItems: Array.from(new Set([
               ...(groupsByWeekId[groupKey].rows[existingIndex].lunchItems || []),
-              ...matchingLunchItems,
+              ...nextLunchRow.lunchItems,
             ])),
           }
         } else {
@@ -4469,14 +4596,14 @@ export default function AdminPage() {
         methodTotals[row.paymentMethod] += Number(row.paidAmount || 0)
       }
     }
-    const roundTwoRows = source.filter((row) => row.discountCampaignId === LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_TWO)
+    const roundThreeRows = source.filter((row) => row.discountCampaignId === LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_THREE)
     return {
       totalTuition: source.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
       totalPaid: source.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
       totalOwed: source.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
-      roundTwoRevenue: roundTwoRows.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
-      roundTwoOwed: roundTwoRows.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
-      roundTwoTuition: roundTwoRows.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
+      roundThreeRevenue: roundThreeRows.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0),
+      roundThreeOwed: roundThreeRows.reduce((sum, row) => sum + Number(row.owedAmount || 0), 0),
+      roundThreeTuition: roundThreeRows.reduce((sum, row) => sum + Number(row.totalAfterManualDiscount || 0), 0),
       methodTotals,
       activeRows: source.length,
       archivedRows: archivedAccountingRows.length,
@@ -4759,10 +4886,10 @@ export default function AdminPage() {
           'Overnight student 1: Jul 12 - Jul 18, Jul 19 - Jul 25 | Activities: Sanda fundamentals, Flexibility training, Video review',
           'Drop-off: Sunday 1:00 PM',
           'Pickup: Saturday 4:00 PM',
-          'Location: Camp House (Address TBA)',
-          'Week 1: $980.00. Week 2 gets an extra $100.00 off for $880.00.',
+          'Location: Lodging House (Address TBA)',
+          'Round 3 Summer Special: $50.00 off each overnight full week.',
           'Tuition covers lodging and food only. Outing costs are billed separately.',
-          'Grand total: $1,860.00',
+          'Grand total: $2,260.00',
         ],
       }
     }
@@ -4785,7 +4912,7 @@ export default function AdminPage() {
         'Payment method: Zelle',
         'Ethan Chen: General Camp, Jul 7-11, Jul 14-18, Lunch Mon/Wed/Fri',
         'Grand total: $1,680.00',
-        'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase 4:00 PM',
+        'Weekly reminders: Water Wednesday, Friday BBQ, Friday showcase 4:00 PM',
       ],
     }
   }
@@ -4818,7 +4945,7 @@ export default function AdminPage() {
                   'Ethan Chen: Competition Boot Camp, Jul 7-11, Jul 14-18, Jul 21-25',
                   'Grand total: $2,340.00',
                   'Camp hours: 8:30 AM-4:00 PM (pickup 4:00-4:30 PM)',
-                  'Weekly reminders: Water Wednesday, BBQ Thursday, Friday showcase during pickup',
+                  'Weekly reminders: Water Wednesday, Friday BBQ, Friday showcase during pickup',
                 ],
               }
             : buildReservationPreviewPayload('standard'),
@@ -5362,12 +5489,90 @@ export default function AdminPage() {
 
             setAccountingOverlay((current) =>
               current.key === detailKey
-                ? { key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 }
-                : { key: detailKey, label, items, top, left, pointerLeft }
+                ? { key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 }
+                : { key: detailKey, label, items, scheduleRows: [], top, left, pointerLeft }
             )
           }}
         >
           {label}: {displayCount ?? items.length}
+        </button>
+      </div>
+    )
+  }
+
+  function getAccountingRowScheduleSummary(row) {
+    const lunchSelections = typeof row?.lunchSelections === 'object' && row?.lunchSelections ? row.lunchSelections : {}
+    return (Array.isArray(row?.scheduleByWeek) ? row.scheduleByWeek : [])
+      .map((item) => {
+        const weekId = String(item?.weekId || '').trim()
+        const sourceWeekId = String(item?.sourceWeekId || '').trim()
+        const week = weekById[weekId] || accountingEditWeeksById[weekId] || item?.week || null
+        const title = week ? formatWeekLabel(week) : toWeekLabel(weekId, weekById)
+        const enrollment = {}
+        const lunch = {}
+        accountingEditorDayKeys.forEach((day) => {
+          const mode = getAccountingEditorDayMode(item?.entry, day)
+          enrollment[day] =
+            mode === 'FULL'
+              ? 'Full Day'
+              : mode === 'AM' || mode === 'PM'
+                ? mode
+                : 'N/A'
+          const lowerDay = String(day || '').toLowerCase()
+          const selectedLunch =
+            lunchSelections[`${weekId}:${day}`] ||
+            lunchSelections[`${weekId}:${lowerDay}`] ||
+            lunchSelections[`${sourceWeekId}:${day}`] ||
+            lunchSelections[`${sourceWeekId}:${lowerDay}`] ||
+            lunchSelections[`${week?.id || ''}:${day}`] ||
+            lunchSelections[`${week?.id || ''}:${lowerDay}`]
+          lunch[day] = isLunchItemSelected(selectedLunch) ? 'YES' : '--'
+        })
+        return {
+          key: `${row.key || row.rowKey || 'row'}:${weekId || sourceWeekId || title}`,
+          title,
+          enrollment,
+          lunch,
+        }
+      })
+      .filter((item) => Object.values(item.enrollment || {}).some((value) => value !== 'N/A'))
+  }
+
+  function renderAccountingScheduleChip(row) {
+    const scheduleRows = getAccountingRowScheduleSummary(row)
+    if (scheduleRows.length === 0) {
+      return null
+    }
+    const detailKey = `${row.key}-schedule-summary`
+    const expanded = accountingOverlay.key === detailKey
+    return (
+      <div key={detailKey} className="accountingDetailGroup">
+        <button
+          type="button"
+          className={`accountingDetailChip ${expanded ? 'active' : ''}`}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const overlayWidth = Math.min(560, window.innerWidth - 24)
+            const left = Math.max(12, Math.min(rect.left, window.innerWidth - overlayWidth - 12))
+            const top = Math.min(rect.bottom + 10, window.innerHeight - 24)
+            const pointerLeft = Math.max(18, Math.min(rect.left + rect.width / 2 - left, overlayWidth - 18))
+
+            setAccountingOverlay((current) =>
+              current.key === detailKey
+                ? { key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 }
+                : {
+                    key: detailKey,
+                    label: 'Weekly Schedule',
+                    items: [],
+                    scheduleRows,
+                    top,
+                    left,
+                    pointerLeft,
+                  }
+            )
+          }}
+        >
+          Schedule
         </button>
       </div>
     )
@@ -6331,31 +6536,35 @@ export default function AdminPage() {
       if (!student) {
         return current
       }
+      const existingKey = resolveAccountingEditorScheduleKey(student, week)
       const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
-      const currentEntry = student.schedule?.[week.id] || {
-        weekId: week.id,
+      const currentEntry = student.schedule?.[existingKey] || {
+        weekId: existingKey,
         programKey: week.programKey,
         campType: week.programKey === 'daycamp' ? '' : week.programKey,
         days: weekDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
       }
       const updatedEntry = updater(currentEntry)
-      const dayModes = weekDayKeys.map((day) => updatedEntry.days?.[day] || 'NONE')
+      const dayModes = weekDayKeys.map((day) => getAccountingEditorDayMode(updatedEntry, day))
       const hasAnyDay = dayModes.some((mode) => mode !== 'NONE')
       const nextSchedule = { ...(student.schedule || {}) }
       const nextLunch = { ...(student.lunch || {}) }
 
       if (hasAnyDay) {
-        nextSchedule[week.id] = updatedEntry
+        nextSchedule[existingKey] = {
+          ...updatedEntry,
+          weekId: existingKey,
+        }
       } else {
-        delete nextSchedule[week.id]
+        delete nextSchedule[existingKey]
         for (const day of weekDayKeys) {
-          delete nextLunch[`${week.id}:${day}`]
+          delete nextLunch[`${existingKey}:${day}`]
         }
       }
 
       for (const day of weekDayKeys) {
-        if ((updatedEntry.days?.[day] || 'NONE') === 'NONE') {
-          delete nextLunch[`${week.id}:${day}`]
+        if (getAccountingEditorDayMode(updatedEntry, day) === 'NONE') {
+          delete nextLunch[`${existingKey}:${day}`]
         }
       }
 
@@ -6390,8 +6599,9 @@ export default function AdminPage() {
       if (!student) {
         return current
       }
-      const existing = student.schedule?.[week.id] || {
-        weekId: week.id,
+      const existingKey = resolveAccountingEditorScheduleKey(student, week, campType)
+      const existing = student.schedule?.[existingKey] || {
+        weekId: existingKey,
         programKey: week.programKey,
         campType: '',
         days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
@@ -6402,8 +6612,9 @@ export default function AdminPage() {
               ...item,
               schedule: {
                 ...(item.schedule || {}),
-                [week.id]: {
+                [existingKey]: {
                   ...existing,
+                  weekId: existingKey,
                   campType,
                 },
               },
@@ -6424,14 +6635,15 @@ export default function AdminPage() {
     if (!accountingEditStudent) {
       return
     }
-    const selectedCampType = accountingEditStudent.schedule?.[week.id]?.campType || ''
+    const { entry } = getAccountingEditorScheduleEntry(accountingEditStudent, week)
+    const selectedCampType = entry?.campType || ''
     if (!selectedCampType) {
       setErrorMessage('Select General or Boot Camp for this week first.')
       return
     }
     const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
     setAccountingEditorStudentWeek(week, (entry) => {
-      const alreadyFull = weekDayKeys.every((day) => (entry.days?.[day] || 'NONE') === 'FULL')
+      const alreadyFull = weekDayKeys.every((day) => getAccountingEditorDayMode(entry, day) === 'FULL')
       return {
         ...entry,
         days: weekDayKeys.reduce((acc, day) => ({ ...acc, [day]: alreadyFull ? 'NONE' : 'FULL' }), {}),
@@ -6443,13 +6655,14 @@ export default function AdminPage() {
     if (!accountingEditStudent) {
       return
     }
-    const selectedCampType = accountingEditStudent.schedule?.[week.id]?.campType || ''
+    const { entry } = getAccountingEditorScheduleEntry(accountingEditStudent, week)
+    const selectedCampType = entry?.campType || ''
     if (!selectedCampType) {
       setErrorMessage('Select General or Boot Camp for this week first.')
       return
     }
     setAccountingEditorStudentWeek(week, (entry) => {
-      const currentMode = entry.days?.[day] || 'NONE'
+      const currentMode = getAccountingEditorDayMode(entry, day)
       return {
         ...entry,
         days: {
@@ -6739,6 +6952,125 @@ export default function AdminPage() {
       setErrorMessage(error?.message || 'Lunch PDF export failed.')
     }
 
+    setExportingRosterKey('')
+  }
+
+  function buildGroupPersonalRows() {
+    return [...activeAccountingRows, ...activeOvernightAccountingRows]
+      .filter((row) => shouldShowInRoster(row))
+      .sort((a, b) => String(a.camperName || '').localeCompare(String(b.camperName || '')))
+      .map((row) => ({
+        camperName: row.camperName || 'Camper',
+        subtitle: `${row.location || 'Location not set'} | ${row.weeksCount || 0} week${row.weeksCount === 1 ? '' : 's'}`,
+        sections: [
+          {
+            title: 'Camper',
+            lines: [
+              `Name: ${row.camperName || 'Camper'}`,
+              `DOB: ${row.camperDob || 'DOB not provided'}`,
+              `Location: ${row.location || '-'}`,
+              `Activities: ${
+                Array.isArray(row.camperActivitySelections) && row.camperActivitySelections.length > 0
+                  ? row.camperActivitySelections.join(', ')
+                  : 'None selected'
+              }`,
+            ],
+          },
+          {
+            title: 'Parent / Guardian',
+            lines: [
+              `Name: ${row.parentName || 'Parent/Guardian'}`,
+              `Email: ${row.parentEmail || '-'}`,
+              `Phone: ${row.parentPhone || 'Phone not provided'}`,
+              `Payment method: ${row.paymentMethod ? String(row.paymentMethod).toUpperCase() : 'TBD'}`,
+            ],
+          },
+          {
+            title: 'Camp Schedule',
+            lines:
+              Array.isArray(row.weekOverlayLines) && row.weekOverlayLines.length > 0
+                ? row.weekOverlayLines
+                : ['No week details available.'],
+          },
+          {
+            title: 'Lunch',
+            lines:
+              Array.isArray(row.lunchDays) && row.lunchDays.length > 0
+                ? row.lunchDays
+                : ['No purchased lunch days selected.'],
+          },
+          {
+            title: 'Health / Personal Details',
+            lines: [
+              `Allergies: ${row.camperAllergies || 'None reported'}`,
+              `Medication: ${row.camperMedication || 'None reported'}`,
+              `Previous injuries: ${row.camperPreviousInjury || 'None reported'}`,
+              `Health notes: ${row.camperHealthNotes || 'None reported'}`,
+            ],
+          },
+          {
+            title: 'Accounting',
+            lines: [
+              `Tuition: ${money(row.tuitionAfterManualDiscount)}`,
+              `Lunch: ${money(row.lunchCost)}`,
+              `Paid: ${money(row.paidAmount)}`,
+              `Owed: ${money(row.owedAmount)}`,
+              `Discount: ${row.discountCampaignLabel || 'No discount'}`,
+            ],
+          },
+        ],
+      }))
+  }
+
+  function exportGroupPersonalDetailsPdf() {
+    const rows = buildGroupPersonalRows()
+    if (rows.length === 0) {
+      setErrorMessage('No active camper detail rows are available to export.')
+      return
+    }
+    const exportKey = 'group-personal-details'
+    setExportingRosterKey(exportKey)
+    setSavedMessage('')
+    setErrorMessage('')
+    try {
+      const pdfBase64 = buildCamperDetailPagesPdfBase64({
+        rows,
+        generatedAtLabel: new Date().toLocaleString(),
+      })
+      const dateLabel = new Date().toISOString().slice(0, 10)
+      downloadPdfBase64(`group-camper-detail-pages-${dateLabel}.pdf`, pdfBase64)
+      setSavedMessage('Group camper detail pages exported.')
+    } catch (error) {
+      setErrorMessage(error?.message || 'Group camper detail export failed.')
+    }
+    setExportingRosterKey('')
+  }
+
+  function exportGroupLunchPurchasePdf() {
+    if (lunchExportSummary.length === 0) {
+      setErrorMessage('No lunch purchase rows are available to export.')
+      return
+    }
+    const exportKey = 'group-lunch-purchase'
+    setExportingRosterKey(exportKey)
+    setSavedMessage('')
+    setErrorMessage('')
+    try {
+      const groups = lunchExportSummary.map((group) => ({
+        title: group.week ? formatWeekLabel(group.week) : 'Unmapped week',
+        subtitle: `${group.rows.length} lunch purchase row${group.rows.length === 1 ? '' : 's'}`,
+        rows: group.rows,
+      }))
+      const pdfBase64 = buildLunchPurchaseTablePdfBase64({
+        groups,
+        generatedAtLabel: new Date().toLocaleString(),
+      })
+      const dateLabel = new Date().toISOString().slice(0, 10)
+      downloadPdfBase64(`group-lunch-purchase-table-${dateLabel}.pdf`, pdfBase64)
+      setSavedMessage('Group lunch purchase table exported.')
+    } catch (error) {
+      setErrorMessage(error?.message || 'Group lunch purchase export failed.')
+    }
     setExportingRosterKey('')
   }
 
@@ -9537,13 +9869,13 @@ export default function AdminPage() {
         <h2>Tuition table</h2>
         <div className="adminGrid">
           <label>
-            Round 2 end date
+            Round 3 end date
             <input
               type="date"
               value={config.tuition.discountEndDate}
               onChange={(event) => updateTuitionField('discountEndDate', event.target.value)}
             />
-            <small>Round 1 ended on May 20, 2026. This field controls Round 2.</small>
+            <small>Round 1 ended on May 20, 2026. Round 2 ended on Jun 30, 2026. This field controls Round 3.</small>
           </label>
           <label>
             Boot Camp pricing
@@ -10230,6 +10562,54 @@ export default function AdminPage() {
             </button>
           ))}
         </div>
+        {activeAccountingSubtab === 'group-export' ? (
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Group Export</h3>
+            <p className="subhead">
+              Export active camper sheets for coaches and a lunch purchase table for ordering.
+            </p>
+          </div>
+          <div className="rosterSummaryHero">
+            <div>
+              <strong>Camper Detail Pages</strong>
+              <p className="subhead">
+                {buildGroupPersonalRows().length} active camper page{buildGroupPersonalRows().length === 1 ? '' : 's'}.
+                Each camper exports on a separate page with parent contact, DOB, health notes, weeks, lunch, and accounting.
+              </p>
+            </div>
+            <div className="adminActions">
+              <button
+                type="button"
+                className="button"
+                onClick={exportGroupPersonalDetailsPdf}
+                disabled={exportingRosterKey === 'group-personal-details' || buildGroupPersonalRows().length === 0}
+              >
+                {exportingRosterKey === 'group-personal-details' ? 'Exporting...' : 'Export Camper Detail Pages'}
+              </button>
+            </div>
+          </div>
+          <div className="rosterSummaryHero">
+            <div>
+              <strong>Lunch Purchase Table</strong>
+              <p className="subhead">
+                {lunchExportSummary.reduce((sum, group) => sum + group.rows.length, 0)} lunch purchase row{lunchExportSummary.reduce((sum, group) => sum + group.rows.length, 0) === 1 ? '' : 's'} across {lunchExportSummary.length} week{lunchExportSummary.length === 1 ? '' : 's'}.
+                Filled cells show which days need purchased lunch.
+              </p>
+            </div>
+            <div className="adminActions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={exportGroupLunchPurchasePdf}
+                disabled={exportingRosterKey === 'group-lunch-purchase' || lunchExportSummary.length === 0}
+              >
+                {exportingRosterKey === 'group-lunch-purchase' ? 'Exporting...' : 'Export Lunch Purchase Table'}
+              </button>
+            </div>
+          </div>
+        </div>
+        ) : null}
         {activeAccountingSubtab === 'general-export' || activeAccountingSubtab === 'bootcamp-export' ? (
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
@@ -10291,7 +10671,7 @@ export default function AdminPage() {
           <div className="accountingSectionHeader">
             <h3>Weekly Lunch Export</h3>
             <p className="subhead">
-              Print one lunch sheet per week for paid lunches and included Thursday BBQ rows.
+              Print one lunch sheet per week for paid lunches and included Friday BBQ rows.
             </p>
           </div>
           <div className="rosterSummaryHero">
@@ -10404,17 +10784,17 @@ export default function AdminPage() {
           <article className="accountingStatCard">
             <span>Total Tuition</span>
             <strong>{money(accountingTotals.totalTuition)}</strong>
-            <small>Round 2 tuition total: {money(accountingTotals.roundTwoTuition)}</small>
+            <small>Round 3 tuition total: {money(accountingTotals.roundThreeTuition)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Total Paid</span>
             <strong>{money(accountingTotals.totalPaid)}</strong>
-            <small>Round 2 revenue: {money(accountingTotals.roundTwoRevenue)}</small>
+            <small>Round 3 revenue: {money(accountingTotals.roundThreeRevenue)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Total Owed</span>
             <strong>{money(accountingTotals.totalOwed)}</strong>
-            <small>Round 2 owed: {money(accountingTotals.roundTwoOwed)}</small>
+            <small>Round 3 owed: {money(accountingTotals.roundThreeOwed)}</small>
           </article>
           <article className="accountingStatCard">
             <span>Active Rows</span>
@@ -10792,6 +11172,7 @@ export default function AdminPage() {
                                   row.weeksCount
                                 )
                               : null}
+                            {renderAccountingScheduleChip(row)}
                             {row.weeksCount === 0 ? <span>-</span> : null}
                           </div>
                         </td>
@@ -11159,7 +11540,7 @@ export default function AdminPage() {
         {accountingOverlay.key ? (
           <div
             className="accountingOverlayWrap"
-            onClick={() => setAccountingOverlay({ key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 })}
+            onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 })}
           >
             <div
               className="accountingOverlayBox"
@@ -11182,19 +11563,49 @@ export default function AdminPage() {
                 <button
                   type="button"
                   className="accountingOverlayClose"
-                  onClick={() => setAccountingOverlay({ key: '', label: '', items: [], top: 0, left: 0, pointerLeft: 24 })}
+                  onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 })}
                   aria-label="Close accounting details"
                 >
                   Close
                 </button>
               </div>
-              <div className="accountingOverlayList">
-                {accountingOverlay.items.map((item, index) => (
-                  <span key={`${accountingOverlay.key}-${index}`} className="accountingOverlayItem">
-                    {item}
-                  </span>
-                ))}
-              </div>
+              {Array.isArray(accountingOverlay.scheduleRows) && accountingOverlay.scheduleRows.length > 0 ? (
+                <div className="accountingScheduleOverlayStack">
+                  {accountingOverlay.scheduleRows.map((weekRow) => (
+                    <div key={weekRow.key} className="accountingScheduleOverlayWeek">
+                      <strong>{weekRow.title}</strong>
+                      <div className="accountingScheduleGrid" role="table" aria-label={`${weekRow.title} schedule`}>
+                        <div className="accountingScheduleCell head" />
+                        {accountingEditorDayKeys.map((day) => (
+                          <div key={`${weekRow.key}-head-${day}`} className="accountingScheduleCell head">
+                            {day === 'Thu' ? 'R' : day[0]}
+                          </div>
+                        ))}
+                        <div className="accountingScheduleCell label">Enrollment</div>
+                        {accountingEditorDayKeys.map((day) => (
+                          <div key={`${weekRow.key}-enroll-${day}`} className="accountingScheduleCell">
+                            {weekRow.enrollment?.[day] || 'N/A'}
+                          </div>
+                        ))}
+                        <div className="accountingScheduleCell label">Lunch</div>
+                        {accountingEditorDayKeys.map((day) => (
+                          <div key={`${weekRow.key}-lunch-${day}`} className="accountingScheduleCell">
+                            {weekRow.lunch?.[day] || '--'}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="accountingOverlayList">
+                  {accountingOverlay.items.map((item, index) => (
+                    <span key={`${accountingOverlay.key}-${index}`} className="accountingOverlayItem">
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : null}
@@ -11351,14 +11762,14 @@ export default function AdminPage() {
                 </p>
                 <div className="weekCardList">
                   {accountingEditRegistrationWeeks.map((week, weekIndex) => {
-                    const entry = accountingEditStudent.schedule?.[week.id]
+                    const { key: entryWeekKey, entry } = getAccountingEditorScheduleEntry(accountingEditStudent, week)
                     const weekSelectionSummary = getWeekSelectionSummary(entry, week)
                     const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
-                    const weekIsFull = weekDayKeys.every((day) => (entry?.days?.[day] || 'NONE') === 'FULL')
+                    const weekIsFull = weekDayKeys.every((day) => getAccountingEditorDayMode(entry, day) === 'FULL')
                     const selectedCampType = entry?.campType || ''
-                    const panelKey = `${accountingEditState.row.key}:${week.id}`
+                    const panelKey = `${accountingEditState.row.key}:${entryWeekKey || week.id}`
                     const expanded = accountingEditState.expandedWeekKey === panelKey
-                    const hasSelection = Object.values(entry?.days || {}).some((mode) => mode && mode !== 'NONE')
+                    const hasSelection = weekDayKeys.some((day) => getAccountingEditorDayMode(entry, day) !== 'NONE')
 
                     return (
                       <article key={`accounting-edit-week-${week.id}`} className="weekCard">
@@ -11414,7 +11825,7 @@ export default function AdminPage() {
                             </button>
                             <div className="chipRow">
                               {accountingEditorDayKeys.map((day) => {
-                                const mode = entry?.days?.[day] || 'NONE'
+                                const mode = getAccountingEditorDayMode(entry, day)
                                 return (
                                   <button
                                     key={`accounting-edit-day-${week.id}-${day}`}
@@ -11467,7 +11878,7 @@ export default function AdminPage() {
                               </strong>
                               <span>{formatWeekLabel(row.week)}</span>
                               <span className="weekLunchSummaryLine">
-                                {`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Thu included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`}
+                                {`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Fri included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`}
                               </span>
                             </span>
                           </button>

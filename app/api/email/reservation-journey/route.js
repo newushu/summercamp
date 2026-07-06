@@ -1596,7 +1596,7 @@ function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
     },
     twoWeek: {
       heading: 'General Camp Momentum Check-In',
-      subject: 'You're Signed Up for General Camp. Want Even More Growth This Summer?',
+      subject: "You're Signed Up for General Camp. Want Even More Growth This Summer?",
       preview: `${CAMP_NAME} paid family follow-up`,
       ctaLabel: 'Add More Weeks',
       ctaHref: 'https://summer.newushu.com/register',
@@ -1670,7 +1670,7 @@ function buildPaidEnrollmentFollowupContent({ firstName, stage, payload }) {
     },
     twoWeek: {
       heading: 'Competition Boot Camp Momentum Check-In',
-      subject: 'You're Signed Up for Boot Camp. Want Even More Taolu Progress This Summer?',
+      subject: "You're Signed Up for Boot Camp. Want Even More Taolu Progress This Summer?",
       preview: `${CAMP_NAME} paid family follow-up`,
       ctaLabel: 'Add More Weeks',
       ctaHref: 'https://summer.newushu.com/register',

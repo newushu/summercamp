@@ -23,6 +23,114 @@ body {
   min-width: 320px;
 }
 
+.lunchFormPage {
+  display: flex;
+  align-items: flex-start;
+}
+
+.lunchFormShell {
+  width: min(1040px, 100%);
+}
+
+.lunchLookupForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: end;
+  margin-top: 1.5rem;
+}
+
+.lunchLookupForm label,
+.lunchDayChoice {
+  display: grid;
+  gap: 0.4rem;
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.lunchLookupForm input,
+.lunchDayChoice select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 0.82rem 0.9rem;
+  font: inherit;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.lunchFormContent {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.lunchFormFamilyBar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.lunchFormFamilyBar div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.lunchFormFamilyBar span,
+.lunchDayChoice small {
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.lunchStudentBlock {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+}
+
+.lunchStudentBlock h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.lunchWeekBlock {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.lunchDayGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.lunchDayChoice {
+  padding: 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .lunchLookupForm,
+  .lunchFormFamilyBar {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .lunchDayGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .page {
   min-height: 100vh;
   padding: 1.25rem;
@@ -8012,7 +8120,7 @@ textarea:focus {
 
 .accountingOverlayBox {
   position: fixed;
-  width: min(360px, calc(100vw - 24px));
+  width: min(560px, calc(100vw - 24px));
   border: 1px solid #bfdbfe;
   border-radius: 18px;
   background: #ffffff;
@@ -8072,6 +8180,68 @@ textarea:focus {
   padding: 0.28rem 0.52rem;
   font-size: 0.76rem;
   line-height: 1.25;
+}
+
+.accountingScheduleOverlayStack {
+  display: grid;
+  gap: 0.85rem;
+  max-height: min(62vh, 520px);
+  overflow: auto;
+}
+
+.accountingScheduleOverlayWeek {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.accountingScheduleOverlayWeek > strong {
+  color: #0f172a;
+  font-size: 0.86rem;
+}
+
+.accountingScheduleGrid {
+  display: grid;
+  grid-template-columns: minmax(86px, 1.1fr) repeat(5, minmax(54px, 1fr));
+  border: 1px solid #dbe5f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.accountingScheduleCell {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.accountingScheduleCell:nth-child(6n) {
+  border-right: 0;
+}
+
+.accountingScheduleCell:nth-last-child(-n + 6) {
+  border-bottom: 0;
+}
+
+.accountingScheduleCell.head,
+.accountingScheduleCell.label {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.accountingScheduleCell.label {
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .rosterSummaryHero {

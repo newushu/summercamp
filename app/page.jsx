@@ -7,9 +7,12 @@ import {
   defaultAdminConfig,
   formatDateLabel,
   formatWeekLabel,
+  getTuitionForDiscountCampaign,
   getSelectedWeeks,
-  ROUND_TWO_DISCOUNT_NAME,
-  ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT,
+  LIMITED_DISCOUNT_CAMPAIGN_IDS,
+  ROUND_THREE_DISCOUNT_END_DATE,
+  ROUND_THREE_DISCOUNT_NAME,
+  ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT,
 } from '../lib/campAdmin'
 import {
   WEEK_TIER_PROMO,
@@ -21,6 +24,7 @@ import {
 } from '../lib/campPricing'
 import { fetchAdminConfigFromSupabase } from '../lib/campAdminApi'
 import { buildCreditCardCheckoutHref, buildPaymentPageHref } from '../lib/paymentPageLink'
+import { publicWushuCopy } from '../lib/publicWushuCopy'
 import { buildRegistrationSummaryDocument } from '../lib/registrationSummaryDocument'
 import { supabase, supabaseEnabled } from '../lib/supabase'
 
@@ -33,15 +37,15 @@ const nextMode = {
 }
 
 const registrationSteps = [
-  { id: 1, title: 'Family & campers' },
-  { id: 2, title: 'Camp weeks & times' },
+  { id: 1, title: 'Family & students' },
+  { id: 2, title: 'Summer Wushu Week dates & times' },
   { id: 3, title: 'Lunch days' },
   { id: 4, title: 'Review & submit' },
 ]
 const desktopCampNavItems = [
   { href: '#camp-info', label: 'Top' },
   { href: '#why-camp', label: 'Highlights' },
-  { href: '#camp-dates', label: 'Camp Options' },
+  { href: '#camp-dates', label: 'Week Options' },
   { href: '#student-stories', label: 'Stories' },
   { href: '#weekly-structure', label: 'Sample Day' },
 ]
@@ -59,7 +63,7 @@ const PAYMENT_METHOD_OPTIONS = [
   { value: 'check', label: 'Check (mail to 123 Muller Rd, payable to Newushu)' },
   { value: 'other', label: 'Other / will confirm by reply' },
 ]
-const INCLUDED_LUNCH_DAY_KEY = 'Thu'
+const INCLUDED_LUNCH_DAY_KEY = 'Fri'
 const LOCATION_OPTIONS = [
   {
     value: 'burlington',
@@ -82,8 +86,8 @@ const DAY_CAMP_FULL_DAY_POINTS = 500
 const DAY_CAMP_HALF_DAY_POINTS = 100
 const OVERNIGHT_WEEKLY_POINTS = 5000
 const OVERNIGHT_SIBLING_DISCOUNT_PCT = 5
-const DISCOUNT_BANNER_HOLD_DATE = '2026-05-21'
-const DISCOUNT_BANNER_PREVIEW_DATE = '2026-05-20'
+const DISCOUNT_BANNER_HOLD_DATE = '2026-07-01'
+const DISCOUNT_BANNER_PREVIEW_DATE = ROUND_THREE_DISCOUNT_END_DATE
 const DAY_CAMP_START_TIME = '8:30 AM'
 const DAY_CAMP_END_TIME = '4:00 PM'
 const DAY_CAMP_PICKUP_WINDOW = '4:00-4:30 PM'
@@ -157,8 +161,8 @@ function getDayNotableText(dayKey) {
   if (dayKey === 'Wed') {
     return 'Water balloons day: bring a change of clothes.'
   }
-  if (dayKey === 'Thu') {
-    return 'BBQ lunch included in tuition (packing lunch is optional).'
+  if (dayKey === 'Fri') {
+    return 'Friday BBQ lunch included in tuition (packing lunch is optional). Friday showcase day.'
   }
   if (dayKey === 'Fri') {
     return 'Family performance showcase day.'
@@ -244,13 +248,13 @@ const perks = [
   {
     title: 'See Daily Progress Updates',
     zhTitle: '每天可见成长更新',
-    text: 'Follow daily logs, photos, and videos so you can clearly see your camper learning and improving week by week.',
+    text: 'Follow daily logs, photos, and videos so you can clearly see your student learning and improving week by week.',
     zhText: '通过每日日志、照片和视频，清晰看到孩子每周的学习与进步。',
   },
   {
     title: 'Lunch Convenience, No Packing Needed',
     zhTitle: '午餐省心，不用每天备餐',
-    text: "Choose lunch by day so you don't need to pack lunch every camp day. Options vary by week and may include items like burgers, sushi, or hot dogs, typically with a juice box or fruit.",
+    text: "Choose lunch by day so you don't need to pack lunch every summer wushu week day. Options vary by week and may include items like burgers, sushi, or hot dogs, typically with a juice box or fruit.",
     zhText: '可按天选择午餐，无需每天准备便当。每周菜单会有变化，常见选项包括汉堡、寿司或热狗，通常会搭配果汁盒或水果。',
   },
   {
@@ -262,7 +266,7 @@ const perks = [
   {
     title: 'Weekly Showcase, Real Confidence',
     zhTitle: '每周展示，建立真实自信',
-    text: 'Finish each week with a family showcase so campers practice performing, speaking up, and feeling proud.',
+    text: 'Finish each week with a family showcase so students practice performing, speaking up, and feeling proud.',
     zhText: '每周通过家庭展示收尾，帮助孩子练习表达、展示与建立成就感。',
   },
 ]
@@ -293,7 +297,7 @@ const dayAtCampTimeline = [
     time: '12:00 PM',
     title: 'Lunch',
     zhTitle: '午餐',
-    note: 'Packed lunch or add-on camp lunch.',
+    note: 'Packed lunch or add-on program lunch.',
     zhNote: '可自带午餐，也可选择营地午餐。',
   },
   {
@@ -319,9 +323,9 @@ const dayAtCampTimeline = [
   },
   {
     time: DAY_CAMP_END_TIME,
-    title: 'Camp ends + pickup',
+    title: 'Program ends + pickup',
     zhTitle: '接送',
-    note: `Camp wraps at ${DAY_CAMP_END_TIME}, with family pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
+    note: `Summer Wushu Week wraps at ${DAY_CAMP_END_TIME}, with family pickup from ${DAY_CAMP_PICKUP_WINDOW}.`,
     zhNote: '营地活动于下午4点结束，家庭接送时间为下午4点至4点30分。',
   },
 ]
@@ -335,25 +339,25 @@ const overnightSchedule = [
   },
   {
     day: 'Monday',
-    amTheme: 'Academy training + day camp integration',
+    amTheme: 'Academy training + summer wushu week integration',
     pmTheme: 'Outing',
-    note: 'Skill-focused academy training with day-camp rhythm, then evening outing.',
+    note: 'Skill-focused academy training with summer wushu week rhythm, then evening outing.',
   },
   {
     day: 'Tuesday',
-    amTheme: 'Academy training + day camp integration',
+    amTheme: 'Academy training + summer wushu week integration',
     pmTheme: 'Academy training + recovery',
     note: 'Full training day at the academy with structured development and recovery routine.',
   },
   {
     day: 'Wednesday',
-    amTheme: 'Academy training + day camp integration',
+    amTheme: 'Academy training + summer wushu week integration',
     pmTheme: 'Academy training + social session',
     note: 'Technique progression, partner work, and evening community-building activities on campus.',
   },
   {
     day: 'Thursday',
-    amTheme: 'Academy training + day camp integration',
+    amTheme: 'Academy training + summer wushu week integration',
     pmTheme: 'Outing',
     note: 'Training at the academy during the day, then supervised group outing.',
   },
@@ -367,7 +371,7 @@ const overnightSchedule = [
     day: 'Saturday',
     amTheme: 'Academy training recap',
     pmTheme: 'Outing + pickup',
-    note: 'Final training recap, last outing, and pickup at 4:00 PM at the camp house.',
+    note: 'Final training recap, last outing, and pickup at 4:00 PM at the lodging house.',
   },
 ]
 
@@ -376,7 +380,7 @@ const weeklyFamilyRhythm = [
     key: 'tuesday',
     title: 'Tuesday Outdoor Time',
     zhTitle: '周二户外活动',
-    body: 'Outdoor block day. Please send sunscreen and a change of outdoor shoes so campers stay comfortable coming back inside.',
+    body: 'Outdoor block day. Please send sunscreen and a change of outdoor shoes so students stay comfortable coming back inside.',
     zhBody: '周二有户外活动时段。请准备防晒用品和一双可更换的户外鞋，方便孩子回到室内后保持舒适。',
   },
   {
@@ -388,16 +392,16 @@ const weeklyFamilyRhythm = [
   },
   {
     key: 'thursday',
-    title: 'Thursday BBQ Lunch',
+    title: 'Friday BBQ',
     zhTitle: '周四烧烤午餐',
-    body: 'BBQ lunch is already included in tuition, so packing lunch is optional.',
+    body: 'Friday BBQ is already included in tuition, so packing lunch is optional.',
     zhBody: '周四烧烤午餐已包含在学费内，也可以自带午餐。',
   },
   {
     key: 'friday',
-    title: 'Friday Family Showcase',
+    title: 'Friday Showcase',
     zhTitle: '周五家庭展示',
-    body: 'Families are invited to the Friday showcase so campers can finish the week proud, confident, and seen.',
+    body: 'Families are invited to the Friday showcase so students can finish the week proud, confident, and seen.',
     zhBody: '欢迎家长参加周五展示，让孩子用充满自豪与自信的方式结束一周营地生活。',
   },
 ]
@@ -713,7 +717,7 @@ function getLunchWeeksForStudent(student, weeksById) {
             id: weekId,
             start: '',
             end: '',
-            programLabel: 'Camp Week',
+            programLabel: 'Summer Wushu Week',
             days: sourceDays,
           },
         selectedDays,
@@ -884,7 +888,7 @@ function currency(amount) {
 function getDisplayedDiscountEndDate(rawEndDate, nowDate) {
   const actual = String(rawEndDate || '').trim()
   if (!actual) {
-    return ''
+    return ROUND_THREE_DISCOUNT_END_DATE
   }
   const switchDate = parseDateLocal(DISCOUNT_BANNER_HOLD_DATE)
   const now = nowDate instanceof Date ? nowDate : null
@@ -893,7 +897,8 @@ function getDisplayedDiscountEndDate(rawEndDate, nowDate) {
   }
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const switchPoint = new Date(switchDate.getFullYear(), switchDate.getMonth(), switchDate.getDate())
-  return today.getTime() >= switchPoint.getTime() ? actual : DISCOUNT_BANNER_PREVIEW_DATE
+  const normalizedActual = actual < ROUND_THREE_DISCOUNT_END_DATE ? ROUND_THREE_DISCOUNT_END_DATE : actual
+  return today.getTime() >= switchPoint.getTime() ? normalizedActual : DISCOUNT_BANNER_PREVIEW_DATE
 }
 
 function getYouTubeVideoId(url) {
@@ -1194,7 +1199,7 @@ export default function HomePage() {
         start: week.start,
         end: week.end,
         programKey: 'daycamp',
-        programLabel: `${locationLabel} Camp Week`,
+        programLabel: `${locationLabel} Summer Wushu Week`,
         locationValue: registration.location,
         locationLabel,
         days: getWeekDays(week.start),
@@ -1246,7 +1251,7 @@ export default function HomePage() {
           start: week.start,
           end: week.end,
           programKey: 'daycamp',
-          programLabel: `${locationLabel} Camp Week`,
+          programLabel: `${locationLabel} Summer Wushu Week`,
           locationValue,
           locationLabel,
           days: getWeekDays(week.start),
@@ -1286,7 +1291,7 @@ export default function HomePage() {
     return []
   }, [adminConfig.media.levelUpImageUrl, adminConfig.media.levelUpScreenshotUrls])
   const isZh = language === 'zh'
-  const text = (en, zh) => (isZh ? zh : en)
+  const text = (en, zh) => (isZh ? zh : publicWushuCopy(en))
   const dayCampPointsBreakdown = text(
     '2,500 New England Wushu Level Up points for each full week enrollment, 500 for each full day, and 100 for each half day enrollment.',
     '每个整周报名可获 2,500 新英格兰武术 Level Up 积分，每个整日报名可获 500 积分，每个半日报名可获 100 积分。'
@@ -1300,7 +1305,7 @@ export default function HomePage() {
       ? adminConfig.media.surveyStepImageUrls
       : []
     return [
-      { src: (adminConfig.media.heroImageUrl || '').trim(), slot: isZh ? '营地主视觉' : 'Hero Camp Moment', positionIndex: 0 },
+      { src: (adminConfig.media.heroImageUrl || '').trim(), slot: isZh ? '营地主视觉' : 'Hero Summer Wushu Week Moment', positionIndex: 0 },
       { src: (surveyImages[0] || '').trim(), slot: isZh ? '训练亮点' : 'Training Highlights', positionIndex: 1 },
       { src: (surveyImages[1] || '').trim(), slot: isZh ? '团队与友谊' : 'Teamwork & Friends', positionIndex: 2 },
       { src: (surveyImages[2] || '').trim(), slot: isZh ? '每周展示' : 'Weekly Showcase', positionIndex: 3 },
@@ -1371,13 +1376,14 @@ export default function HomePage() {
     if (!countdownNow) {
       return false
     }
-    const end = parseDateLocal(adminConfig.tuition.discountEndDate)
+    const end = parseDateLocal(displayedDiscountEndDate)
     if (!end) {
       return false
     }
     const endDateTime = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59)
     return countdownNow.getTime() <= endDateTime.getTime()
-  }, [adminConfig.tuition.discountEndDate, countdownNow])
+  }, [countdownNow, displayedDiscountEndDate])
+  const activeDiscountCampaignId = discountActive ? LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_THREE : ''
   const discountCountdown = useMemo(() => {
     if (!countdownNow) {
       return null
@@ -1416,29 +1422,32 @@ export default function HomePage() {
       return {
         hasDate: true,
         active: true,
-        labelEn: ROUND_TWO_DISCOUNT_NAME,
-        labelZh: '第二轮早鸟优惠',
-        detailEn: `$${ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT} off per full week through ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        detailZh: `整周每周立减 $${ROUND_TWO_FULL_WEEK_DISCOUNT_AMOUNT}，截止至 ${end.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}`,
-        ctaEn: 'Claim Round 2 here',
-        ctaZh: '点此领取第二轮优惠',
+        labelEn: ROUND_THREE_DISCOUNT_NAME,
+        labelZh: '第三轮夏季特惠',
+        detailEn: `$${ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT} off per full week through ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+        detailZh: `整周每周立减 $${ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT}，截止至 ${end.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}`,
+        ctaEn: 'Claim Round 3 here',
+        ctaZh: '点此领取第三轮优惠',
       }
     }
     const daysAgo = Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
     return {
       hasDate: true,
       active: false,
-      labelEn: `${ROUND_TWO_DISCOUNT_NAME} ended (${daysAgo} day${daysAgo === 1 ? '' : 's'} ago)`,
-      labelZh: `第二轮早鸟优惠已结束（${daysAgo}天前）`,
-      detailEn: 'Round 2 early-bird pricing has ended. Register to see current pricing options.',
-      detailZh: '第二轮早鸟优惠已结束。报名后可查看当前可用价格方案。',
+      labelEn: `${ROUND_THREE_DISCOUNT_NAME} ended (${daysAgo} day${daysAgo === 1 ? '' : 's'} ago)`,
+      labelZh: `第三轮夏季特惠已结束（${daysAgo}天前）`,
+      detailEn: 'Round 3 summer special pricing has ended. Register to see current pricing options.',
+      detailZh: '第三轮夏季特惠已结束。报名后可查看当前可用价格方案。',
       ctaEn: 'See current pricing',
       ctaZh: '查看当前价格',
     }
   }, [countdownNow, displayedDiscountEndDate])
   const overnightPricingRows = useMemo(() => {
+    const effectiveTuition = activeDiscountCampaignId
+      ? getTuitionForDiscountCampaign(adminConfig.tuition, activeDiscountCampaignId)
+      : adminConfig.tuition
     const regular = adminConfig.tuition.regular
-    const discounted = adminConfig.tuition.discount
+    const discounted = effectiveTuition.discount
     const rows = [
       { key: 'fullWeek', label: 'Overnight Full Week', regular: Number(regular.overnightWeek || 1180), discounted: Number(discounted.overnightWeek || 980) },
       { key: 'fullDay', label: 'Overnight Full Day', regular: Number(regular.overnightDay || 0), discounted: Number(discounted.overnightDay || 0) },
@@ -1454,7 +1463,7 @@ export default function HomePage() {
         discountAmount,
       }
     })
-  }, [adminConfig.tuition, discountActive])
+  }, [activeDiscountCampaignId, adminConfig.tuition, discountActive])
   const dayCampSeasonLabel = useMemo(() => {
     const allWeeks = [...generalWeeks, ...bootcampWeeks].sort((a, b) => a.start.localeCompare(b.start))
     if (allWeeks.length === 0) {
@@ -1464,22 +1473,16 @@ export default function HomePage() {
   }, [bootcampWeeks, generalWeeks])
   const dayCampPricing = useMemo(() => {
     const regular = adminConfig.tuition.regular || {}
-    const discount = adminConfig.tuition.discount || {}
-    const effective = (regularValue, discountValue) => {
-      const regularNumber = Number(regularValue || 0)
-      const discountedNumber = Number(discountValue || 0)
-      if (!discountActive) {
-        return regularNumber
-      }
-      if (discountedNumber > 0) {
-        return Math.min(regularNumber || discountedNumber, discountedNumber)
-      }
-      return regularNumber
-    }
-    const fullWeek = effective(regular.fullWeek, discount.fullWeek)
-    const fullDay = effective(regular.fullDay, discount.fullDay)
-    const amHalf = effective(regular.amHalf, discount.amHalf)
-    const pmHalf = effective(regular.pmHalf, discount.pmHalf)
+    const fullWeekRate = getCampRateForLocation('', 'general', 'fullWeek', adminConfig.tuition, {
+      discountCampaignId: activeDiscountCampaignId,
+    })
+    const fullWeek =
+      discountActive && Number(fullWeekRate.discountedPrice || 0) > 0
+        ? Math.min(Number(fullWeekRate.regularPrice || 0), Number(fullWeekRate.discountedPrice || 0))
+        : Number(fullWeekRate.regularPrice || regular.fullWeek || 0)
+    const fullDay = Number(regular.fullDay || 0)
+    const amHalf = Number(regular.amHalf || 0)
+    const pmHalf = Number(regular.pmHalf || 0)
     const halfDayLow = [amHalf, pmHalf].filter((value) => value > 0).sort((a, b) => a - b)[0] || 0
     const halfDayHigh = [amHalf, pmHalf].filter((value) => value > 0).sort((a, b) => b - a)[0] || 0
     return {
@@ -1490,29 +1493,23 @@ export default function HomePage() {
       halfDayLow,
       halfDayHigh,
     }
-  }, [adminConfig.tuition.discount, adminConfig.tuition.regular, discountActive])
+  }, [activeDiscountCampaignId, adminConfig.tuition, discountActive])
   const bootcampPricing = useMemo(() => {
     const resolved = resolveBootcampTuition(adminConfig.tuition)
     const regular = resolved?.regular || {}
-    const discount = resolved?.discount || {}
-    const effective = (regularValue, discountValue) => {
-      const regularNumber = Number(regularValue || 0)
-      const discountedNumber = Number(discountValue || 0)
-      if (!discountActive) {
-        return regularNumber
-      }
-      if (discountedNumber > 0) {
-        return Math.min(regularNumber || discountedNumber, discountedNumber)
-      }
-      return regularNumber
-    }
+    const fullWeekRate = getCampRateForLocation('', 'bootcamp', 'fullWeek', adminConfig.tuition, {
+      discountCampaignId: activeDiscountCampaignId,
+    })
     return {
-      fullWeek: effective(regular.fullWeek, discount.fullWeek),
-      fullDay: effective(regular.fullDay, discount.fullDay),
+      fullWeek:
+        discountActive && Number(fullWeekRate.discountedPrice || 0) > 0
+          ? Math.min(Number(fullWeekRate.regularPrice || 0), Number(fullWeekRate.discountedPrice || 0))
+          : Number(fullWeekRate.regularPrice || regular.fullWeek || 0),
+      fullDay: Number(regular.fullDay || 0),
       regularFullWeek: Number(regular.fullWeek || 0),
       regularFullDay: Number(regular.fullDay || 0),
     }
-  }, [adminConfig.tuition, discountActive])
+  }, [activeDiscountCampaignId, adminConfig.tuition, discountActive])
   const halfDayPriceLabel = useMemo(() => {
     if (dayCampPricing.halfDayLow <= 0) {
       return ''
@@ -1558,12 +1555,14 @@ export default function HomePage() {
   )
   const fullWeekRegularPrice = Number(adminConfig.tuition.regular.fullWeek || 0)
   const actonGeneralClaimedWeekPrice = useMemo(() => {
-    const { regularPrice, discountedPrice } = getCampRateForLocation('acton', 'general', 'fullWeek', adminConfig.tuition)
+    const { regularPrice, discountedPrice } = getCampRateForLocation('acton', 'general', 'fullWeek', adminConfig.tuition, {
+      discountCampaignId: activeDiscountCampaignId,
+    })
     if (Number(discountedPrice || 0) > 0) {
       return Math.min(Number(regularPrice || 0), Number(discountedPrice || 0))
     }
     return Number(regularPrice || 0)
-  }, [adminConfig.tuition])
+  }, [activeDiscountCampaignId, adminConfig.tuition])
   const weekTierPromoQuota = useMemo(
     () => getWeekTierPromoQuotaStatus(countdownNow || new Date()),
     [countdownNow]
@@ -2479,7 +2478,7 @@ export default function HomePage() {
 
   function submitContact(event) {
     event.preventDefault()
-    const subject = encodeURIComponent(`Summer Camp Question from ${contactForm.name || 'Family'}`)
+    const subject = encodeURIComponent(`Summer Wushu Week Question from ${contactForm.name || 'Family'}`)
     const body = encodeURIComponent(
       `Name: ${contactForm.name}\nEmail: ${contactForm.email}\n\nMessage:\n${contactForm.message}`
     )
@@ -2562,7 +2561,7 @@ export default function HomePage() {
 
   function addStudent() {
     if (registration.students.length >= MAX_CAMPERS) {
-      setMessage(`You can add up to ${MAX_CAMPERS} campers.`)
+      setMessage(`You can add up to ${MAX_CAMPERS} students.`)
       return
     }
 
@@ -2620,7 +2619,7 @@ export default function HomePage() {
         ? true
         : window.confirm(
             text(
-              `This will remove camper ${label} from registration.`,
+              `This will remove student ${label} from registration.`,
               `这将把营员 ${label} 从报名中移除。`
             )
           )
@@ -2757,7 +2756,7 @@ export default function HomePage() {
       const student = registration.students.find((item) => item.id === studentId)
       const campType = student?.schedule?.[week.id]?.campType || ''
       if (!campType) {
-        setMessage('Select General or Boot Camp for this week first.')
+        setMessage('Select General Summer Wushu Week or Competition Wushu Week for this week first.')
         return
       }
     }
@@ -2777,7 +2776,7 @@ export default function HomePage() {
       const student = registration.students.find((item) => item.id === studentId)
       const campType = student?.schedule?.[week.id]?.campType || ''
       if (!campType) {
-        setMessage('Select General or Boot Camp for this week first.')
+        setMessage('Select General Summer Wushu Week or Competition Wushu Week for this week first.')
         return
       }
     }
@@ -2796,7 +2795,7 @@ export default function HomePage() {
 
   function toggleLunch(studentId, weekId, day) {
     if (isIncludedLunchDay(day)) {
-      setMessage('Thursday BBQ lunch is already included. You can still pack lunch if preferred.')
+      setMessage('Friday BBQ lunch is already included. You can still pack lunch if preferred.')
       return
     }
     const key = `${weekId}:${day}`
@@ -2876,7 +2875,7 @@ export default function HomePage() {
     setVisitedLunchWeekKeys((current) =>
       Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
     )
-    setMessage('Cleared all selected weeks/times for active camper.')
+    setMessage('Cleared all selected weeks/times for active student.')
   }
 
   function copyScheduleFromCamper(sourceId) {
@@ -2917,7 +2916,7 @@ export default function HomePage() {
     setVisitedLunchWeekKeys((current) =>
       Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
     )
-    setMessage('Copied weeks/times from selected camper.')
+    setMessage('Copied weeks/times from selected student.')
   }
 
   function clearActiveStudentLunch() {
@@ -2942,7 +2941,7 @@ export default function HomePage() {
     setVisitedLunchWeekKeys((current) =>
       Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${activeStudent.id}:`)))
     )
-    setMessage('Cleared all lunch selections for active camper.')
+    setMessage('Cleared all lunch selections for active student.')
   }
 
   function copyLunchFromCamper(sourceId) {
@@ -2977,7 +2976,7 @@ export default function HomePage() {
     }))
     setExpandedLunchWeekKey('')
     setVisitedLunchStudentIds((current) => ({ ...current, [activeStudent.id]: true }))
-    setMessage('Copied lunch selections from selected camper.')
+    setMessage('Copied lunch selections from selected student.')
   }
 
   function hasAnySelectedCampDay(student) {
@@ -3068,7 +3067,7 @@ export default function HomePage() {
           .join(', ')
         return {
           ok: false,
-          message: `Add at least one selected camp day for: ${names}.`,
+          message: `Add at least one selected summer wushu week day for: ${names}.`,
         }
       }
     }
@@ -3231,6 +3230,9 @@ export default function HomePage() {
 
   function buildStudentPriceRows(summary, studentIndex, options = {}) {
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
+    const discountCampaignId = String(
+      options.discountCampaignId || (applyLimitedDiscount ? activeDiscountCampaignId : '')
+    ).trim()
     const student = options.student || null
     const siblingDiscountEligible =
       typeof options.siblingDiscountEligible === 'boolean'
@@ -3242,28 +3244,28 @@ export default function HomePage() {
       {
         id: 'general-fullWeek',
         key: 'fullWeek',
-        label: 'General Camp Full Week',
+        label: 'General Summer Wushu Week Full Week',
         qty: summary.general.fullWeeks,
         rateType: 'general',
       },
       {
         id: 'general-fullDay',
         key: 'fullDay',
-        label: 'General Camp Full Day',
+        label: 'General Summer Wushu Week Full Day',
         qty: summary.general.fullDays,
         rateType: 'general',
       },
       {
         id: 'general-amHalf',
         key: 'amHalf',
-        label: 'General Camp AM Half Day',
+        label: 'General Summer Wushu Week AM Half Day',
         qty: summary.general.amDays,
         rateType: 'general',
       },
       {
         id: 'general-pmHalf',
         key: 'pmHalf',
-        label: 'General Camp PM Half Day',
+        label: 'General Summer Wushu Week PM Half Day',
         qty: summary.general.pmDays,
         rateType: 'general',
       },
@@ -3297,7 +3299,9 @@ export default function HomePage() {
       },
     ].map((item) => {
       const locationValue = options.location ?? registration.location
-      const configuredRate = getCampRateForLocation(locationValue, item.rateType, item.key, adminConfig.tuition)
+      const configuredRate = getCampRateForLocation(locationValue, item.rateType, item.key, adminConfig.tuition, {
+        discountCampaignId,
+      })
       const regularPrice = configuredRate.regularPrice
       const configuredDiscountedPrice = configuredRate.discountedPrice
       const normalizedDiscountedPrice =
@@ -3349,15 +3353,17 @@ export default function HomePage() {
     const subtotalAfterLimitedDiscount = tuitionRows.reduce((acc, row) => acc + row.lineTotal, 0)
     const fourthWeekPromo = student
       ? getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
-          applyLimitedDiscount,
-        })
+        applyLimitedDiscount,
+        discountCampaignId,
+      })
       : { eligible: false, amount: 0, label: WEEK_TIER_PROMO.shortLabel, weeksSelected: 0, breakdown: [] }
     const fourthWeekPromoAmount = Math.max(0, Number(fourthWeekPromo.amount || 0))
     const fourthWeekPromoLines = getWeekTierPromoDisplayLines(fourthWeekPromo)
     const nextWeekTierPromoPrompt = student
       ? getNextWeekTierPromoPrompt(student, weeksById, adminConfig.tuition, {
-          applyLimitedDiscount,
-        })
+        applyLimitedDiscount,
+        discountCampaignId,
+      })
       : { eligible: false }
     const subtotalAfterCampDiscounts = Math.max(0, subtotalAfterLimitedDiscount - fourthWeekPromoAmount)
 
@@ -3406,6 +3412,9 @@ export default function HomePage() {
     }
 
     const applyLimitedDiscount = Boolean(options.applyLimitedDiscount)
+    const discountCampaignId = String(
+      options.discountCampaignId || (applyLimitedDiscount ? activeDiscountCampaignId : '')
+    ).trim()
 
     const ranked = studentList
       .map((student, index) => {
@@ -3420,7 +3429,9 @@ export default function HomePage() {
           ['bootcamp', 'amHalf', summary.bootcamp.amDays],
           ['bootcamp', 'pmHalf', summary.bootcamp.pmDays],
         ].reduce((sum, [rateType, key, qty]) => {
-          const configuredRate = getCampRateForLocation(registration.location, rateType, key, adminConfig.tuition)
+          const configuredRate = getCampRateForLocation(registration.location, rateType, key, adminConfig.tuition, {
+            discountCampaignId,
+          })
           const regularPrice = configuredRate.regularPrice
           const configuredDiscountedPrice = configuredRate.discountedPrice
           const normalizedDiscountedPrice =
@@ -3432,6 +3443,7 @@ export default function HomePage() {
         }, 0)
         const promo = getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
           applyLimitedDiscount,
+          discountCampaignId,
         })
 
         return {
@@ -3451,7 +3463,10 @@ export default function HomePage() {
   }
 
   function getClaimableDiscountTotal() {
-    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(registration.students, { applyLimitedDiscount: true })
+    const eligibleIds = getSiblingDiscountEligibleIdsForStudents(registration.students, {
+      applyLimitedDiscount: true,
+      discountCampaignId: activeDiscountCampaignId,
+    })
     return summaries.reduce((sum, item) => {
       const studentIndex = registration.students.findIndex((student) => student.id === item.student.id)
       return (
@@ -3459,6 +3474,7 @@ export default function HomePage() {
         buildStudentPriceRows(item.summary, studentIndex, {
           student: item.student,
           applyLimitedDiscount: true,
+          discountCampaignId: activeDiscountCampaignId,
           siblingDiscountEligible: eligibleIds.has(item.student.id),
         }).limitedDiscountAmount
       )
@@ -3475,6 +3491,7 @@ export default function HomePage() {
     const allCampEntries = []
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive,
+      discountCampaignId: activeDiscountCampaignId,
       location: targetRegistration.location,
     })
 
@@ -3486,6 +3503,7 @@ export default function HomePage() {
           student,
           location: targetRegistration.location,
           applyLimitedDiscount: discountActive,
+          discountCampaignId: activeDiscountCampaignId,
           siblingDiscountEligible: eligibleIds.has(student.id),
         })
         const {
@@ -3556,10 +3574,10 @@ export default function HomePage() {
             <p>
               <span class="pill">Lunch provided: ${lunchProvidedDays}/${registeredDays} days</span>
               <span class="pill">Paid lunch selected: ${paidLunchDays} days</span>
-              <span class="pill">Thu included lunch: ${includedLunchDays} day(s)</span>
+              <span class="pill">Fri included lunch: ${includedLunchDays} day(s)</span>
               <span class="pill">Pack lunch needed: ${packLunchNeededDays} days</span>
             </p>
-            <p class="note">On paid-lunch days, our team will contact you closer to each camp week to confirm menu options. Thursday BBQ lunch is included in tuition (packing your own lunch is optional).</p>
+            <p class="note">On paid-lunch days, our team will contact you closer to each week to confirm menu options. Friday BBQ lunch is included in tuition (packing your own lunch is optional), and Friday showcase is the same day.</p>
 
             <h3>Tuition Table</h3>
             <table>
@@ -3571,13 +3589,13 @@ export default function HomePage() {
             <p><strong>${escapeHtml(camperName)} total:</strong> ${currency(invoice.total)}</p>
 
             <h3>Lunch Calendar</h3>
-            ${lunchCalendarHtml || '<p>No camp days selected yet.</p>'}
+            ${lunchCalendarHtml || '<p>No summer wushu week days selected yet.</p>'}
           </section>
         `
       })
       .join('')
 
-    let familyCalendarHtml = '<p>No camp days selected yet.</p>'
+    let familyCalendarHtml = '<p>No summer wushu week days selected yet.</p>'
     if (allCampEntries.length > 0) {
       const byDate = new Map()
       for (const entry of allCampEntries) {
@@ -3637,7 +3655,7 @@ export default function HomePage() {
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Summer Camp Registration Summary</title>
+          <title>Summer Wushu Week Registration Summary</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 18px; color: #0f172a; }
             h1 { margin: 0 0 6px; }
@@ -3663,13 +3681,13 @@ export default function HomePage() {
           </style>
         </head>
         <body>
-          <h1>Welcome to Summer Camp 2026 Summary</h1>
+          <h1>Welcome to Summer Wushu Week 2026 Summary</h1>
           <p class="meta"><strong>Parent/Guardian:</strong> ${escapeHtml(targetRegistration.parentName || 'not provided')} | <strong>Email:</strong> ${escapeHtml(targetRegistration.contactEmail || 'not provided')} | <strong>Phone:</strong> ${escapeHtml(targetRegistration.contactPhone || 'not provided')} | <strong>Generated:</strong> ${escapeHtml(todayLabel)}</p>
           <p class="note">This summary includes basic info, tuition table, and lunch calendar details.</p>
           ${studentSections}
           <div class="pageBreak"></div>
-          <h2>Family Camp & Lunch Calendar</h2>
-          <p class="note">Each camp day shows lunch plan and notable reminders (Tuesday: sunscreen/outdoor shoes if needed, Wednesday: bring change of clothes, Thursday: BBQ included lunch, Friday: performance day).</p>
+          <h2>Family Summer Wushu Week & Lunch Calendar</h2>
+          <p class="note">Each summer wushu week day shows lunch plan and notable reminders (Tuesday: sunscreen/outdoor shoes if needed, Wednesday: bring change of clothes, Friday BBQ, and Friday showcase).</p>
           ${familyCalendarHtml}
         </body>
       </html>
@@ -3690,6 +3708,7 @@ export default function HomePage() {
         year: 'numeric',
       }),
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      discountCampaignId: activeDiscountCampaignId,
       businessName: adminConfig.tuition.businessName || 'New England Wushu',
       businessAddress: adminConfig.tuition.businessAddress || '',
     })
@@ -3747,6 +3766,7 @@ export default function HomePage() {
         year: 'numeric',
       }),
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      discountCampaignId: activeDiscountCampaignId,
       businessName: adminConfig.tuition.businessName || 'New England Wushu',
       businessAddress: adminConfig.tuition.businessAddress || '',
     })
@@ -3805,6 +3825,7 @@ export default function HomePage() {
     ]
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      discountCampaignId: activeDiscountCampaignId,
       location: targetRegistration.location,
     })
     for (const [index, student] of targetRegistration.students.entries()) {
@@ -3814,6 +3835,7 @@ export default function HomePage() {
         student,
         location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
       const { registeredDays, paidLunchDays, includedLunchDays, packLunchNeededDays } =
@@ -3828,7 +3850,7 @@ export default function HomePage() {
         summary.bootcamp.amDays +
         summary.bootcamp.pmDays
       lines.push(
-        `${camperName}: ${selectedDayBlocks} selected camp day blocks, lunch provided ${paidLunchDays + includedLunchDays}/${registeredDays} days (paid ${paidLunchDays}, Thu included ${includedLunchDays}), pack lunch needed ${packLunchNeededDays}, total ${currency(invoice.total)}`
+        `${camperName}: ${selectedDayBlocks} selected summer wushu week day blocks, lunch provided ${paidLunchDays + includedLunchDays}/${registeredDays} days (paid ${paidLunchDays}, Fri included ${includedLunchDays}), pack lunch needed ${packLunchNeededDays}, total ${currency(invoice.total)}`
       )
       ;(invoice.fourthWeekPromoLines || []).forEach((promoLine) => {
         lines.push(`${camperName} offer applied: ${promoLine.label} (-${currency(promoLine.amount)})`)
@@ -3841,6 +3863,7 @@ export default function HomePage() {
         student,
         location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
@@ -3850,7 +3873,7 @@ export default function HomePage() {
     lines.push(`Offer details: ${WEEK_TIER_PROMO.cap} ${WEEK_TIER_PROMO.tiers} ${WEEK_TIER_PROMO.detail}`)
     lines.push(`Why families use it: ${WEEK_TIER_PROMO.growth}`)
     lines.push(`Camp hours: ${DAY_CAMP_HOURS_WITH_PICKUP_LABEL}.`)
-    lines.push('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included (packing your own lunch is optional). Friday family performance showcase happens during pickup.')
+    lines.push('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Friday BBQ lunch is included (packing your own lunch is optional). Friday showcase happens during pickup.')
     return lines
   }
 
@@ -3858,6 +3881,7 @@ export default function HomePage() {
     const summaryLines = buildReservationSummaryLines(targetRegistration)
     const eligibleIds = getSiblingDiscountEligibleIdsForStudents(targetRegistration.students, {
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      discountCampaignId: activeDiscountCampaignId,
       location: targetRegistration.location,
     })
     const amountDue = (targetRegistration?.students || []).reduce((sum, student, studentIndex) => {
@@ -3866,6 +3890,7 @@ export default function HomePage() {
         student,
         location: targetRegistration.location,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
         siblingDiscountEligible: eligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
@@ -3898,14 +3923,14 @@ export default function HomePage() {
 
     if (!isStepTwoComplete()) {
       setStep(2)
-      setMessage('Select at least one camp day for each camper.')
+      setMessage('Select at least one summer wushu week day for each student.')
       jumpToStepMissingField(2)
       return
     }
 
     if (!isStepThreeComplete()) {
       setStep(3)
-      setMessage('Choose paid lunch days or confirm no paid lunch for each camper when applicable.')
+      setMessage('Choose paid lunch days or confirm no paid lunch for each student when applicable.')
       jumpToStepMissingField(3)
       return
     }
@@ -3970,12 +3995,14 @@ export default function HomePage() {
     const summaryLines = buildReservationSummaryLines(submittedSnapshot)
     const submittedSiblingEligibleIds = getSiblingDiscountEligibleIdsForStudents(submittedSnapshot.students, {
       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+      discountCampaignId: activeDiscountCampaignId,
     })
     const amountDue = submittedSnapshot.students.reduce((sum, student, studentIndex) => {
       const summary = getStudentSummary(student)
       const invoice = buildStudentPriceRows(summary, studentIndex, {
         student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
         siblingDiscountEligible: submittedSiblingEligibleIds.has(student.id),
       })
       return sum + Number(invoice.total || 0)
@@ -4018,6 +4045,7 @@ export default function HomePage() {
             paymentPageLink,
             registration: submittedSnapshot,
             applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+            discountCampaignId: activeDiscountCampaignId,
           },
         }),
       })
@@ -4102,6 +4130,7 @@ export default function HomePage() {
   )
   const siblingDiscountEligibleStudentIds = getSiblingDiscountEligibleIdsForStudents(registration.students, {
     applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+    discountCampaignId: activeDiscountCampaignId,
   })
   const selectedLocationLabel = getLocationLabel(registration.location)
   const locationAlbumTitle = registration.location.trim()
@@ -4121,6 +4150,7 @@ export default function HomePage() {
       buildStudentPriceRows(item.summary, studentIndex, {
         student: item.student,
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
         siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
       }).total
     )
@@ -4129,6 +4159,7 @@ export default function HomePage() {
     (accumulator, student, index) => {
       const promo = getWeekTierPromoForStudent(student, weeksById, adminConfig.tuition, {
         applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+        discountCampaignId: activeDiscountCampaignId,
       })
       if (!promo.eligible) {
         return accumulator
@@ -4322,13 +4353,8 @@ export default function HomePage() {
   }, [registration.students])
   const activeRegistrationStepImage = adminConfig.media.registrationStepImageUrls?.[step - 1] || ''
   const fullWeekDiscountAmount = useMemo(() => {
-    const regularFullWeek = Number(adminConfig.tuition.regular.fullWeek || 0)
-    const discountedFullWeek = Number(adminConfig.tuition.discount.fullWeek || 0)
-    if (regularFullWeek <= 0 || discountedFullWeek <= 0) {
-      return 0
-    }
-    return Math.max(0, regularFullWeek - discountedFullWeek)
-  }, [adminConfig.tuition.discount.fullWeek, adminConfig.tuition.regular.fullWeek])
+    return discountActive ? ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT : 0
+  }, [discountActive])
   const discountAmountLabel = useMemo(() => {
     return fullWeekDiscountAmount > 0 ? `${currency(fullWeekDiscountAmount)} OFF` : '$0 OFF'
   }, [fullWeekDiscountAmount])
@@ -4670,7 +4696,7 @@ export default function HomePage() {
           <div className="desktopSideRailBrand">
             {pageHeroLogo}
           </div>
-          <p className="desktopSideRailEyebrow">Summer Camp</p>
+          <p className="desktopSideRailEyebrow">Summer Wushu Week</p>
           <div className="desktopSideRailLinks">
             {desktopCampNavItems.map((item) => (
               <a key={item.href} href={item.href} className="desktopSideRailLink">
@@ -4794,9 +4820,6 @@ export default function HomePage() {
           <button type="button" className="button secondary goSummerChip" onClick={jumpToCampTop}>
             {text('Go to Summer Day Camp Page', '进入夏令营日营页面')}
           </button>
-          <a className="button secondary goSummerChip" href="/overnight">
-            {text('Go to Overnight Camp Page', '进入过夜营页面')}
-          </a>
         </div>
       </section>
       ) : null}
@@ -5555,7 +5578,7 @@ export default function HomePage() {
       <section className="hero card" id="camp-info">
         <div className="heroIntroRow">
           <div className="heroIntroText">
-            <p className="eyebrow">New England Wushu Summer Camp 2026</p>
+            <p className="eyebrow">Summer Wushu Week 2026</p>
             <p className="heroLocationLine">{text(heroLocationLabel, heroLocationLabel)}</p>
             <h1>{text('Structured martial arts camp for confident, active kids.', '为孩子打造有结构、有成长感的武术夏令营。')}</h1>
             <p className="subhead">
@@ -5579,7 +5602,7 @@ export default function HomePage() {
         <div className="heroDecisionStrip">
           <article className="heroDecisionCard">
             <p className="heroAchievementLabel">{text('Program Format', '课程形式')}</p>
-            <h3>{text('Weekly camps with flexible enrollment options', '按周报名，并可灵活选择上课形式')}</h3>
+            <h3>{text('Weekly wushu programs with flexible enrollment options', '按周报名，并可灵活选择上课形式')}</h3>
             <p>{text('Choose full week, full day, or half day based on your family schedule.', '可根据家庭安排选择整周、全天或半天。')}</p>
           </article>
           <article className="heroDecisionCard">
@@ -5794,8 +5817,8 @@ export default function HomePage() {
           <div className="pricingPromoCard">
             <strong>
               {text(
-                `${ROUND_TWO_DISCOUNT_NAME}: Save ${currency(fullWeekDiscountAmount)} per full week before ${discountEndDateSpokenLabel.en}.`,
-                `第二轮早鸟优惠：在 ${discountEndDateSpokenLabel.zh} 前报名，整周每周立减 ${currency(fullWeekDiscountAmount)}。`
+                `${ROUND_THREE_DISCOUNT_NAME}: Save ${currency(fullWeekDiscountAmount)} per full week before ${discountEndDateSpokenLabel.en}.`,
+                `第三轮夏季特惠：在 ${discountEndDateSpokenLabel.zh} 前报名，整周每周立减 ${currency(fullWeekDiscountAmount)}。`
               )}
             </strong>
             <p>{text('Reserve now to lock in the current offer.', '现在报名即可锁定当前优惠。')}</p>
@@ -5911,8 +5934,8 @@ export default function HomePage() {
         {discountActive ? (
           <p className="campTypeDiscountNote">
             {text(
-              `${ROUND_TWO_DISCOUNT_NAME} ends on ${discountEndDateSpokenLabel.en}. Claim your discount when you register.`,
-              `第二轮早鸟优惠截止至 ${discountEndDateSpokenLabel.zh}，报名时即可领取。`
+              `${ROUND_THREE_DISCOUNT_NAME} ends on ${discountEndDateSpokenLabel.en}. Claim your discount when you register.`,
+              `第三轮夏季特惠截止至 ${discountEndDateSpokenLabel.zh}，报名时即可领取。`
             )}
           </p>
         ) : null}
@@ -5944,13 +5967,6 @@ export default function HomePage() {
               <span className="pointsGlowBadge">New England Wushu Level Up</span>
               <strong>{dayCampPointsBreakdown}</strong>
               <p>{dayCampPointsUseCopy}</p>
-            </div>
-            <div className="overnightMiniCard">
-              <strong>{text('Need something more immersive?', '需要更沉浸式的选择吗？')}</strong>
-              <p>{text('Our Overnight Camp offers a separate full-week live-in experience with training, outings, and camp-life bonding.', '过夜营提供独立的整周住宿式体验，包含训练、外出活动与营地生活。')}</p>
-              <a className="button" href="/overnight">
-                {text('Explore Overnight Camp', '查看过夜营')}
-              </a>
             </div>
           </div>
         </article>
@@ -5992,7 +6008,7 @@ export default function HomePage() {
           </article>
           <article className="daySupportCard">
             <strong>{text('Lunch made easier', '午餐更省心')}</strong>
-            <p>{text(`Lunch can be added by day for ${currency(adminConfig.tuition.lunchPrice)}, and Thursday BBQ is included.`, `午餐可按天加购，每天 ${currency(adminConfig.tuition.lunchPrice)}，周四烧烤已包含。`)}</p>
+            <p>{text(`Lunch can be added by day for ${currency(adminConfig.tuition.lunchPrice)}, and Friday BBQ is included.`, `午餐可按天加购，每天 ${currency(adminConfig.tuition.lunchPrice)}，周五烧烤已包含。`)}</p>
           </article>
           <article className="daySupportCard">
             <strong>{text('Visible progress', '成长可见')}</strong>
@@ -6274,7 +6290,7 @@ export default function HomePage() {
               <strong>{text('Registration summary', '报名摘要')}</strong>
               <em>
                 {summaryExpanded
-                  ? `${registration.students.length} ${text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} · ${summaryDigest.totalCampDays} ${text('selected day blocks', '个已选上课时段')} · ${summaryDigest.totalPaidLunchDays} ${text('paid lunch days', '个付费午餐日')} · ${summaryDigest.totalIncludedLunchDays} ${text('Thu included lunch days', '个周四含午餐日')}`
+                  ? `${registration.students.length} ${text(registration.students.length === 1 ? 'camper' : 'campers', registration.students.length === 1 ? '位营员' : '位营员')} · ${summaryDigest.totalCampDays} ${text('selected day blocks', '个已选上课时段')} · ${summaryDigest.totalPaidLunchDays} ${text('paid lunch days', '个付费午餐日')} · ${summaryDigest.totalIncludedLunchDays} ${text('Fri included lunch days', '个周四含午餐日')}`
                   : ''}
               </em>
             </span>
@@ -6386,7 +6402,7 @@ export default function HomePage() {
                     ) : null}
 
                     <p className="summaryLunch">
-                      {pluralize(text('Paid Lunch Day', '付费午餐日'), summary.lunchCount)} · {text('Thu included', '周四含午餐')}{' '}
+                      {pluralize(text('Paid Lunch Day', '付费午餐日'), summary.lunchCount)} · {text('Fri included', '周五含午餐')}{' '}
                       {getLunchDecisionStats(student, weeksById).includedLunchDays}
                     </p>
                     {step === 3 && lunchStepStatusByStudentId[student.id]?.needsVisit ? (
@@ -6779,11 +6795,6 @@ export default function HomePage() {
           {step === 2 ? (
             <div className="full">
               <p className="requiredFieldHint">{step2HasMissing ? <span className="requiredDot" /> : null} {text('Select at least one camp day for each camper.', '请至少为每位营员选择一天课程。')}</p>
-              <div className="summaryActionRow" style={{ justifyContent: 'flex-start', marginTop: '0.5rem' }}>
-                <a className="button secondary" href="/overnight">
-                  {text('Looking for Overnight Camp?', '想报名过夜营？')}
-                </a>
-              </div>
               {!registrationIsSubmitted
                 ? renderWeekTierPromoCard({
                     className: 'specialOfferCardInline',
@@ -7010,16 +7021,8 @@ export default function HomePage() {
                 <p>{dayCampPointsUseCopy}</p>
               </div>
               <p className="subhead">
-                {text('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Thursday BBQ lunch is included in tuition (packing lunch is optional). Friday is family performance day.', '每周提醒：周二户外活动可能需要防晒用品和户外鞋。周三请带备用衣物。周四烧烤午餐已包含在学费内（也可自带午餐）。周五为家庭展示日。')}
+                {text('Weekly reminders: Tuesday outdoor time may need sunscreen and outdoor shoes. Wednesday bring a change of clothes. Friday BBQ lunch is included in tuition (packing lunch is optional). Friday showcase is the same day.', '每周提醒：周二户外活动可能需要防晒用品和户外鞋。周三请带备用衣物。周五烧烤午餐已包含在学费内（也可自带午餐）。周五也是家庭展示日。')}
               </p>
-              <div className="registrationInlineChipRow">
-                <span className="registrationInlineChipLabel">
-                  {text('Looking for overnight camp?', '想了解过夜营？')}
-                </span>
-                <a className="button secondary registrationMiniChip" href="/overnight">
-                  {text('Open overnight page', '打开过夜营页面')}
-                </a>
-              </div>
               {activeStudent && copySourceOptions.length > 0 ? (
                 <div className="registrationStepTools">
                   <div className="copyWeeksPicker">
@@ -7097,7 +7100,7 @@ export default function HomePage() {
                                 <span className="activeStudentName">{activeStudent.fullName || 'this camper'}</span>
                               </em>
                               <span className="weekLunchSummaryLine">
-                                {text(`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Thu included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`, `已提供午餐 ${weekProvidedLunchDays}/${weekRegisteredDays} 天（付费 ${weekPaidLunchDays} 天，周四含餐 ${weekIncludedLunchDays} 天）· 需自带午餐 ${weekPackDays} 天`)}
+                                {text(`Lunch provided ${weekProvidedLunchDays}/${weekRegisteredDays} days (paid ${weekPaidLunchDays}, Fri included ${weekIncludedLunchDays}) · Pack lunch needed ${weekPackDays} days`, `已提供午餐 ${weekProvidedLunchDays}/${weekRegisteredDays} 天（付费 ${weekPaidLunchDays} 天，周五含餐 ${weekIncludedLunchDays} 天）· 需自带午餐 ${weekPackDays} 天`)}
                               </span>
                               <span className={`weekSelectionStateChip ${
                                 weekPaidLunchDays > 0 ? 'lunchSelected' : visited ? 'visited' : 'needsAttention'
@@ -7135,7 +7138,7 @@ export default function HomePage() {
                                 })}
                               </div>
                               <p className="subhead">
-                                {text('Wed: bring change of clothes · Thu: BBQ lunch included (pack optional) · Fri: family performance day', '周三：请带备用衣物 · 周四：烧烤午餐已含（也可自带） · 周五：家庭展示日')}
+                                {text('Wed: bring change of clothes · Fri: BBQ lunch included (pack optional) · Fri: showcase', '周三：请带备用衣物 · 周五：烧烤午餐已含（也可自带）· 周五：家庭展示')}
                               </p>
                             </div>
                           ) : null}
@@ -7154,7 +7157,7 @@ export default function HomePage() {
                     const hasAnyPaidLunch = paidLunchDaysSelected > 0
                     const selectableLunchDays = getSelectableLunchDayKeysForStudent(activeStudent).size
                     const lunchWeeks = getLunchWeeksForStudent(activeStudent, weeksById)
-                    const includedThursdayCount = lunchWeeks.reduce(
+                    const includedFridayCount = lunchWeeks.reduce(
                       (sum, row) => sum + row.selectedDays.filter((day) => isIncludedLunchDay(day.dayKey)).length,
                       0
                     )
@@ -7174,9 +7177,9 @@ export default function HomePage() {
                   </div>
                   <p className="subhead lunchDecisionSummary">
                     {!needsDecision
-                      ? `Only Thursday camp days are selected. BBQ lunch is already included for ${includedThursdayCount} day(s).`
+                      ? `Only Friday summer wushu week days are selected. Friday BBQ lunch is already included for ${includedFridayCount} day(s).`
                       : hasAnyPaidLunch
-                        ? `Paid lunch selected for ${paidLunchDaysSelected} day(s). Thursday BBQ included for ${includedThursdayCount} day(s).`
+                        ? `Paid lunch selected for ${paidLunchDaysSelected} day(s). Friday BBQ included for ${includedFridayCount} day(s).`
                         : 'No paid lunch days selected yet. Confirm no paid lunch if this camper does not need paid lunch.'}
                   </p>
                   {registration.students.length > 1 && step3HasMissing ? (
@@ -7232,11 +7235,8 @@ export default function HomePage() {
                       Start New Registration
                     </button>
                     <button type="button" className="button secondary" onClick={jumpToCampTop}>
-                      Return to Summer Day Camp Page
+                      Return to Summer Wushu Week Page
                     </button>
-                    <a className="button secondary" href="/overnight">
-                      Looking for Overnight Camp?
-                    </a>
                   </div>
                 </div>
               ) : null}
@@ -7321,6 +7321,7 @@ export default function HomePage() {
                     const invoice = buildStudentPriceRows(summary, studentIndex, {
                       student,
                       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+                      discountCampaignId: activeDiscountCampaignId,
                       siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(student.id),
                     })
                     return (
@@ -7435,6 +7436,7 @@ export default function HomePage() {
                     return sum + buildStudentPriceRows(item.summary, studentIndex, {
                       student: item.student,
                       applyLimitedDiscount: discountActive && registrationDiscountClaimed,
+                      discountCampaignId: activeDiscountCampaignId,
                       siblingDiscountEligible: siblingDiscountEligibleStudentIds.has(item.student.id),
                     }).total
                   }, 0)
@@ -7619,9 +7621,9 @@ export default function HomePage() {
 
       {showRegistrationSections ? (
       <section className="card section" id="overnight-registration">
-        <h2>Overnight Camp Registration</h2>
+        <h2>Overnight Wushu Week Registration</h2>
         <p className="subhead">
-          Overnight Camp offers a weekly rate of {currency(adminConfig.tuition.regular.overnightWeek)}{discountActive && Number(overnightFullWeekCurrentPrice || 0) > 0 ? (
+          Overnight Wushu Week offers a weekly rate of {currency(adminConfig.tuition.regular.overnightWeek)}{discountActive && Number(overnightFullWeekCurrentPrice || 0) > 0 ? (
             <> , currently {currency(overnightFullWeekCurrentPrice)} through {discountEndDateSpokenLabel.en}</>
           ) : null}. Tuition covers 7 days of meals, 7 days of academy training, and 7 days of lodging. Outings and the Friday family & friends BBQ are billed separately.
         </p>
@@ -7643,7 +7645,7 @@ export default function HomePage() {
           ) : null}
           {overnightWindowLabel ? (
             <p>
-              Camp window: <strong>{overnightWindowLabel}</strong>
+              Week window: <strong>{overnightWindowLabel}</strong>
             </p>
           ) : null}
           <p>
@@ -7651,15 +7653,15 @@ export default function HomePage() {
             <strong>{currency(overnightFullDayCurrentPrice)}</strong>
           </p>
           <p>
-            Meals and lodging are included. Sunday drop-off starts at 1:00 PM and Saturday pickup is at 4:00 PM at the camp house
+            Meals and lodging are included. Sunday drop-off starts at 1:00 PM and Saturday pickup is at 4:00 PM at the lodging house
             (address TBA). Outings and external activity costs are charged separately.
           </p>
           <p>
-            Train More, Save More does not apply to overnight camp. If a second sibling enrolls, the overnight sibling
-            discount is {OVERNIGHT_SIBLING_DISCOUNT_PCT}% off that second camper&apos;s camp tuition.
+            Train More, Save More does not apply to the overnight wushu program. If a second sibling enrolls, the overnight sibling
+            discount is {OVERNIGHT_SIBLING_DISCOUNT_PCT}% off that second student&apos;s program tuition.
           </p>
           <p>
-            Capacity: <strong>12 campers max per overnight week.</strong>
+            Capacity: <strong>12 students max per overnight week.</strong>
           </p>
         </div>
         <div className="campTypeFitBox">
@@ -7837,7 +7839,7 @@ export default function HomePage() {
             <div className="campTypeContentPanel">
               <h3>Step 2: Activity Interest Survey (Overnight)</h3>
               <p className="subhead">
-                Pick activities your camper enjoys. Choose as many as you want.
+                Pick activities your student enjoys. Choose as many as you want.
               </p>
               <div className="overnightActivityGrid">
                 {overnightActivityOptions.map((option) => (
@@ -8159,7 +8161,7 @@ export default function HomePage() {
             </button>
           ) : null}
           <div className="discountCountdownMeta discountCountdownMetaPrimary">
-            <strong>{text(discountStatus.active ? ROUND_TWO_DISCOUNT_NAME : 'Discount Update', discountStatus.active ? '第二轮早鸟优惠' : '优惠更新')}</strong>
+            <strong>{text(discountStatus.active ? ROUND_THREE_DISCOUNT_NAME : 'Discount Update', discountStatus.active ? '第三轮夏季特惠' : '优惠更新')}</strong>
             {discountStatus.active ? (
               <>
                 <p className="discountAmountHero">

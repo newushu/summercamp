@@ -1,23 +1,33 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { defaultAdminConfig, formatWeekLabel, getSelectedWeeks, mergeAdminConfig } from '../../lib/campAdmin'
+import {
+  defaultAdminConfig,
+  formatWeekLabel,
+  getSelectedWeeks,
+  getTuitionForDiscountCampaign,
+  LIMITED_DISCOUNT_CAMPAIGN_IDS,
+  mergeAdminConfig,
+  ROUND_THREE_DISCOUNT_END_DATE,
+  ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT,
+} from '../../lib/campAdmin'
 import { fetchAdminConfigFromSupabase } from '../../lib/campAdminApi'
 import { buildPaymentPageHref } from '../../lib/paymentPageLink'
+import { publicWushuCopy } from '../../lib/publicWushuCopy'
 import { supabase, supabaseEnabled } from '../../lib/supabase'
 
 const OVERNIGHT_REGULAR_WEEK_PRICE = 1180
-const OVERNIGHT_DISCOUNT_WEEK_PRICE = 980
-const OVERNIGHT_DISCOUNT_AMOUNT = OVERNIGHT_REGULAR_WEEK_PRICE - OVERNIGHT_DISCOUNT_WEEK_PRICE
-const OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT = 100
+const OVERNIGHT_DISCOUNT_WEEK_PRICE = OVERNIGHT_REGULAR_WEEK_PRICE - ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT
+const OVERNIGHT_DISCOUNT_AMOUNT = ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT
+const OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT = 0
 const OVERNIGHT_SIBLING_DISCOUNT_PCT = 5
 const OVERNIGHT_WEEKLY_POINTS = 5000
 const OVERNIGHT_POINTS_USE_COPY = 'Points can be saved for prizes, equipment, and future discounts during fall or spring season.'
 const OVERNIGHT_REGISTRATION_DRAFT_KEY = 'new-england-wushu-overnight-registration-draft-v1'
-const DISCOUNT_BANNER_HOLD_DATE = '2026-05-21'
-const DISCOUNT_BANNER_PREVIEW_DATE = '2026-05-20'
+const DISCOUNT_BANNER_HOLD_DATE = '2026-07-01'
+const DISCOUNT_BANNER_PREVIEW_DATE = ROUND_THREE_DISCOUNT_END_DATE
 const overnightRegistrationSteps = [
-  { id: 1, title: 'Family & campers' },
+  { id: 1, title: 'Family & students' },
   { id: 2, title: 'Choose weeks' },
   { id: 3, title: 'Activity interests' },
 ]
@@ -50,7 +60,7 @@ const overnightActivityOptions = [
   'Cultural activities',
   'Board/card game social time',
   'Creative team projects',
-  'Campfire-style reflection time',
+  'Evening reflection time',
   'Free play and social bonding',
 ]
 
@@ -64,28 +74,28 @@ const overnightWeeklySchedule = [
   },
   {
     day: 'Monday',
-    am: 'Academy training + day camp integration',
+    am: 'Academy training + summer wushu week integration',
     pm: 'Academy training',
     evening: 'Outing',
     note: 'Full training day followed by an evening outing.',
   },
   {
     day: 'Tuesday',
-    am: 'Academy training + day camp integration',
+    am: 'Academy training + summer wushu week integration',
     pm: 'Academy training',
     evening: 'Lodging activities',
     note: 'Two training blocks, then supervised lodging activities.',
   },
   {
     day: 'Wednesday',
-    am: 'Academy training + day camp integration',
+    am: 'Academy training + summer wushu week integration',
     pm: 'Academy training + social session',
     evening: 'Lodging activities',
     note: 'Skill work, social session, and evening group time at lodging.',
   },
   {
     day: 'Thursday',
-    am: 'Academy training + day camp integration',
+    am: 'Academy training + summer wushu week integration',
     pm: 'Academy training',
     evening: 'Outing',
     note: 'Training through the day, then an evening outing.',
@@ -139,11 +149,11 @@ const overnightCarouselCaptions = [
   },
   {
     title: 'Fun Outings & Outdoor Activities',
-    text: 'Campers enjoy fun outings, outdoor activities, and active adventures throughout the week.',
+    text: 'Students enjoy fun outings, outdoor activities, and active adventures throughout the week.',
   },
   {
     title: 'Outings & Outdoor Activities',
-    text: 'Campers enjoy outdoor activities, outings, and active adventures that make the week exciting.',
+    text: 'Students enjoy outdoor activities, outings, and active adventures that make the week exciting.',
   },
   {
     title: 'Lodging & Group Activities',
@@ -151,11 +161,11 @@ const overnightCarouselCaptions = [
   },
   {
     title: 'Academy Training',
-    text: 'Focused training blocks give campers more reps, better corrections, and stronger progress.',
+    text: 'Focused training blocks give students more reps, better corrections, and stronger progress.',
   },
   {
     title: 'Team Life',
-    text: 'Shared camp life helps campers build friendships, independence, and strong team energy.',
+    text: 'Shared wushu week life helps students build friendships, independence, and strong team energy.',
   },
 ]
 
@@ -268,16 +278,17 @@ function parseDateLocal(input) {
 function getDisplayedDiscountEndDate(rawEndDate, nowDate) {
   const actual = String(rawEndDate || '').trim()
   if (!actual) {
-    return ''
+    return ROUND_THREE_DISCOUNT_END_DATE
   }
   const switchDate = parseDateLocal(DISCOUNT_BANNER_HOLD_DATE)
   const now = nowDate instanceof Date ? nowDate : null
   if (!switchDate || !now || Number.isNaN(now.getTime())) {
-    return actual
+    return actual < ROUND_THREE_DISCOUNT_END_DATE ? ROUND_THREE_DISCOUNT_END_DATE : actual
   }
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const switchPoint = new Date(switchDate.getFullYear(), switchDate.getMonth(), switchDate.getDate())
-  return today.getTime() >= switchPoint.getTime() ? actual : DISCOUNT_BANNER_PREVIEW_DATE
+  const normalizedActual = actual < ROUND_THREE_DISCOUNT_END_DATE ? ROUND_THREE_DISCOUNT_END_DATE : actual
+  return today.getTime() >= switchPoint.getTime() ? normalizedActual : DISCOUNT_BANNER_PREVIEW_DATE
 }
 
 function calcAge(dob) {
@@ -424,14 +435,15 @@ export function OvernightCampPage({ view = 'landing' }) {
     [config.tuition.discountEndDate, countdownNow]
   )
   const discountActive = useMemo(() => {
-    const end = parseDateLocal(config.tuition.discountEndDate)
+    const end = parseDateLocal(displayedDiscountEndDate)
     if (!end) {
       return false
     }
-    const now = new Date()
+    const now = new Date(countdownNow)
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     return today <= end
-  }, [config.tuition.discountEndDate])
+  }, [countdownNow, displayedDiscountEndDate])
+  const activeDiscountCampaignId = discountActive ? LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_THREE : ''
   useEffect(() => {
     if (!discountActive) {
       return undefined
@@ -469,8 +481,13 @@ export function OvernightCampPage({ view = 'landing' }) {
     [config.tuition.regular.overnightWeek]
   )
   const overnightDiscountWeekPrice = useMemo(
-    () => normalizeOvernightDiscountWeekPrice(config.tuition.discount.overnightWeek),
-    [config.tuition.discount.overnightWeek]
+    () => {
+      const effectiveTuition = activeDiscountCampaignId
+        ? getTuitionForDiscountCampaign(config.tuition, activeDiscountCampaignId)
+        : config.tuition
+      return normalizeOvernightDiscountWeekPrice(effectiveTuition.discount.overnightWeek)
+    },
+    [activeDiscountCampaignId, config.tuition]
   )
   const overnightWeekPrice = useMemo(() => {
     if (discountActive && overnightDiscountWeekPrice > 0) {
@@ -553,7 +570,7 @@ export function OvernightCampPage({ view = 'landing' }) {
     [config.media.overnightRegistrationImageUrls]
   )
   const isZh = language === 'zh'
-  const text = (en, zh) => (isZh ? zh : en)
+  const text = (en, zh) => (isZh ? zh : publicWushuCopy(en))
   const overnightPointsUseCopy = text(
     'Points can be saved for prizes, equipment, and future discounts during fall or spring season.',
     '积分可用于兑换奖品、装备，以及秋季或春季课程的后续优惠。'
@@ -723,25 +740,25 @@ export function OvernightCampPage({ view = 'landing' }) {
     registration.students.forEach((student, index) => {
       if (!student.fullName.trim()) {
         issues[`student-${index}-fullName`] = text(
-          `Please enter camper ${index + 1} full name.`,
+          `Please enter student ${index + 1} full name.`,
           `请输入营员 ${index + 1} 的姓名。`
         )
       }
       if (!student.dob) {
         issues[`student-${index}-dob`] = text(
-          `Please enter camper ${index + 1} date of birth.`,
+          `Please enter student ${index + 1} date of birth.`,
           `请输入营员 ${index + 1} 的出生日期。`
         )
       }
       if (!Array.isArray(student.overnightWeekIds) || student.overnightWeekIds.length === 0) {
         issues[`student-${index}-overnightWeekIds`] = text(
-          `Please choose at least one overnight week for camper ${index + 1}.`,
+          `Please choose at least one overnight week for student ${index + 1}.`,
           `请为营员 ${index + 1} 至少选择一个过夜营周次。`
         )
       }
       if (!Array.isArray(student.activitySelections) || student.activitySelections.length === 0) {
         issues[`student-${index}-activitySelections`] = text(
-          `Please choose at least one activity interest for camper ${index + 1}.`,
+          `Please choose at least one activity interest for student ${index + 1}.`,
           `请为营员 ${index + 1} 至少选择一项活动偏好。`
         )
       }
@@ -857,7 +874,7 @@ export function OvernightCampPage({ view = 'landing' }) {
         overnightDetails: {
           dropoff: 'Sunday 1:00 PM',
           pickup: 'Saturday 4:00 PM',
-          location: 'Camp House (Address TBA)',
+          location: 'Lodging House (Address TBA)',
         },
         totalTuition,
         submittedAt: new Date().toISOString(),
@@ -885,28 +902,28 @@ export function OvernightCampPage({ view = 'landing' }) {
         .filter(Boolean)
         .map((week) => ({ start: week.start, end: week.end }))
       const overnightPricingSummary = discountActive
-        ? `Week 1: $${Number(overnightDiscountWeekPrice || 0).toFixed(2)}. Week 2 gets an extra $${OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT.toFixed(2)} off for $${Math.max(0, Number(overnightDiscountWeekPrice || 0) - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT).toFixed(2)}.`
+        ? `Round 3 Summer Special: $${ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT.toFixed(2)} off each overnight full week through ${displayedDiscountEndDateLabel}.`
         : `Weekly rate: $${Number(overnightRegularWeekPrice || 0).toFixed(2)}.`
       const overnightSiblingSummary =
         registration.students.length > 1
-          ? `Second sibling discount: ${OVERNIGHT_SIBLING_DISCOUNT_PCT}% off the second camper tuition.`
+          ? `Second sibling discount: ${OVERNIGHT_SIBLING_DISCOUNT_PCT}% off the second student tuition.`
           : 'No overnight sibling discount applied.'
       const paymentPageLink = buildPaymentPageHref(
         {
           registrationType: 'overnight-only',
           guardianName: registration.parentName || 'Parent/Guardian',
           contactEmail: registration.contactEmail || '',
-          location: 'Overnight Camp',
+          location: 'Overnight Wushu Week',
           paymentMethod: '',
           summaryLines: [
-            'Overnight Camp registration',
+            'Overnight Wushu Week registration',
             ...summaryLines,
             'Drop-off: Sunday 1:00 PM',
             'Pickup: Saturday 4:00 PM',
-            'Location: Camp House (Address TBA)',
+            'Location: Lodging House (Address TBA)',
             overnightPricingSummary,
             overnightSiblingSummary,
-            'Train More, Save More does not apply to overnight camp.',
+            'Train More, Save More does not apply to the overnight wushu program.',
             'Tuition covers lodging and food only. Outing costs are billed separately.',
             `Total: $${Number(totalTuition || 0).toFixed(2)}`,
           ],
@@ -929,14 +946,14 @@ export function OvernightCampPage({ view = 'landing' }) {
             primaryCamperName: registration.students[0]?.fullName || '',
             camperNames: registration.students.map((student, index) => student.fullName || `Camper ${index + 1}`),
             summaryLines: [
-              'Overnight Camp registration',
+            'Overnight Wushu Week registration',
               ...summaryLines,
               `Drop-off: Sunday 1:00 PM`,
               `Pickup: Saturday 4:00 PM`,
-              `Location: Camp House (Address TBA)`,
+              `Location: Lodging House (Address TBA)`,
               overnightPricingSummary,
               overnightSiblingSummary,
-              'Train More, Save More does not apply to overnight camp.',
+              'Train More, Save More does not apply to the overnight wushu program.',
               'Tuition covers lodging and food only. Outing costs are billed separately.',
               `Total: $${Number(totalTuition || 0).toFixed(2)}`,
             ],
@@ -969,7 +986,7 @@ export function OvernightCampPage({ view = 'landing' }) {
               <img
                 key={activeOvernightCarouselImage}
                 src={getResizedPreviewUrl(activeOvernightCarouselImage, 1600, 900)}
-                alt="Overnight camp carousel"
+                alt="Overnight wushu week carousel"
                 loading="eager"
                 fetchPriority="high"
                 decoding="async"
@@ -995,15 +1012,15 @@ export function OvernightCampPage({ view = 'landing' }) {
                 </>
               ) : null}
               <figcaption className="overnightCarouselCaption">
-                <strong>{activeOvernightCarouselCaption?.title || 'Overnight Camp'}</strong>
+                <strong>{activeOvernightCarouselCaption?.title || 'Overnight Wushu Week'}</strong>
                 <span>{activeOvernightCarouselCaption?.text || ''}</span>
               </figcaption>
             </figure>
           ) : null}
           <div className="overnightHeroPinnedTitle">
             <div className="overnightHeroPinnedTitleMain">
-              <p className="eyebrow">{text(`${CURRENT_YEAR} Overnight Wushu Camp`, `${CURRENT_YEAR} 过夜武术营`)}</p>
-              <h1>{text('Overnight Camp Registration', '过夜营报名')}</h1>
+              <p className="eyebrow">{text(`${CURRENT_YEAR} Overnight Wushu Week`, `${CURRENT_YEAR} 过夜武术营`)}</p>
+              <h1>{text('Overnight Wushu Week Registration', '过夜营报名')}</h1>
             </div>
             <div className="overnightHeroPinnedLogoBox">
               {config.media.welcomeLogoUrl ? (
@@ -1032,10 +1049,10 @@ export function OvernightCampPage({ view = 'landing' }) {
           {isLandingView ? (
             <>
               <a href="/overnight/register" className="button heroPrimaryCta">
-                {discountActive ? text('Claim $200 Off & Register', '领取 200 美元优惠并报名') : text('Start Overnight Registration', '开始过夜营报名')}
+                {discountActive ? text('Claim $50/Week Off & Register', '领取每周 50 美元优惠并报名') : text('Start Overnight Registration', '开始过夜营报名')}
               </a>
               <a href="/" className="button secondary">
-                {text('Go to Summer Camp Landing Page', '进入夏令营主页')}
+                {text('Go to Summer Wushu Week Landing Page', '进入夏令营主页')}
               </a>
             </>
           ) : (
@@ -1152,7 +1169,7 @@ export function OvernightCampPage({ view = 'landing' }) {
           className="overnightLightbox"
           role="dialog"
           aria-modal="true"
-          aria-label="Expanded overnight camp photo"
+          aria-label="Expanded overnight wushu week photo"
           onClick={() => setExpandedGalleryIndex(-1)}
         >
           <div className="overnightLightboxPanel" onClick={(event) => event.stopPropagation()}>
@@ -1237,7 +1254,7 @@ export function OvernightCampPage({ view = 'landing' }) {
           </article>
           <article className="weekSummaryCard">
             <h3>{text('Pick-up', '接回时间')}</h3>
-            <p className="subhead">{text('Saturday at 4:00 PM after family & friends BBQ + games (Camp House)', '周六下午 4:00，在家庭烧烤和游戏活动后接回（营地住宿点）')}</p>
+            <p className="subhead">{text('Saturday at 4:00 PM after family & friends BBQ + games (Lodging House)', '周六下午 4:00，在家庭烧烤和游戏活动后接回（营地住宿点）')}</p>
           </article>
           <article className="weekSummaryCard">
             <h3>{text('Address', '地址')}</h3>
@@ -1252,7 +1269,7 @@ export function OvernightCampPage({ view = 'landing' }) {
         {config.media.welcomeLogoUrl ? (
           <img className="brandMiniLogo inline" src={config.media.welcomeLogoUrl} alt="New England Wushu logo" />
         ) : null}
-        <h2>{text('Register for Overnight Camp', '报名过夜营')}</h2>
+        <h2>{text('Register for Overnight Wushu Week', '报名过夜营')}</h2>
         <p className="subhead">
           {text(
             'Three quick steps: camper info, week selection, and activity interests for lodging and outing planning.',
@@ -1632,8 +1649,8 @@ export function OvernightCampPage({ view = 'landing' }) {
                     <h3>{text('Enrollment Summary', '报名摘要')}</h3>
                     <p className="subhead">
                       {text(
-                        `Regular rate is $${OVERNIGHT_REGULAR_WEEK_PRICE} per week. Early rate is $${OVERNIGHT_DISCOUNT_WEEK_PRICE} per week through ${displayedDiscountEndDateLabel}, and week 2 is $${OVERNIGHT_DISCOUNT_WEEK_PRICE - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT}.`,
-                        `原价为每周 $${OVERNIGHT_REGULAR_WEEK_PRICE}。当前早鸟价截至 ${displayedDiscountEndDateLabel} 为每周 $${OVERNIGHT_DISCOUNT_WEEK_PRICE}，第 2 周为 $${OVERNIGHT_DISCOUNT_WEEK_PRICE - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT}。`
+                        `Regular rate is $${OVERNIGHT_REGULAR_WEEK_PRICE} per week. Round 3 Summer Special is $${OVERNIGHT_DISCOUNT_WEEK_PRICE} per full week through ${displayedDiscountEndDateLabel}.`,
+                        `原价为每周 $${OVERNIGHT_REGULAR_WEEK_PRICE}。第三轮夏季特惠截至 ${displayedDiscountEndDateLabel} 为每整周 $${OVERNIGHT_DISCOUNT_WEEK_PRICE}。`
                       )}
                     </p>
                   </div>
@@ -1673,12 +1690,12 @@ export function OvernightCampPage({ view = 'landing' }) {
                       </strong>
                     </article>
                     <article className="overnightInvoiceStat">
-                      <span>{text('Second week special', '第二周特惠')}</span>
+                      <span>{text('Round 3 Summer Special', '第三轮夏季特惠')}</span>
                       <strong>
                         {discountActive
                           ? text(
-                              `$${OVERNIGHT_DISCOUNT_WEEK_PRICE - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT} total ($${OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT} extra off)`,
-                              `总价 $${OVERNIGHT_DISCOUNT_WEEK_PRICE - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT}（再减 $${OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT}）`
+                              `$${ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT} off each full week`,
+                              `每个整周减 $${ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT}`
                             )
                           : text('Available during early offer', '早鸟优惠期间生效')}
                       </strong>
@@ -1695,14 +1712,12 @@ export function OvernightCampPage({ view = 'landing' }) {
                     </p>
                     <p className="subhead">
                       Published overnight full week rate: ${Number(suggestedOvernightWeekPrice || 0).toFixed(2)} regular,
-                      ${Number(overnightDiscountWeekPrice || 0).toFixed(2)} for week 1 during the early offer, and
-                      ${Math.max(0, Number(overnightDiscountWeekPrice || 0) - OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT).toFixed(2)}
-                      for week 2.
+                      ${Number(overnightDiscountWeekPrice || 0).toFixed(2)} per full week during the Round 3 Summer Special.
                     </p>
                   </div>
                   {discountActive ? (
                     <div className="overnightDiscountPulse">
-                      {text('Early-offer savings active:', '早鸟优惠生效中：')} <strong>{text(`$${OVERNIGHT_DISCOUNT_AMOUNT.toFixed(2)} off each week, with week 2 getting $${(OVERNIGHT_DISCOUNT_AMOUNT + OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT).toFixed(2)} off total`, `每周减 $${OVERNIGHT_DISCOUNT_AMOUNT.toFixed(2)}，第 2 周合计减 $${(OVERNIGHT_DISCOUNT_AMOUNT + OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT).toFixed(2)}`)}</strong>
+                      {text('Round 3 Summer Special active:', '第三轮夏季特惠生效中：')} <strong>{text(`$${OVERNIGHT_DISCOUNT_AMOUNT.toFixed(2)} off each full week`, `每个整周减 $${OVERNIGHT_DISCOUNT_AMOUNT.toFixed(2)}`)}</strong>
                     </div>
                   ) : null}
                   <div className="overnightInvoiceTable">
@@ -1760,7 +1775,7 @@ export function OvernightCampPage({ view = 'landing' }) {
                   </p>
                   <p className="subhead">
                     {text(
-                      'Drop-off: Sunday 1:00 PM · Saturday 4:00 PM family & friends BBQ + games, then pick-up (Camp House) · Address: TBA',
+                      'Drop-off: Sunday 1:00 PM · Saturday 4:00 PM family & friends BBQ + games, then pick-up (Lodging House) · Address: TBA',
                       '送达：周日下午 1:00 · 接回：周六下午 4:00，在家庭烧烤和游戏活动后于营地住宿点接回 · 地址：待定'
                     )}
                   </p>
@@ -1831,18 +1846,18 @@ export function OvernightCampPage({ view = 'landing' }) {
           <a href="#overnight-schedule">{text('Schedule', '日程')}</a>
           <a href="/overnight/register">{text('Register', '报名')}</a>
           <a href="/overnight/register" className="overnightMobileDiscountBtn">
-            {discountActive ? text('Claim $200 Off', '领取 200 美元优惠') : text('Register Now', '立即报名')}
+            {discountActive ? text('Claim $50/Week Off', '领取每周 50 美元优惠') : text('Register Now', '立即报名')}
           </a>
         </nav>
       ) : null}
       {isLandingView ? (
       <a className="overnightMobileDayCampLink" href="/">
-        {text('Go to Summer Camp Landing Page', '进入夏令营主页')}
+        {text('Go to Summer Wushu Week Landing Page', '进入夏令营主页')}
       </a>
       ) : null}
       {isRegistrationView ? (
       <nav className="mobileRegistrationStepBar overnightMobileRegistrationStepBar" aria-label="Overnight registration steps">
-        <div className="mobileRegistrationFlowRibbon overnightRegistrationFlowRibbon">{text('Registering for Overnight Camp', '正在报名过夜营')}</div>
+        <div className="mobileRegistrationFlowRibbon overnightRegistrationFlowRibbon">{text('Registering for Overnight Wushu Week', '正在报名过夜营')}</div>
         {overnightRegistrationSteps.map((item) => {
           const validationMessage = validate(item.id)
           const isComplete = !validationMessage
