@@ -7902,6 +7902,60 @@ textarea:focus {
   text-align: center;
 }
 
+.manualSelectedWeekStack {
+  gap: 0.65rem;
+}
+
+.manualSelectedWeekCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.manualSelectedWeekHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.manualSelectedWeekHeader div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.manualSelectedWeekHeader strong {
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+
+.manualSelectedWeekHeader small {
+  color: #64748b;
+  font-size: 0.74rem;
+}
+
+.manualSelectedWeekPrice {
+  margin-left: auto;
+  color: #0f172a;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.manualSelectedWeekControls {
+  align-items: end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: 0.75rem;
+}
+
+.manualFullWeekBtn {
+  min-height: 39px;
+  align-self: end;
+}
+
 .manualAccountingPreview span {
   color: #1d4ed8;
   font-size: 0.76rem;
@@ -7946,6 +8000,26 @@ textarea:focus {
   color: #64748b;
 }
 
+.accountingFilterControl {
+  margin-left: auto;
+  display: grid;
+  gap: 0.25rem;
+  min-width: 210px;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.accountingFilterControl select {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.42rem 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .accountingEmptyCell {
   text-align: center;
   color: #64748b;
@@ -7979,6 +8053,23 @@ textarea:focus {
 .accountingQuickFillBtn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.accountingRowActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 92px));
+  gap: 0.32rem;
+  align-items: start;
+}
+
+.accountingRowActions .button {
+  min-height: 0;
+  width: 100%;
+  padding: 0.34rem 0.48rem;
+  border-radius: 9px;
+  font-size: 0.72rem;
+  line-height: 1.05;
+  white-space: normal;
 }
 
 .accountingDetailGroup {
