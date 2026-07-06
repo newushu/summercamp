@@ -1570,6 +1570,12 @@ const manualAccountingSelectionOptions = [
   { value: 'amHalf', label: 'AM Half Days' },
   { value: 'pmHalf', label: 'PM Half Days' },
 ]
+const manualAccountingDayModeCycle = {
+  NONE: 'FULL',
+  FULL: 'AM',
+  AM: 'PM',
+  PM: 'NONE',
+}
 const accountingEditorNextMode = {
   NONE: 'FULL',
   FULL: 'AM',
@@ -1687,6 +1693,20 @@ function formatCalendarDate(value) {
 
 function isIncludedLunchDay(dayKey) {
   return String(dayKey || '') === 'Fri'
+}
+
+function normalizeManualAccountingDayMode(value) {
+  if (value === true) return 'FULL'
+  const mode = String(value || '').trim().toUpperCase()
+  return ['FULL', 'AM', 'PM', 'NONE'].includes(mode) ? mode : 'NONE'
+}
+
+function getManualAccountingDayLabel(day, mode) {
+  const normalizedMode = normalizeManualAccountingDayMode(mode)
+  if (normalizedMode === 'FULL') return `${day} FULL`
+  if (normalizedMode === 'AM') return `${day} AM`
+  if (normalizedMode === 'PM') return `${day} PM`
+  return day
 }
 
 function normalizeAccountingEditorDayKey(dayKey) {
@@ -1948,8 +1968,9 @@ function formatWeekCountSummary(counts = {}, programKey = 'general') {
 }
 
 function buildAccountingCalendarLines({ camperName, student, weekById, weekNumberById }) {
-  const schedule = getStudentScheduleForAccounting(student)
-  const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
+  const normalizedStudent = normalizeSavedAccountingStudentForEditor(student)
+  const schedule = getStudentScheduleForAccounting(normalizedStudent)
+  const lunch = typeof normalizedStudent?.lunch === 'object' && normalizedStudent?.lunch ? normalizedStudent.lunch : {}
   const rows = [`Calendar for ${camperName}`]
 
   const sortedWeeks = Object.entries(schedule).sort((a, b) => {
@@ -1959,10 +1980,11 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
   })
 
   for (const [weekId, entry] of sortedWeeks) {
-    const week = weekById[weekId]
     const programKey = resolveScheduleProgramKey(entry, weekId)
-    const weekLabel = weekNumberById[weekId]?.label || toWeekLabel(weekId, weekById)
-    rows.push(`${weekLabel} (${toWeekLabel(weekId, weekById)})`)
+    const canonicalWeekId = getCanonicalWeekId(programKey, weekId)
+    const week = weekById[canonicalWeekId] || weekById[weekId]
+    const weekLabel = weekNumberById[canonicalWeekId]?.label || weekNumberById[weekId]?.label || toWeekLabel(canonicalWeekId || weekId, weekById)
+    rows.push(`${weekLabel} (${toWeekLabel(canonicalWeekId || weekId, weekById)})`)
 
     const dayDefs =
       Array.isArray(week?.days) && week.days.length > 0
@@ -1970,7 +1992,8 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
         : getWeekDayKeysForProgram(programKey).map((dayKey) => ({ key: dayKey, label: dayKey, date: '' }))
 
     for (const day of dayDefs) {
-      const mode = entry?.days?.[day.key] || 'NONE'
+      const normalizedDayKey = normalizeAccountingEditorDayKey(day.key)
+      const mode = entry?.days?.[day.key] || entry?.days?.[normalizedDayKey] || 'NONE'
       if (mode === 'NONE') {
         continue
       }
@@ -1978,7 +2001,7 @@ function buildAccountingCalendarLines({ camperName, student, weekById, weekNumbe
         rows.push(`- ${day.label || day.key}: ${formatCalendarDate(day.date)} · Overnight camp day`)
         continue
       }
-      const lunchKey = `${weekId}:${day.key}`
+      const lunchKey = `${weekId}:${normalizedDayKey}`
       const lunchLabel =
         day.key === 'friday' || day.key === 'Fri'
           ? 'BBQ lunch included'
@@ -2068,6 +2091,106 @@ function getStudentScheduleForAccounting(student) {
   )
 }
 
+function buildAccountingFullWeekDays(dayKeys = accountingEditorDayKeys) {
+  return dayKeys.reduce((acc, day) => ({ ...acc, [normalizeAccountingEditorDayKey(day)]: 'FULL' }), {})
+}
+
+function normalizeSavedAccountingStudentForEditor(student) {
+  const schedule = typeof student?.schedule === 'object' && student?.schedule ? student.schedule : {}
+  const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
+  const nextSchedule = {}
+  const nextLunch = {}
+
+  for (const [savedWeekId, entry] of Object.entries(schedule)) {
+    if (!entry?.sourceWeekId) {
+      nextSchedule[savedWeekId] = {
+        ...entry,
+        days: typeof entry?.days === 'object' && entry.days ? entry.days : {},
+      }
+      continue
+    }
+    const editorWeekId = String(entry?.sourceWeekId || savedWeekId || '').trim()
+    if (!editorWeekId) {
+      continue
+    }
+    const hasSavedDays = Object.keys(entry?.days || {}).length > 0
+    const nextDays = hasSavedDays
+      ? Object.entries(entry.days || {}).reduce((acc, [dayKey, mode]) => {
+          acc[normalizeAccountingEditorDayKey(dayKey)] = normalizeManualAccountingDayMode(mode)
+          return acc
+        }, {})
+      : entry?.sourceWeekId
+        ? buildAccountingFullWeekDays()
+        : {}
+
+    nextSchedule[editorWeekId] = {
+      ...entry,
+      weekId: editorWeekId,
+      sourceWeekId: entry?.sourceWeekId || savedWeekId,
+      days: nextDays,
+    }
+
+    for (const [lunchKey, selected] of Object.entries(lunch)) {
+      const [lunchWeekId, rawDayKey] = String(lunchKey || '').split(':')
+      if (lunchWeekId !== savedWeekId && lunchWeekId !== editorWeekId) {
+        continue
+      }
+      nextLunch[`${editorWeekId}:${normalizeAccountingEditorDayKey(rawDayKey)}`] = Boolean(selected)
+    }
+  }
+
+  for (const [lunchKey, selected] of Object.entries(lunch)) {
+    if (nextLunch[lunchKey] === undefined) {
+      nextLunch[lunchKey] = Boolean(selected)
+    }
+  }
+
+  return {
+    ...student,
+    schedule: nextSchedule,
+    lunch: nextLunch,
+  }
+}
+
+function normalizeSavedAccountingStudentForInvoice(student) {
+  const normalized = normalizeSavedAccountingStudentForEditor(student)
+  const schedule = typeof normalized?.schedule === 'object' && normalized.schedule ? normalized.schedule : {}
+  const lunch = typeof normalized?.lunch === 'object' && normalized.lunch ? normalized.lunch : {}
+  const nextSchedule = {}
+  const nextLunch = {}
+
+  for (const [weekId, entry] of Object.entries(schedule)) {
+    const programKey = resolveScheduleProgramKey(entry, weekId)
+    const invoiceWeekId = getCanonicalWeekId(programKey, weekId)
+    nextSchedule[invoiceWeekId] = {
+      ...entry,
+      weekId: invoiceWeekId,
+      programKey,
+      campType: programKey === 'bootcamp' ? 'bootcamp' : programKey === 'overnight' ? 'overnight' : 'general',
+    }
+
+    for (const [lunchKey, selected] of Object.entries(lunch)) {
+      const [lunchWeekId, rawDayKey] = String(lunchKey || '').split(':')
+      if (lunchWeekId !== weekId && lunchWeekId !== invoiceWeekId) {
+        continue
+      }
+      nextLunch[`${invoiceWeekId}:${normalizeAccountingEditorDayKey(rawDayKey)}`] = Boolean(selected)
+    }
+  }
+
+  for (const [lunchKey, selected] of Object.entries(lunch)) {
+    if (nextLunch[lunchKey] === undefined) {
+      nextLunch[lunchKey] = Boolean(selected)
+    }
+  }
+
+  return {
+    ...normalized,
+    schedule: nextSchedule,
+    lunch: nextLunch,
+  }
+}
+
 function getAccountingEntryForCamper(accountingEntries, camperIndex, camperName) {
   const entries = Array.isArray(accountingEntries) ? accountingEntries : []
   return (
@@ -2139,17 +2262,8 @@ function buildCamperPricing({
     const resolvedWeek = weekById[canonicalWeekId] || weekById[weekId] || null
     const dayKeys = Object.keys(entry?.days || {})
     const resolvedDayKeys = dayKeys.length > 0 ? dayKeys : getWeekDayKeysForProgram(programKey)
-    const modes = resolvedDayKeys.map(
-      (dayKey) =>
-        entry?.days?.[dayKey] ||
-        entry?.days?.[normalizeAccountingEditorDayKey(dayKey)] ||
-        entry?.days?.[String(dayKey || '').toLowerCase()] ||
-        'NONE'
-    )
-    const hasSelectedDay = modes.some((mode) => mode && mode !== 'NONE')
-    if (!hasSelectedDay) {
-      continue
-    }
+    const assumeFullWeekFromEmptyManualDays = dayKeys.length === 0 && Boolean(entry?.sourceWeekId)
+    const modes = resolvedDayKeys.map((dayKey) => assumeFullWeekFromEmptyManualDays ? 'FULL' : entry?.days?.[dayKey] || 'NONE')
     const fullWeekSelected = modes.every((mode) => mode === 'FULL')
     const counts = { fullWeek: 0, fullDay: 0, amHalf: 0, pmHalf: 0 }
 
@@ -2191,14 +2305,22 @@ function buildCamperPricing({
               amHalf: Number(discount.amHalf || 0),
               pmHalf: Number(discount.pmHalf || 0),
             }
+    const regularFullWeekRate =
+      Number(programRegularRates.fullWeek || 0) > 0
+        ? Number(programRegularRates.fullWeek || 0)
+        : Number(programRegularRates.fullDay || 0) * 5
+    const discountFullWeekRate =
+      Number(programDiscountRates.fullWeek || 0) > 0
+        ? Number(programDiscountRates.fullWeek || 0)
+        : Number(programDiscountRates.fullDay || 0) * 5
 
     const regularTotal =
-      counts.fullWeek * programRegularRates.fullWeek +
+      counts.fullWeek * regularFullWeekRate +
       counts.fullDay * programRegularRates.fullDay +
       counts.amHalf * programRegularRates.amHalf +
       counts.pmHalf * programRegularRates.pmHalf
     const discountedTotal =
-      counts.fullWeek * programDiscountRates.fullWeek +
+      counts.fullWeek * discountFullWeekRate +
       counts.fullDay * programDiscountRates.fullDay +
       counts.amHalf * programDiscountRates.amHalf +
       counts.pmHalf * programDiscountRates.pmHalf
@@ -2424,46 +2546,316 @@ function buildEmptyManualAccountingCamper() {
     camperName: '',
     camperDob: '',
     weekIds: [],
+    weekSelections: {},
+    discountCampaignOverride: '',
     campType: 'general',
-    selectionType: 'fullWeek',
-    days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: true }), {}),
+    selectionType: 'fullDay',
+    days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
     lunch: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: false }), {}),
   }
 }
 
+function buildManualWeekSelectionDraft(source = {}) {
+  const selectionType = manualAccountingSelectionOptions.some((option) => option.value === source.selectionType)
+    ? source.selectionType
+    : 'fullDay'
+  const fullWeek = selectionType === 'fullWeek'
+  return {
+    campType: source.campType === 'bootcamp' ? 'bootcamp' : 'general',
+    selectionType,
+    days: accountingEditorDayKeys.reduce(
+      (acc, day) => ({
+        ...acc,
+        [day]: fullWeek ? 'FULL' : normalizeManualAccountingDayMode(source.days?.[day]),
+      }),
+      {}
+    ),
+    lunch: accountingEditorDayKeys.reduce(
+      (acc, day) => ({
+        ...acc,
+        [day]: isIncludedLunchDay(day) ? false : Boolean(source.lunch?.[day]),
+      }),
+      {}
+    ),
+  }
+}
+
+function getManualWeekSelection(camperDraft, weekId) {
+  const weekSelections = typeof camperDraft?.weekSelections === 'object' && camperDraft.weekSelections
+    ? camperDraft.weekSelections
+    : {}
+  return buildManualWeekSelectionDraft({
+    campType: weekSelections[weekId]?.campType ?? camperDraft?.campType,
+    selectionType: weekSelections[weekId]?.selectionType ?? camperDraft?.selectionType,
+    days: weekSelections[weekId]?.days ?? camperDraft?.days,
+    lunch: weekSelections[weekId]?.lunch ?? camperDraft?.lunch,
+  })
+}
+
+function getManualWeekSummary(selection) {
+  const normalizedSelection = buildManualWeekSelectionDraft(selection)
+  if (normalizedSelection.selectionType === 'fullWeek') {
+    return 'Full week price'
+  }
+  const counts = accountingEditorDayKeys.reduce(
+    (acc, day) => {
+      const mode = normalizeManualAccountingDayMode(normalizedSelection.days?.[day])
+      if (mode !== 'NONE') {
+        acc.total += 1
+        acc[mode] += 1
+      }
+      return acc
+    },
+    { total: 0, FULL: 0, AM: 0, PM: 0 }
+  )
+  if (counts.total === 0) {
+    return 'No days selected'
+  }
+  if (counts.FULL === 5) {
+    return '5 full days = full week price'
+  }
+  const parts = []
+  if (counts.FULL > 0) parts.push(`${counts.FULL} full`)
+  if (counts.AM > 0) parts.push(`${counts.AM} AM`)
+  if (counts.PM > 0) parts.push(`${counts.PM} PM`)
+  return parts.join(', ')
+}
+
+function getManualAccountingScheduleWeekId(weekId, weekSelection, weeksById = {}) {
+  const selectedWeek = weeksById[weekId] || null
+  const start = selectedWeek?.start || String(weekId || '').split(':')[1] || ''
+  const programKey = weekSelection?.campType === 'bootcamp' ? 'bootcamp' : 'general'
+  return start ? `${programKey}:${start}` : weekId
+}
+
+function getManualAccountingRates(tuition = {}, campType = 'general', discountCampaignId = '') {
+  const effectiveTuition = getTuitionForDiscountCampaign(tuition, discountCampaignId)
+  const resolvedBootcamp = resolveBootcampTuition(effectiveTuition)
+  const regularRates =
+    campType === 'bootcamp'
+      ? resolvedBootcamp.regular || {}
+      : effectiveTuition.regular || {}
+  const discountRates =
+    campType === 'bootcamp'
+      ? resolvedBootcamp.discount || {}
+      : effectiveTuition.discount || {}
+  const useDiscount = Boolean(discountCampaignId)
+  const sourceRates = useDiscount ? discountRates : regularRates
+  const fallbackRates = regularRates
+  const fullDay = Number(sourceRates.fullDay || fallbackRates.fullDay || 0)
+  const amHalf = Number(sourceRates.amHalf || fallbackRates.amHalf || 0)
+  const pmHalf = Number(sourceRates.pmHalf || fallbackRates.pmHalf || 0)
+  const fullWeek = Number(sourceRates.fullWeek || fallbackRates.fullWeek || 0) || fullDay * 5
+  return { fullWeek, fullDay, amHalf, pmHalf }
+}
+
+function getManualAccountingDirectWeekPrice({ weekSelection, tuition, lunchPrice, discountCampaignId }) {
+  const selection = buildManualWeekSelectionDraft(weekSelection)
+  const rates = getManualAccountingRates(tuition, selection.campType, discountCampaignId)
+  const modes = accountingEditorDayKeys.map((day) => normalizeManualAccountingDayMode(selection.days?.[day]))
+  const fullWeekSelected = selection.selectionType === 'fullWeek' || modes.every((mode) => mode === 'FULL')
+  let tuitionTotal = 0
+
+  if (fullWeekSelected) {
+    tuitionTotal = rates.fullWeek
+  } else {
+    tuitionTotal = modes.reduce((sum, mode) => {
+      if (mode === 'FULL') return sum + rates.fullDay
+      if (mode === 'AM') return sum + rates.amHalf
+      if (mode === 'PM') return sum + rates.pmHalf
+      return sum
+    }, 0)
+  }
+
+  const lunchDays = accountingEditorDayKeys.filter(
+    (day) =>
+      !isIncludedLunchDay(day) &&
+      normalizeManualAccountingDayMode(selection.days?.[day]) !== 'NONE' &&
+      Boolean(selection.lunch?.[day])
+  ).length
+  const lunchTotal = lunchDays * Number(lunchPrice || 0)
+  return {
+    tuition: roundMoney(tuitionTotal),
+    lunch: roundMoney(lunchTotal),
+    total: roundMoney(tuitionTotal + lunchTotal),
+  }
+}
+
+function getManualAccountingDirectCamperPrice({ camperDraft, tuition, lunchPrice, discountEndDate, familyDiscountOverride = '' }) {
+  const discountCampaignId = resolveDiscountCampaignId({
+    createdAt: new Date().toISOString(),
+    discountEndDate,
+    overrideId: normalizeDiscountCampaignOverride(camperDraft?.discountCampaignOverride || familyDiscountOverride),
+  })
+  const weekIds = Array.isArray(camperDraft?.weekIds) ? camperDraft.weekIds.filter(Boolean) : []
+  return weekIds.reduce(
+    (acc, weekId) => {
+      const weekPrice = getManualAccountingDirectWeekPrice({
+        weekSelection: getManualWeekSelection(camperDraft, weekId),
+        tuition,
+        lunchPrice,
+        discountCampaignId,
+      })
+      return {
+        tuition: roundMoney(acc.tuition + weekPrice.tuition),
+        lunch: roundMoney(acc.lunch + weekPrice.lunch),
+        total: roundMoney(acc.total + weekPrice.total),
+      }
+    },
+    { tuition: 0, lunch: 0, total: 0 }
+  )
+}
+
+function getAccountingDirectStudentPrice({ student, tuition, lunchPrice, discountCampaignId }) {
+  const schedule = getStudentScheduleForAccounting(student)
+  const lunch = typeof student?.lunch === 'object' && student?.lunch ? student.lunch : {}
+  const result = {
+    general: 0,
+    bootcamp: 0,
+    overnight: 0,
+    lunchCost: 0,
+    total: 0,
+  }
+
+  for (const [weekId, entry] of Object.entries(schedule)) {
+    const programKey = resolveScheduleProgramKey(entry, weekId)
+    if (programKey === 'overnight') {
+      continue
+    }
+    const rates = getManualAccountingRates(
+      tuition,
+      programKey === 'bootcamp' ? 'bootcamp' : 'general',
+      discountCampaignId
+    )
+    const dayKeys = Object.keys(entry?.days || {})
+    const resolvedDayKeys = dayKeys.length > 0 ? dayKeys : accountingEditorDayKeys
+    const assumeFullWeekFromEmptyManualDays = dayKeys.length === 0 && Boolean(entry?.sourceWeekId)
+    const modes = resolvedDayKeys.map((day) =>
+      assumeFullWeekFromEmptyManualDays ? 'FULL' : normalizeManualAccountingDayMode(entry?.days?.[day])
+    )
+    const fullWeekSelected = modes.length > 0 && modes.every((mode) => mode === 'FULL')
+    const tuitionTotal = fullWeekSelected
+      ? rates.fullWeek
+      : modes.reduce((sum, mode) => {
+          if (mode === 'FULL') return sum + rates.fullDay
+          if (mode === 'AM') return sum + rates.amHalf
+          if (mode === 'PM') return sum + rates.pmHalf
+          return sum
+        }, 0)
+
+    if (programKey === 'bootcamp') {
+      result.bootcamp += tuitionTotal
+    } else {
+      result.general += tuitionTotal
+    }
+
+    for (const day of resolvedDayKeys) {
+      if (
+        !isIncludedLunchDay(day) &&
+        (assumeFullWeekFromEmptyManualDays || normalizeManualAccountingDayMode(entry?.days?.[day]) !== 'NONE') &&
+        Boolean(lunch[`${weekId}:${day}`])
+      ) {
+        result.lunchCost += Number(lunchPrice || 0)
+      }
+    }
+  }
+
+  result.general = roundMoney(result.general)
+  result.bootcamp = roundMoney(result.bootcamp)
+  result.lunchCost = roundMoney(result.lunchCost)
+  result.total = roundMoney(result.general + result.bootcamp + result.overnight + result.lunchCost)
+  return result
+}
+
+function getManualAccountingWeekPricePreview({ camperDraft, week, tuition, lunchPrice, weekById, discountEndDate }) {
+  const weekId = week?.id || ''
+  if (!weekId) {
+    return { total: 0, tuition: 0, lunch: 0 }
+  }
+  const student = buildManualAccountingStudent(
+    {
+      ...camperDraft,
+      weekIds: [weekId],
+      weekSelections: {
+        [weekId]: getManualWeekSelection(camperDraft, weekId),
+      },
+    },
+    weekById
+  )
+  const discountCampaignOverride = normalizeDiscountCampaignOverride(
+    camperDraft?.discountCampaignOverride || ''
+  )
+  const pricingList = buildStudentAccountingPricingList({
+    students: [student],
+    accountingEntries: [
+      {
+        camper_index: 0,
+        camper_name: student.fullName,
+        discount_campaign_override: discountCampaignOverride,
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    tuition,
+    lunchPrice,
+    weekById,
+    discountEndDate,
+  })
+  const pricing = pricingList[0]?.pricing || {}
+  const calculated = {
+    total: Number(pricing.total || 0),
+    tuition: Number(pricing.tuitionSubtotal || 0),
+    lunch: Number(pricing.lunchCost || 0),
+  }
+  if (calculated.total > 0) {
+    return calculated
+  }
+  const direct = getManualAccountingDirectCamperPrice({
+    camperDraft: {
+      ...camperDraft,
+      weekIds: [weekId],
+      weekSelections: {
+        [weekId]: getManualWeekSelection(camperDraft, weekId),
+      },
+    },
+    tuition,
+    lunchPrice,
+    discountEndDate,
+  })
+  return direct
+}
+
 function buildManualAccountingStudent(camperDraft, weeksById = {}) {
   const weekIds = Array.isArray(camperDraft?.weekIds) ? camperDraft.weekIds.filter(Boolean) : []
-  const mode =
-    camperDraft?.selectionType === 'amHalf'
-      ? 'AM'
-      : camperDraft?.selectionType === 'pmHalf'
-        ? 'PM'
-        : 'FULL'
-  const fullWeek = camperDraft?.selectionType === 'fullWeek'
   const schedule = {}
   const lunch = {}
 
   for (const weekId of weekIds) {
+    const weekSelection = getManualWeekSelection(camperDraft, weekId)
+    const fullWeek = weekSelection.selectionType === 'fullWeek'
     const selectedWeek = weeksById[weekId] || null
-    const dayKeys = Array.isArray(selectedWeek?.days)
-      ? selectedWeek.days.map((day) => normalizeAccountingEditorDayKey(day?.key))
+    const scheduleWeekId = getManualAccountingScheduleWeekId(weekId, weekSelection, weeksById)
+    const selectedWeekDays = Array.isArray(selectedWeek?.days)
+      ? selectedWeek.days.map((day) => normalizeAccountingEditorDayKey(day?.key)).filter(Boolean)
+      : []
+    const dayKeys = selectedWeekDays.length > 0
+      ? selectedWeekDays
       : accountingEditorDayKeys
-    const selectedDays = dayKeys.filter((day) => Boolean(camperDraft?.days?.[day]))
     const days = dayKeys.reduce((acc, day) => {
-      acc[day] = fullWeek || selectedDays.includes(day) ? mode : 'NONE'
+      acc[day] = fullWeek ? 'FULL' : normalizeManualAccountingDayMode(weekSelection.days?.[day])
       return acc
     }, {})
 
-    schedule[weekId] = {
-      weekId,
-      programKey: 'daycamp',
-      campType: camperDraft?.campType === 'bootcamp' ? 'bootcamp' : 'general',
+    schedule[scheduleWeekId] = {
+      weekId: scheduleWeekId,
+      sourceWeekId: weekId,
+      programKey: weekSelection.campType === 'bootcamp' ? 'bootcamp' : 'general',
+      campType: weekSelection.campType === 'bootcamp' ? 'bootcamp' : 'general',
       days,
     }
 
     for (const day of dayKeys) {
-      if (!isIncludedLunchDay(day) && Boolean(camperDraft?.lunch?.[day]) && days[day] !== 'NONE') {
-        lunch[`${weekId}:${day}`] = true
+      if (!isIncludedLunchDay(day) && Boolean(weekSelection.lunch?.[day]) && days[day] !== 'NONE') {
+        lunch[`${scheduleWeekId}:${day}`] = true
       }
     }
   }
@@ -2558,6 +2950,7 @@ export default function AdminPage() {
   const [emailEvents, setEmailEvents] = useState([])
   const [registrationRecords, setRegistrationRecords] = useState([])
   const [accountingDrafts, setAccountingDrafts] = useState({})
+  const [accountingBalanceFilter, setAccountingBalanceFilter] = useState('all')
   const [manualAccountingDraft, setManualAccountingDraft] = useState(buildEmptyManualAccountingDraft)
   const [manualAccountingExpanded, setManualAccountingExpanded] = useState(false)
   const [leadProfiles, setLeadProfiles] = useState([])
@@ -3786,6 +4179,22 @@ export default function AdminPage() {
     () =>
       manualAccountingRegistrationWeeks.reduce((acc, week) => {
         acc[week.id] = week
+        if (week.start) {
+          acc[`general:${week.start}`] = {
+            ...week,
+            id: `general:${week.start}`,
+            programKey: 'general',
+            programLabel: 'General Camp',
+          }
+          if (Array.isArray(week.availableCampTypes) && week.availableCampTypes.includes('bootcamp')) {
+            acc[`bootcamp:${week.start}`] = {
+              ...week,
+              id: `bootcamp:${week.start}`,
+              programKey: 'bootcamp',
+              programLabel: 'Competition Team Boot Camp',
+            }
+          }
+        }
         return acc
       }, {}),
     [manualAccountingRegistrationWeeks]
@@ -3809,9 +4218,18 @@ export default function AdminPage() {
       const submittedAt = resolveAccountingSubmittedAt(record, rawMeta, payload)
       const students = Array.isArray(payload.students) && payload.students.length > 0 ? payload.students : []
       const parentName = (payload.parentName || record.guardian_name || '').trim() || 'Parent/Guardian'
-      const parentEmail = (payload.contactEmail || record.guardian_email || '').trim()
+      const isManualAccountingRow = String(rawMeta?.source || '').trim() === 'admin_manual_accounting_row'
+      const parentEmail = (
+        payload.contactEmail ||
+        (isManualAccountingRow && String(record.guardian_email || '').includes('@newushu.local')
+          ? ''
+          : record.guardian_email || '')
+      ).trim()
       const accountingEntries = Array.isArray(record.accounting_entries) ? record.accounting_entries : []
-      const normalizedStudents = students.length > 0 ? students : [{ fullName: record.guardian_name || 'Camper', schedule: {}, lunch: {} }]
+      const normalizedStudents =
+        students.length > 0
+          ? students.map((student) => normalizeSavedAccountingStudentForEditor(student))
+          : [{ fullName: record.guardian_name || 'Camper', schedule: {}, lunch: {} }]
       const pricingList = buildStudentAccountingPricingList({
         students: normalizedStudents,
         accountingEntries,
@@ -3825,6 +4243,35 @@ export default function AdminPage() {
       pricingList.forEach(({ student, index, camperName, entry, pricing, discountCampaignId, discountCampaignOverride }) => {
         const discountCampaign = getDiscountCampaignMeta(discountCampaignId, config.tuition.discountEndDate)
         const discountActive = Boolean(discountCampaignId)
+        const directPricing = getAccountingDirectStudentPrice({
+          student,
+          tuition: config.tuition,
+          lunchPrice: config.tuition.lunchPrice,
+          discountCampaignId,
+        })
+        const snapshotPricing = {
+          total: Number(entry.manual_pricing_total || 0),
+          general: Number(entry.manual_pricing_general || 0),
+          bootcamp: Number(entry.manual_pricing_bootcamp || 0),
+          overnight: Number(entry.manual_pricing_overnight || 0),
+          lunchCost: Number(entry.manual_pricing_lunch || 0),
+        }
+        const fallbackPricing =
+          Number(pricing.total || 0) <= 0 && Number(snapshotPricing.total || 0) > 0
+            ? snapshotPricing
+            : Number(pricing.total || 0) <= 0 && Number(directPricing.total || 0) > 0
+              ? directPricing
+              : null
+        if (fallbackPricing) {
+          pricing.general = fallbackPricing.general
+          pricing.bootcamp = fallbackPricing.bootcamp
+          pricing.overnight = fallbackPricing.overnight
+          pricing.lunchCost = fallbackPricing.lunchCost
+          pricing.total = fallbackPricing.total
+          pricing.tuitionSubtotal = roundMoney(fallbackPricing.general + fallbackPricing.bootcamp + fallbackPricing.overnight)
+          pricing.subtotal = fallbackPricing.total
+          pricing.regularTotal = fallbackPricing.total
+        }
         const manualDiscount = Math.max(0, Number(entry.manual_discount || 0))
         const paymentState = deriveAccountingPaymentState({
           entry,
@@ -3970,6 +4417,15 @@ export default function AdminPage() {
     () => accountingRows.filter((row) => !row.archived && row.registrationType !== 'overnight-only'),
     [accountingRows]
   )
+  const filteredActiveAccountingRows = useMemo(() => {
+    if (accountingBalanceFilter === 'due') {
+      return activeAccountingRows.filter((row) => Number(row.owedAmount || 0) > 0.005)
+    }
+    if (accountingBalanceFilter === 'paid') {
+      return activeAccountingRows.filter((row) => Number(row.owedAmount || 0) <= 0.005)
+    }
+    return activeAccountingRows
+  }, [accountingBalanceFilter, activeAccountingRows])
   const archivedAccountingRows = useMemo(
     () => accountingRows.filter((row) => row.archived && row.registrationType !== 'overnight-only'),
     [accountingRows]
@@ -4049,7 +4505,9 @@ export default function AdminPage() {
       accountingEntries: students.map((student, index) => ({
         camper_index: index,
         camper_name: student.fullName,
-        discount_campaign_override: normalizeDiscountCampaignOverride(manualAccountingDraft.discountCampaignOverride),
+        discount_campaign_override: normalizeDiscountCampaignOverride(
+          manualAccountingDraft.campers?.[index]?.discountCampaignOverride || manualAccountingDraft.discountCampaignOverride
+        ),
       })),
       createdAt: new Date().toISOString(),
       tuition: config.tuition,
@@ -4064,19 +4522,37 @@ export default function AdminPage() {
       }),
       { total: 0, lunchCost: 0 }
     )
+    const directPricing = (Array.isArray(manualAccountingDraft.campers) ? manualAccountingDraft.campers : [])
+      .reduce(
+        (acc, camper) => {
+          const camperPrice = getManualAccountingDirectCamperPrice({
+            camperDraft: camper,
+            tuition: config.tuition,
+            lunchPrice: config.tuition.lunchPrice,
+            discountEndDate: config.tuition.discountEndDate,
+            familyDiscountOverride: manualAccountingDraft.discountCampaignOverride,
+          })
+          return {
+            total: roundMoney(acc.total + camperPrice.total),
+            lunchCost: roundMoney(acc.lunchCost + camperPrice.lunch),
+          }
+        },
+        { total: 0, lunchCost: 0 }
+      )
+    const previewPricing = pricing.total > 0 ? pricing : directPricing
     const paymentState = deriveAccountingPaymentState({
       entry: {
         tuition_paid_amount: Number(manualAccountingDraft.tuitionPaidAmount || 0),
         lunch_paid_amount: Number(manualAccountingDraft.lunchPaidAmount || 0),
       },
-      tuitionTotal: pricing.total,
-      lunchTotal: pricing.lunchCost,
+      tuitionTotal: previewPricing.total,
+      lunchTotal: previewPricing.lunchCost,
       manualDiscount: Number(manualAccountingDraft.manualDiscount || 0),
     })
     return {
       discountCampaignId,
       discountCampaign: getDiscountCampaignMeta(discountCampaignId, config.tuition.discountEndDate),
-      pricing,
+      pricing: previewPricing,
       paymentState,
     }
   }, [config.tuition, manualAccountingDraft, manualAccountingWeeksById])
@@ -5494,7 +5970,7 @@ export default function AdminPage() {
             )
           }}
         >
-          {label}: {displayCount ?? items.length}
+          {displayCount == null ? label : `${label}: ${displayCount}`}
         </button>
       </div>
     )
@@ -6088,7 +6564,9 @@ export default function AdminPage() {
     const sourceMeta = parseMaybeJson(sourceRecord.medical_notes, {}) || {}
     const sourceRegistration = sourceMeta?.registration || {}
     const submittedAt = resolveAccountingSubmittedAt(sourceRecord, sourceMeta, sourceRegistration)
-    const sourceStudents = Array.isArray(sourceRegistration.students) ? sourceRegistration.students : []
+    const sourceStudents = Array.isArray(sourceRegistration.students)
+      ? sourceRegistration.students.map((student) => normalizeSavedAccountingStudentForEditor(student))
+      : []
     const pricingList = buildStudentAccountingPricingList({
       students: sourceStudents,
       accountingEntries: merged,
@@ -6112,6 +6590,14 @@ export default function AdminPage() {
         Number(item.id) === Number(sourceRecord.id) ? { ...item, accounting_entries: merged } : item
       )
     )
+    setAccountingDrafts((current) => {
+      if (!current[row.key]) {
+        return current
+      }
+      const drafts = { ...current }
+      delete drafts[row.key]
+      return drafts
+    })
     setSavedMessage('Accounting row updated.')
     setUpdatingAccountingKey('')
     refreshEmailTracking()
@@ -6164,9 +6650,44 @@ export default function AdminPage() {
                 ...camper.lunch,
                 ...(updates.lunch || {}),
               },
+              weekSelections: updates.weekSelections || camper.weekSelections || {},
             }
           : camper
       ),
+    }))
+  }
+
+  function updateManualAccountingCamperWeek(camperId, weekId, updates = {}) {
+    setManualAccountingDraft((current) => ({
+      ...current,
+      campers: (Array.isArray(current.campers) ? current.campers : []).map((camper) => {
+        if (camper.id !== camperId) return camper
+        const currentSelection = getManualWeekSelection(camper, weekId)
+        const selectionType = updates.selectionType ?? currentSelection.selectionType
+        const fullWeek = selectionType === 'fullWeek'
+        const nextSelection = buildManualWeekSelectionDraft({
+          ...currentSelection,
+          ...updates,
+          selectionType,
+          days: fullWeek
+            ? accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'FULL' }), {})
+            : {
+                ...currentSelection.days,
+                ...(updates.days || {}),
+              },
+          lunch: {
+            ...currentSelection.lunch,
+            ...(updates.lunch || {}),
+          },
+        })
+        return {
+          ...camper,
+          weekSelections: {
+            ...(camper.weekSelections || {}),
+            [weekId]: nextSelection,
+          },
+        }
+      }),
     }))
   }
 
@@ -6193,9 +6714,22 @@ export default function AdminPage() {
       campers: (Array.isArray(current.campers) ? current.campers : []).map((camper) => {
         if (camper.id !== camperId) return camper
         const weekIds = Array.isArray(camper.weekIds) ? camper.weekIds : []
+        const weekSelected = weekIds.includes(weekId)
+        const nextWeekSelections = { ...(camper.weekSelections || {}) }
+        if (weekSelected) {
+          delete nextWeekSelections[weekId]
+        } else {
+          nextWeekSelections[weekId] = buildManualWeekSelectionDraft({
+            campType: camper.campType,
+            selectionType: 'fullDay',
+            days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
+            lunch: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: false }), {}),
+          })
+        }
         return {
           ...camper,
-          weekIds: weekIds.includes(weekId) ? weekIds.filter((item) => item !== weekId) : [...weekIds, weekId],
+          weekIds: weekSelected ? weekIds.filter((item) => item !== weekId) : [...weekIds, weekId],
+          weekSelections: nextWeekSelections,
         }
       }),
     }))
@@ -6207,14 +6741,18 @@ export default function AdminPage() {
       return
     }
 
-    const parentName = String(manualAccountingDraft.parentName || '').trim()
-    const parentEmail = String(manualAccountingDraft.parentEmail || '').trim()
+    const rawParentName = String(manualAccountingDraft.parentName || '').trim()
+    const rawParentEmail = String(manualAccountingDraft.parentEmail || '').trim()
     const camperDrafts = Array.isArray(manualAccountingDraft.campers) ? manualAccountingDraft.campers : []
     const validCampers = camperDrafts.filter(
       (camper) => String(camper?.camperName || '').trim() && Array.isArray(camper?.weekIds) && camper.weekIds.length > 0
     )
-    if (!parentName || !parentEmail || !/\S+@\S+\.\S+/.test(parentEmail) || validCampers.length === 0) {
-      setErrorMessage('Fill parent name, valid email, and at least one camper with one selected week.')
+    if (validCampers.length === 0) {
+      setErrorMessage('Add at least one camper name with one selected week.')
+      return
+    }
+    if (rawParentEmail && !/\S+@\S+\.\S+/.test(rawParentEmail)) {
+      setErrorMessage('Parent email is optional, but if entered it must be a valid email.')
       return
     }
 
@@ -6229,6 +6767,32 @@ export default function AdminPage() {
     setErrorMessage('')
 
     const submittedAt = new Date().toISOString()
+    const firstCamperName = students[0]?.fullName || 'Manual Camper'
+    const parentName = rawParentName || `${firstCamperName} Family`
+    const parentEmail = rawParentEmail
+    const guardianEmailForInsert = parentEmail || `manual-${submittedAt.replace(/[^0-9]/g, '')}@newushu.local`
+    const manualPricingSnapshots = students.map((student, index) => {
+      const discountCampaignId = resolveDiscountCampaignId({
+        createdAt: submittedAt,
+        discountEndDate: config.tuition.discountEndDate,
+        overrideId: normalizeDiscountCampaignOverride(
+          validCampers[index]?.discountCampaignOverride || manualAccountingDraft.discountCampaignOverride
+        ),
+      })
+      const price = getAccountingDirectStudentPrice({
+        student,
+        tuition: config.tuition,
+        lunchPrice: config.tuition.lunchPrice,
+        discountCampaignId,
+      })
+      return {
+        total: price.total,
+        lunch: price.lunch,
+        general: price.general,
+        bootcamp: price.bootcamp,
+        overnight: price.overnight,
+      }
+    })
     const accountingEntries = students.map((student, index) => ({
       camper_index: index,
       camper_name: student.fullName,
@@ -6240,7 +6804,14 @@ export default function AdminPage() {
       tuition_paid_amount: index === 0 ? Math.max(0, Number(manualAccountingDraft.tuitionPaidAmount || 0)) : 0,
       lunch_paid_amount: index === 0 ? Math.max(0, Number(manualAccountingDraft.lunchPaidAmount || 0)) : 0,
       manual_discount: index === 0 ? Math.max(0, Number(manualAccountingDraft.manualDiscount || 0)) : 0,
-      discount_campaign_override: normalizeDiscountCampaignOverride(manualAccountingDraft.discountCampaignOverride),
+      manual_pricing_total: Number(manualPricingSnapshots[index]?.total || 0),
+      manual_pricing_general: Number(manualPricingSnapshots[index]?.general || 0),
+      manual_pricing_bootcamp: Number(manualPricingSnapshots[index]?.bootcamp || 0),
+      manual_pricing_overnight: Number(manualPricingSnapshots[index]?.overnight || 0),
+      manual_pricing_lunch: Number(manualPricingSnapshots[index]?.lunch || 0),
+      discount_campaign_override: normalizeDiscountCampaignOverride(
+        validCampers[index]?.discountCampaignOverride || manualAccountingDraft.discountCampaignOverride
+      ),
       payment_method: accountingPaymentMethods.includes(String(manualAccountingDraft.paymentMethod || '').trim().toLowerCase())
         ? String(manualAccountingDraft.paymentMethod || '').trim().toLowerCase()
         : '',
@@ -6258,7 +6829,6 @@ export default function AdminPage() {
         students,
       },
     }
-    const firstCamperName = students[0]?.fullName || 'Manual Camper'
 
     const response = await supabase
       .from('registrations')
@@ -6266,7 +6836,7 @@ export default function AdminPage() {
         camper_first_name: firstCamperName.split(/\s+/)[0] || firstCamperName,
         camper_last_name: firstCamperName.split(/\s+/).slice(1).join(' '),
         guardian_name: parentName,
-        guardian_email: parentEmail,
+        guardian_email: guardianEmailForInsert,
         guardian_phone: String(manualAccountingDraft.parentPhone || '').trim(),
         medical_notes: JSON.stringify(registrationPayload),
         accounting_entries: accountingEntries,
@@ -6432,6 +7002,9 @@ export default function AdminPage() {
       parentName: payload.parentName || row.parentName,
       contactEmail: payload.contactEmail || row.parentEmail,
       paymentMethod: row.paymentMethod || payload.paymentMethod || '',
+      students: Array.isArray(payload.students)
+        ? payload.students.map((student) => normalizeSavedAccountingStudentForInvoice(student))
+        : [],
     }
     const accountingSummary = {
       title: `Current Accounting Snapshot for ${row.camperName || 'Camper'}`,
@@ -6513,11 +7086,7 @@ export default function AdminPage() {
       sourceRecordId: Number(sourceRecord.id),
       registration: {
         ...payload,
-        students: students.map((student) => ({
-          ...student,
-          schedule: typeof student?.schedule === 'object' && student.schedule ? student.schedule : {},
-          lunch: typeof student?.lunch === 'object' && student.lunch ? student.lunch : {},
-        })),
+        students: students.map((student) => normalizeSavedAccountingStudentForEditor(student)),
       },
       expandedWeekKey: '',
       expandedLunchWeekKey: '',
@@ -10871,7 +11440,7 @@ export default function AdminPage() {
           {manualAccountingExpanded ? (
           <div className="manualAccountingGrid">
             <label>
-              Parent
+              Parent Optional
               <input
                 value={manualAccountingDraft.parentName}
                 onChange={(event) => updateManualAccountingDraft({ parentName: event.target.value })}
@@ -10879,7 +11448,7 @@ export default function AdminPage() {
               />
             </label>
             <label>
-              Email
+              Email Optional
               <input
                 type="email"
                 value={manualAccountingDraft.parentEmail}
@@ -10995,7 +11564,7 @@ export default function AdminPage() {
                       />
                     </label>
                     <label>
-                      Program
+                      Program Default
                       <select
                         value={camper.campType}
                         onChange={(event) => updateManualAccountingCamper(camper.id, { campType: event.target.value })}
@@ -11005,7 +11574,20 @@ export default function AdminPage() {
                       </select>
                     </label>
                     <label>
-                      Selection
+                      Early Bird
+                      <select
+                        value={camper.discountCampaignOverride || ''}
+                        onChange={(event) => updateManualAccountingCamper(camper.id, { discountCampaignOverride: event.target.value })}
+                      >
+                        {accountingDiscountOverrideOptions.map((option) => (
+                          <option key={`manual-camper-discount-${camper.id}-${option.value || 'auto'}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Day Default
                       <select
                         value={camper.selectionType}
                         onChange={(event) => {
@@ -11014,7 +11596,7 @@ export default function AdminPage() {
                             selectionType,
                             days:
                               selectionType === 'fullWeek'
-                                ? accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: true }), {})
+                                ? accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'FULL' }), {})
                                 : camper.days,
                           })
                         }}
@@ -11042,37 +11624,125 @@ export default function AdminPage() {
                       ))}
                     </div>
                   </div>
-                  <div className="manualAccountingFull">
-                    <span className="manualAccountingLabel">Camp Days</span>
-                    <div className="chipRow">
-                      {accountingEditorDayKeys.map((day) => (
-                        <button
-                          key={`manual-day-${camper.id}-${day}`}
-                          type="button"
-                          className={`modeChip ${camper.days?.[day] ? 'active full' : ''}`}
-                          onClick={() => updateManualAccountingCamper(camper.id, { days: { [day]: !camper.days?.[day] } })}
-                          disabled={camper.selectionType === 'fullWeek'}
-                        >
-                          {day}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="manualAccountingFull">
-                    <span className="manualAccountingLabel">Lunch</span>
-                    <div className="chipRow">
-                      {accountingEditorDayKeys.map((day) => (
-                        <button
-                          key={`manual-lunch-${camper.id}-${day}`}
-                          type="button"
-                          className={`modeChip lunchChip ${isIncludedLunchDay(day) ? 'full' : camper.lunch?.[day] ? 'yes' : 'no'}`}
-                          onClick={() => updateManualAccountingCamper(camper.id, { lunch: { [day]: !camper.lunch?.[day] } })}
-                          disabled={isIncludedLunchDay(day) || !camper.days?.[day]}
-                        >
-                          {isIncludedLunchDay(day) ? `${day} BBQ INCLUDED` : `${day} Lunch ${camper.lunch?.[day] ? 'YES' : 'NO'}`}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="manualAccountingFull manualSelectedWeekStack">
+                    <span className="manualAccountingLabel">Selected Week Details</span>
+                    {(Array.isArray(camper.weekIds) ? camper.weekIds : []).length === 0 ? (
+                      <p className="subhead">Click a week above to choose days and lunch for that specific week.</p>
+                    ) : (
+                      manualAccountingRegistrationWeeks
+                        .filter((week) => camper.weekIds?.includes(week.id))
+                        .map((week) => {
+                          const weekSelection = getManualWeekSelection(camper, week.id)
+                          const weekPricePreview = getManualAccountingWeekPricePreview({
+                            camperDraft: camper,
+                            week,
+                            tuition: config.tuition,
+                            lunchPrice: config.tuition.lunchPrice,
+                            weekById: manualAccountingWeeksById,
+                            discountEndDate: config.tuition.discountEndDate,
+                          })
+                          return (
+                            <article key={`manual-selected-week-${camper.id}-${week.id}`} className="manualSelectedWeekCard">
+                              <div className="manualSelectedWeekHeader">
+                                <div>
+                                  <strong>{formatWeekLabel(week)}</strong>
+                                  <small>{getManualWeekSummary(weekSelection)}</small>
+                                </div>
+                                <strong className="manualSelectedWeekPrice">
+                                  {money(weekPricePreview.total)}
+                                </strong>
+                                <button
+                                  type="button"
+                                  className="button secondary"
+                                  onClick={() => toggleManualAccountingCamperWeek(camper.id, week.id)}
+                                >
+                                  Remove Week
+                                </button>
+                              </div>
+                              <div className="manualSelectedWeekControls">
+                                <label>
+                                  Program
+                                  <select
+                                    value={weekSelection.campType}
+                                    onChange={(event) =>
+                                      updateManualAccountingCamperWeek(camper.id, week.id, { campType: event.target.value })
+                                    }
+                                  >
+                                    <option value="general">General Camp</option>
+                                    <option value="bootcamp">Competition Boot Camp</option>
+                                  </select>
+                                </label>
+                                <button
+                                  type="button"
+                                  className={`modeChip manualFullWeekBtn ${weekSelection.selectionType === 'fullWeek' ? 'active full' : ''}`}
+                                  onClick={() =>
+                                    updateManualAccountingCamperWeek(camper.id, week.id, {
+                                      selectionType: weekSelection.selectionType === 'fullWeek' ? 'fullDay' : 'fullWeek',
+                                      days:
+                                        weekSelection.selectionType === 'fullWeek'
+                                          ? accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {})
+                                          : accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'FULL' }), {}),
+                                      lunch: weekSelection.lunch,
+                                    })
+                                  }
+                                >
+                                  Full Week
+                                </button>
+                              </div>
+                              <div className="manualAccountingFull">
+                                <span className="manualAccountingLabel">
+                                  Camp Days (click: full day, AM, PM, off)
+                                </span>
+                                <div className="chipRow">
+                                  {accountingEditorDayKeys.map((day) => {
+                                    const mode = normalizeManualAccountingDayMode(weekSelection.days?.[day])
+                                    const nextMode = manualAccountingDayModeCycle[mode] || 'FULL'
+                                    return (
+                                      <button
+                                        key={`manual-week-day-${camper.id}-${week.id}-${day}`}
+                                        type="button"
+                                        className={`modeChip ${mode !== 'NONE' ? `active ${mode.toLowerCase()}` : ''}`}
+                                        onClick={() =>
+                                          updateManualAccountingCamperWeek(camper.id, week.id, {
+                                            selectionType: 'fullDay',
+                                            days: { [day]: nextMode },
+                                            lunch: nextMode === 'NONE' ? { [day]: false } : {},
+                                          })
+                                        }
+                                      >
+                                        {getManualAccountingDayLabel(day, mode)}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                              <div className="manualAccountingFull">
+                                <span className="manualAccountingLabel">Lunch Each Day</span>
+                                <div className="chipRow">
+                                  {accountingEditorDayKeys.map((day) => (
+                                    <button
+                                      key={`manual-week-lunch-${camper.id}-${week.id}-${day}`}
+                                      type="button"
+                                      className={`modeChip lunchChip ${isIncludedLunchDay(day) ? 'full' : weekSelection.lunch?.[day] ? 'yes' : 'no'}`}
+                                      onClick={() =>
+                                        updateManualAccountingCamperWeek(camper.id, week.id, {
+                                          lunch: { [day]: !weekSelection.lunch?.[day] },
+                                        })
+                                      }
+                                      disabled={
+                                        isIncludedLunchDay(day) ||
+                                        normalizeManualAccountingDayMode(weekSelection.days?.[day]) === 'NONE'
+                                      }
+                                    >
+                                      {isIncludedLunchDay(day) ? `${day} BBQ INCLUDED` : `${day} Lunch ${weekSelection.lunch?.[day] ? 'YES' : 'NO'}`}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </article>
+                          )
+                        })
+                    )}
                   </div>
                 </article>
               ))}
@@ -11086,7 +11756,11 @@ export default function AdminPage() {
               <small>
                 Tuition {money(manualAccountingPreview.paymentState.tuitionAfterManualDiscount)} · Lunch {money(manualAccountingPreview.paymentState.lunchTotal)} · Owed {money(manualAccountingPreview.paymentState.totalOwedAmount)}
               </small>
-              <small>{manualAccountingPreview.discountCampaign?.name || 'No early bird discount'}</small>
+              <small>
+                {(manualAccountingDraft.campers || []).some((camper) => normalizeDiscountCampaignOverride(camper?.discountCampaignOverride))
+                  ? 'Early bird selected per camper'
+                  : manualAccountingPreview.discountCampaign?.name || 'No early bird discount'}
+              </small>
               <button
                 type="button"
                 className="button"
@@ -11101,8 +11775,25 @@ export default function AdminPage() {
         </div>
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
-            <h3>Active Registration Rows</h3>
-            <p className="subhead">Current camper balances and payment tracking.</p>
+            <div>
+              <h3>Active Registration Rows</h3>
+              <p className="subhead">Current camper balances and payment tracking.</p>
+            </div>
+            <label className="accountingFilterControl">
+              Balance
+              <select
+                value={accountingBalanceFilter}
+                onChange={(event) => setAccountingBalanceFilter(event.target.value)}
+              >
+                <option value="all">All active rows ({activeAccountingRows.length})</option>
+                <option value="due">
+                  Due balance ({activeAccountingRows.filter((row) => Number(row.owedAmount || 0) > 0.005).length})
+                </option>
+                <option value="paid">
+                  Paid / no balance ({activeAccountingRows.filter((row) => Number(row.owedAmount || 0) <= 0.005).length})
+                </option>
+              </select>
+            </label>
           </div>
           <div className="tuitionTableWrap accountingTableScroll">
             <table className="tuitionTable">
@@ -11124,14 +11815,16 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {activeAccountingRows.length === 0 ? (
+                {filteredActiveAccountingRows.length === 0 ? (
                   <tr>
                     <td colSpan="13" className="accountingEmptyCell">
-                      No submitted camper rows yet.
+                      {activeAccountingRows.length === 0
+                        ? 'No submitted camper rows yet.'
+                        : 'No rows match this balance filter.'}
                     </td>
                   </tr>
                 ) : (
-                  activeAccountingRows.map((row) => {
+                  filteredActiveAccountingRows.map((row) => {
                     const key = `${row.registrationId}-${row.camperIndex}`
                     const draft = accountingDrafts[row.key]
                     const discountCampaignOverrideValue = draft?.discountCampaignOverride ?? row.discountCampaignOverride
@@ -11246,11 +11939,13 @@ export default function AdminPage() {
                             <button
                               type="button"
                               className="accountingQuickFillBtn"
-                              onClick={() =>
+                              onClick={() => {
+                                const nextTuitionPaidAmount = Number(row.tuitionAfterManualDiscount || 0)
+                                updateAccountingDraft(row, { tuitionPaidAmount: String(nextTuitionPaidAmount) })
                                 updateAccountingEntryField(row, {
-                                  tuition_paid_amount: Number(row.tuitionAfterManualDiscount || 0),
+                                  tuition_paid_amount: nextTuitionPaidAmount,
                                 })
-                              }
+                              }}
                               disabled={updatingAccountingKey === key || Number(row.tuitionOwedAmount || 0) <= 0}
                             >
                               Use Tuition Due
@@ -11275,11 +11970,13 @@ export default function AdminPage() {
                             <button
                               type="button"
                               className="accountingQuickFillBtn"
-                              onClick={() =>
+                              onClick={() => {
+                                const nextLunchPaidAmount = Number(row.lunchCost || 0)
+                                updateAccountingDraft(row, { lunchPaidAmount: String(nextLunchPaidAmount) })
                                 updateAccountingEntryField(row, {
-                                  lunch_paid_amount: Number(row.lunchCost || 0),
+                                  lunch_paid_amount: nextLunchPaidAmount,
                                 })
-                              }
+                              }}
                               disabled={updatingAccountingKey === key || Number(row.lunchOwedAmount || 0) <= 0}
                             >
                               Use Lunch Due
@@ -11322,14 +12019,14 @@ export default function AdminPage() {
                           ) : null}
                         </td>
                         <td>
-                          <div className="adminActions">
+                          <div className="accountingRowActions">
                             <button
                               type="button"
                               className="button secondary"
                               onClick={() => updateAccountingDraft(row, { archived: !archivedValue })}
                               disabled={updatingAccountingKey === key}
                             >
-                              {archivedValue ? 'Keep Active' : 'Archive'}
+                              {archivedValue ? 'Keep' : 'Archive'}
                             </button>
                             <button
                               type="button"
@@ -11337,7 +12034,7 @@ export default function AdminPage() {
                               onClick={() => saveAccountingDraft(row)}
                               disabled={updatingAccountingKey === key || !hasPendingAccountingChanges}
                             >
-                              Save Row
+                              Save
                             </button>
                             <button
                               type="button"
@@ -11353,7 +12050,7 @@ export default function AdminPage() {
                               onClick={() => openAccountingInvoicePreview(row)}
                               disabled={sendingInvoiceKey === key}
                             >
-                              View Invoice
+                              View
                             </button>
                             <button
                               type="button"
@@ -11361,7 +12058,7 @@ export default function AdminPage() {
                               onClick={() => openAccountingInvoiceSendDialog(row)}
                               disabled={sendingInvoiceKey === key}
                             >
-                              {sendingInvoiceKey === key ? 'Sending...' : 'Send Invoice'}
+                              {sendingInvoiceKey === key ? 'Sending...' : 'Send'}
                             </button>
                           </div>
                         </td>
