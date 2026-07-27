@@ -171,7 +171,9 @@ body {
 }
 
 .adminPage .card.section.adminAccountingSectionWide {
-  width: min(1500px, calc(100vw - 2.5rem));
+  width: min(1840px, calc(100vw - 1rem));
+  padding-left: 0.8rem;
+  padding-right: 0.8rem;
 }
 
 .card {
@@ -8087,6 +8089,22 @@ textarea:focus {
   max-height: min(72vh, 1100px);
 }
 
+.accountingTableScroll .tuitionTable {
+  min-width: 1240px;
+  width: 100%;
+}
+
+.accountingTableScroll .tuitionTable th,
+.accountingTableScroll .tuitionTable td {
+  vertical-align: top;
+}
+
+.accountingTableScroll .tuitionTable input,
+.accountingTableScroll .tuitionTable select {
+  min-height: 36px;
+  border-radius: 9px;
+}
+
 .accountingSectionHeader {
   padding: 0.9rem 1rem 0.6rem;
   background: linear-gradient(180deg, #f3f7fd 0%, #eff6ff 100%);
@@ -8128,6 +8146,33 @@ textarea:focus {
   font-weight: 700;
 }
 
+.manualOvernightAccountingForm {
+  padding: 0.9rem 1rem;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(320px, 1fr) auto;
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.manualOvernightAccountingForm label,
+.manualOvernightWeekPicker {
+  display: grid;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.manualOvernightAccountingForm input[type="text"] {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.86rem;
+}
+
 .accountingEmptyCell {
   text-align: center;
   color: #64748b;
@@ -8141,19 +8186,79 @@ textarea:focus {
   gap: 0.35rem;
 }
 
+.accountingMergeButton {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 0.28rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 0.16rem 0.48rem;
+  font-size: 0.68rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.accountingMergeButton.active {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .accountingPaidCell {
   display: grid;
-  gap: 0.42rem;
+  grid-template-columns: minmax(74px, 1fr) 30px;
+  gap: 0.35rem;
+  align-items: center;
+  max-width: 130px;
+}
+
+.accountingPaidCell input {
+  width: 100%;
+  min-width: 0;
+}
+
+.accountingInfoButton {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.accountingInfoButton::before {
+  content: "i";
+  font-size: 0.78rem;
+}
+
+.accountingMultipleRegistrationChip {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.22rem;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  background: #ffedd5;
+  color: #9a3412;
+  padding: 0.14rem 0.48rem;
+  font-size: 0.68rem;
+  font-weight: 900;
 }
 
 .accountingQuickFillBtn {
-  justify-self: start;
+  grid-column: 1 / -1;
+  justify-self: stretch;
   border: 1px solid #bfdbfe;
   border-radius: 999px;
   background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   color: #1d4ed8;
-  padding: 0.28rem 0.68rem;
-  font-size: 0.76rem;
+  padding: 0.22rem 0.42rem;
+  font-size: 0.68rem;
   font-weight: 800;
   cursor: pointer;
 }
@@ -8165,17 +8270,18 @@ textarea:focus {
 
 .accountingRowActions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 92px));
-  gap: 0.32rem;
+  grid-template-columns: repeat(2, minmax(0, 58px));
+  gap: 0.28rem;
   align-items: start;
+  min-width: 122px;
 }
 
 .accountingRowActions .button {
   min-height: 0;
   width: 100%;
-  padding: 0.34rem 0.48rem;
-  border-radius: 9px;
-  font-size: 0.72rem;
+  padding: 0.26rem 0.34rem;
+  border-radius: 8px;
+  font-size: 0.68rem;
   line-height: 1.05;
   white-space: normal;
 }
@@ -8271,6 +8377,106 @@ textarea:focus {
   padding: 0.28rem 0.52rem;
   font-size: 0.76rem;
   line-height: 1.25;
+}
+
+.accountingOverlayItem.omitted {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.accountingOverlayItem.kept {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.accountingSubmissionOverlayStack {
+  display: grid;
+  gap: 0.75rem;
+  max-height: min(62vh, 520px);
+  overflow: auto;
+}
+
+.accountingSubmissionOverlaySection {
+  display: grid;
+  gap: 0.42rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.6rem;
+}
+
+.accountingSubmissionOverlayHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #334155;
+  font-size: 0.76rem;
+}
+
+.accountingPaymentEditorPanel {
+  max-width: min(720px, calc(100vw - 24px));
+  user-select: none;
+}
+
+.accountingPaymentEditorStack {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.accountingInlineAddPaymentBtn {
+  justify-self: start;
+  border: 1px dashed #93c5fd;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 0.42rem 0.72rem;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.accountingPaymentEditorRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(150px, 1fr) minmax(140px, 1fr);
+  gap: 0.65rem;
+}
+
+.accountingPaymentEditorRow label {
+  display: grid;
+  gap: 0.3rem;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.accountingLegacyPaymentNote {
+  color: #92400e;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.accountingPaymentEditorRow input,
+.accountingPaymentEditorRow select {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.86rem;
+}
+
+.accountingPaymentEditorSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.65rem;
+  color: #334155;
 }
 
 .accountingScheduleOverlayStack {
