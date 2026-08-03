@@ -1747,11 +1747,22 @@ function getAccountingEditorWeekKeyAliases(week) {
   )
 }
 
+function getAccountingEditorCanonicalScheduleKey(week, campType = '') {
+  const programKey = String(campType || '').trim().toLowerCase()
+  const start = String(week?.start || '').trim() || getDatePartFromWeekId(week?.id)
+  if ((programKey === 'general' || programKey === 'bootcamp') && start) {
+    return `${programKey}:${start}`
+  }
+  return String(week?.id || '').trim()
+}
+
 function resolveAccountingEditorScheduleKey(student, week, preferredCampType = '') {
   const schedule = typeof student?.schedule === 'object' && student?.schedule ? student.schedule : {}
   const aliases = getAccountingEditorWeekKeyAliases(week)
   const preferred = String(preferredCampType || '').trim().toLowerCase()
   if (preferred) {
+    const canonicalPreferred = getAccountingEditorCanonicalScheduleKey(week, preferred)
+    if (schedule[canonicalPreferred]) return canonicalPreferred
     const matchingPreferred = aliases.find((key) => {
       const entry = schedule[key]
       return entry && resolveScheduleProgramKey(entry, key) === preferred
@@ -1904,21 +1915,21 @@ function deriveAccountingPaymentState({ entry = {}, tuitionTotal = 0, lunchTotal
   const hasSplitValues = entry?.tuition_paid_amount != null || entry?.lunch_paid_amount != null
   const legacyPaidAmount = Math.max(0, Number(entry?.paid_amount || 0))
 
-  let tuitionPaidAmount = hasSplitValues
+  const tuitionPaidAmount = roundMoney(hasSplitValues
     ? Math.max(0, Number(entry?.tuition_paid_amount || 0))
     : Math.min(legacyPaidAmount, tuitionAfterManualDiscount)
-  tuitionPaidAmount = roundMoney(Math.min(tuitionAfterManualDiscount, tuitionPaidAmount))
+  )
 
-  let lunchPaidAmount = hasSplitValues
+  const lunchPaidAmount = roundMoney(hasSplitValues
     ? Math.max(0, Number(entry?.lunch_paid_amount || 0))
     : Math.max(0, legacyPaidAmount - tuitionPaidAmount)
-  lunchPaidAmount = roundMoney(Math.min(normalizedLunchTotal, lunchPaidAmount))
+  )
 
   const totalPaidAmount = roundMoney(tuitionPaidAmount + lunchPaidAmount)
   const tuitionOwedAmount = roundMoney(Math.max(0, tuitionAfterManualDiscount - tuitionPaidAmount))
-  const lunchOwedAmount = roundMoney(Math.max(0, normalizedLunchTotal - lunchPaidAmount))
   const totalAfterManualDiscount = roundMoney(tuitionAfterManualDiscount + normalizedLunchTotal)
-  const totalOwedAmount = roundMoney(tuitionOwedAmount + lunchOwedAmount)
+  const totalOwedAmount = roundMoney(Math.max(0, totalAfterManualDiscount - totalPaidAmount))
+  const lunchOwedAmount = roundMoney(Math.max(0, totalOwedAmount - tuitionOwedAmount))
   const tuitionPaidPct = tuitionAfterManualDiscount > 0 ? tuitionPaidAmount / tuitionAfterManualDiscount : 0
 
   return {
@@ -2218,6 +2229,56 @@ function formatAdminDateTime(value) {
   }
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString()
+}
+
+function normalizeAccountingMergeValue(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function getAccountingMergeKey(row) {
+  const email = normalizeAccountingMergeValue(row?.parentEmail)
+  const camperName = normalizeAccountingMergeValue(row?.camperName)
+  return email && camperName ? `${email}::${camperName}` : ''
+}
+
+function getAccountingScheduleAssignmentKey(item) {
+  const weekId = String(item?.weekId || item?.sourceWeekId || '').trim()
+  const programKey = resolveRosterProgramKey(item)
+  return weekId && programKey ? `${programKey}:${weekId}` : ''
+}
+
+function normalizeAccountingPayments(value) {
+  return (Array.isArray(value) ? value : [])
+    .map((payment, index) => ({
+      id: String(payment?.id || `payment-${index}-${Date.now()}`),
+      amount: Math.max(0, Number(payment?.amount || 0)),
+      date: String(payment?.date || '').trim(),
+      method: accountingPaymentMethods.includes(String(payment?.method || '').trim().toLowerCase())
+        ? String(payment?.method || '').trim().toLowerCase()
+        : '',
+      legacy: Boolean(payment?.legacy),
+    }))
+    .filter((payment) => payment.amount > 0 && (payment.method || payment.legacy))
+}
+
+function sumAccountingPayments(value) {
+  return roundMoney(normalizeAccountingPayments(value).reduce((sum, payment) => sum + Number(payment.amount || 0), 0))
+}
+
+function buildLegacyAccountingPayment(row, type = 'tuition') {
+  const amount = type === 'lunch' ? Number(row?.lunchPaidAmount || 0) : Number(row?.tuitionPaidAmount || 0)
+  if (amount <= 0) {
+    return null
+  }
+  return {
+    id: `legacy-${type}-${row?.registrationId || 'row'}-${row?.camperIndex || 0}`,
+    amount,
+    date: '',
+    method: accountingPaymentMethods.includes(String(row?.paymentMethod || '').trim().toLowerCase())
+      ? String(row.paymentMethod).trim().toLowerCase()
+      : '',
+    legacy: true,
+  }
 }
 
 function buildCamperPricing({
@@ -2888,12 +2949,13 @@ function buildAccountingDayCampWeeksForLocation(programs = {}, location = '') {
       end: week.end,
       programKey: 'daycamp',
       programLabel: 'Camp Week',
-      days: Array.isArray(week.days)
-        ? week.days.map((day) => ({
-            ...day,
-            key: normalizeAccountingEditorDayKey(day?.key),
-          }))
-        : [],
+      days:
+        Array.isArray(week.days) && week.days.length > 0
+          ? week.days.map((day) => ({
+              ...day,
+              key: normalizeAccountingEditorDayKey(day?.key),
+            }))
+          : accountingEditorDayKeys.map((dayKey) => ({ key: dayKey, date: '' })),
       availableCampTypes: ['general'],
     })
   }
@@ -2951,7 +3013,13 @@ export default function AdminPage() {
   const [registrationRecords, setRegistrationRecords] = useState([])
   const [accountingDrafts, setAccountingDrafts] = useState({})
   const [accountingBalanceFilter, setAccountingBalanceFilter] = useState('all')
+  const [manualAccountingMergeLinks, setManualAccountingMergeLinks] = useState({})
+  const [pendingAccountingMergeRow, setPendingAccountingMergeRow] = useState(null)
   const [manualAccountingDraft, setManualAccountingDraft] = useState(buildEmptyManualAccountingDraft)
+  const [manualOvernightAccountingDraft, setManualOvernightAccountingDraft] = useState({
+    studentName: '',
+    weekIds: [],
+  })
   const [manualAccountingExpanded, setManualAccountingExpanded] = useState(false)
   const [leadProfiles, setLeadProfiles] = useState([])
   const [loadingAccounting, setLoadingAccounting] = useState(false)
@@ -2983,6 +3051,12 @@ export default function AdminPage() {
     open: false,
     row: null,
     sendAdminCopy: true,
+  })
+  const [accountingPaymentEditor, setAccountingPaymentEditor] = useState({
+    open: false,
+    row: null,
+    type: 'tuition',
+    payments: [],
   })
   const [accountingEditState, setAccountingEditState] = useState({
     open: false,
@@ -3024,6 +3098,7 @@ export default function AdminPage() {
     label: '',
     items: [],
     scheduleRows: [],
+    submissionSections: [],
     top: 0,
     left: 0,
     pointerLeft: 24,
@@ -4272,9 +4347,16 @@ export default function AdminPage() {
           pricing.subtotal = fallbackPricing.total
           pricing.regularTotal = fallbackPricing.total
         }
-        const manualDiscount = Math.max(0, Number(entry.manual_discount || 0))
+        const tuitionPayments = normalizeAccountingPayments(entry.tuition_payments)
+        const lunchPayments = normalizeAccountingPayments(entry.lunch_payments)
+        const paymentEntry = {
+          ...entry,
+          tuition_paid_amount: tuitionPayments.length > 0 ? sumAccountingPayments(tuitionPayments) : entry.tuition_paid_amount,
+          lunch_paid_amount: lunchPayments.length > 0 ? sumAccountingPayments(lunchPayments) : entry.lunch_paid_amount,
+        }
+        const manualDiscount = Math.max(0, Number(paymentEntry.manual_discount || 0))
         const paymentState = deriveAccountingPaymentState({
-          entry,
+          entry: paymentEntry,
           tuitionTotal: pricing.total,
           lunchTotal: pricing.lunchCost,
           manualDiscount,
@@ -4283,7 +4365,14 @@ export default function AdminPage() {
         const weekChipDetails = pricing.weekDetails.map((item) => {
           const weekNumberLabel = weekNumberById[item.weekId]?.label || ''
           const dateLabel = item.label || toWeekLabel(item.weekId, weekById)
+          const programLabel = item.programKey === 'bootcamp' ? 'Boot Camp' : item.programKey === 'overnight' ? 'Overnight Camp' : 'General Camp'
+          const selectionLabel = item.isFullWeek ? 'Full Week' : formatWeekCountSummary(item.counts, item.programKey)
           return {
+            key: `${item.programKey}:${item.weekId}`,
+            displayChipLabel: `${selectionLabel} - ${programLabel}`,
+            dateLabel,
+            programKey: item.programKey,
+            submissionLabel: formatAdminDateTime(submittedAt),
             chipLabel: `${weekNumberLabel ? `${weekNumberLabel}: ` : ''}${dateLabel} · ${item.isFullWeek ? 'Full Week' : 'Partial'}`,
             detailLines: Array.from(new Set([
               `Dates: ${dateLabel}`,
@@ -4354,6 +4443,7 @@ export default function AdminPage() {
           registrationType,
           createdAt: submittedAt,
           createdAtRaw: record.created_at,
+          sourceSubmissionLabel: formatAdminDateTime(submittedAt),
           location: String(payload.location || '').trim(),
           parentName,
           parentEmail,
@@ -4365,6 +4455,10 @@ export default function AdminPage() {
           camperPreviousInjury: String(student?.previousInjury || '').trim(),
           camperHealthNotes: String(student?.healthNotes || '').trim(),
           camperActivitySelections: Array.isArray(student?.activitySelections) ? student.activitySelections : [],
+          accountingStudent: student,
+          accountingEntry: paymentEntry,
+          tuitionPayments,
+          lunchPayments,
           selectedWeekIds,
           scheduleByWeek: pricing.scheduleByWeek,
           weekProgramDetails: pricing.weekDetails,
@@ -4411,8 +4505,232 @@ export default function AdminPage() {
         })
       })
     }
-    return rows
-  }, [config.tuition, registrationRecords, reservationJourneyStatusByRegistrationId, weekById, weekNumberById])
+    const passthroughRows = []
+    const mergeGroups = new Map()
+    for (const row of rows) {
+      const manualMergeKey = String(manualAccountingMergeLinks[row.key] || '').trim()
+      const mergeKey =
+        row.registrationType !== 'overnight-only' && !row.archived
+          ? manualMergeKey
+            ? `manual:${manualMergeKey}`
+            : getAccountingMergeKey(row)
+          : ''
+      if (!mergeKey) {
+        passthroughRows.push(row)
+        continue
+      }
+      if (!mergeGroups.has(mergeKey)) {
+        mergeGroups.set(mergeKey, [])
+      }
+      mergeGroups.get(mergeKey).push(row)
+    }
+
+    const mergedRows = []
+    for (const groupRows of mergeGroups.values()) {
+      if (groupRows.length === 1) {
+        const row = groupRows[0]
+        mergedRows.push({
+          ...row,
+          weekSubmissionSections: [
+            {
+              key: `${row.key}-submission`,
+              registrationId: row.registrationId,
+              submittedAt: row.sourceSubmissionLabel,
+              weekChips: row.weekChipDetails.map((detail) => ({ ...detail, omitted: false })),
+            },
+          ],
+        })
+        continue
+      }
+
+      const newestFirst = [...groupRows].sort(
+        (a, b) => new Date(b.createdAt || b.createdAtRaw || 0).getTime() - new Date(a.createdAt || a.createdAtRaw || 0).getTime()
+      )
+      const oldestFirst = [...groupRows].sort(
+        (a, b) => new Date(a.createdAt || a.createdAtRaw || 0).getTime() - new Date(b.createdAt || b.createdAtRaw || 0).getTime()
+      )
+      const primary = newestFirst[0]
+      const seenWeekKeys = new Set()
+      const mergedSchedule = {}
+      const mergedLunch = {}
+      const mergedWeekChipDetails = []
+      const weekSubmissionSections = []
+
+      for (const row of oldestFirst) {
+        const section = {
+          key: `${row.key}-submission`,
+          registrationId: row.registrationId,
+          submittedAt: row.sourceSubmissionLabel,
+          weekChips: [],
+        }
+        const scheduleItems = Array.isArray(row.scheduleByWeek) ? row.scheduleByWeek : []
+        for (const detail of row.weekChipDetails || []) {
+          const detailKey = String(detail.key || '').trim()
+          const matchingItem = scheduleItems.find((item) => getAccountingScheduleAssignmentKey(item) === detailKey)
+          const assignmentKey = detailKey || getAccountingScheduleAssignmentKey(matchingItem)
+          const omitted = Boolean(assignmentKey && seenWeekKeys.has(assignmentKey))
+          section.weekChips.push({ ...detail, omitted })
+          if (!assignmentKey || omitted) {
+            continue
+          }
+
+          seenWeekKeys.add(assignmentKey)
+          mergedWeekChipDetails.push({
+            ...detail,
+            submissionLabel: row.sourceSubmissionLabel,
+          })
+
+          const scheduleWeekId = String(matchingItem?.weekId || '').trim()
+          if (scheduleWeekId) {
+            mergedSchedule[scheduleWeekId] = {
+              ...(matchingItem?.entry || {}),
+              weekId: scheduleWeekId,
+              programKey: matchingItem?.programKey || resolveRosterProgramKey(matchingItem),
+            }
+            const sourceWeekId = String(matchingItem?.sourceWeekId || '').trim()
+            const lunchSelections = typeof row.lunchSelections === 'object' && row.lunchSelections ? row.lunchSelections : {}
+            for (const [lunchKey, selected] of Object.entries(lunchSelections)) {
+              const lunchWeekId = String(lunchKey || '').split(':')[0]
+              if (lunchWeekId === scheduleWeekId || lunchWeekId === sourceWeekId) {
+                mergedLunch[lunchKey] = selected
+              }
+            }
+          }
+        }
+        weekSubmissionSections.push(section)
+      }
+
+      const mergedStudent = {
+        ...(primary.accountingStudent || {}),
+        schedule: mergedSchedule,
+        lunch: mergedLunch,
+      }
+      const aggregateEntry = {
+        ...(primary.accountingEntry || {}),
+        camper_index: primary.camperIndex,
+        camper_name: primary.camperName,
+        tuition_payments: groupRows.flatMap((row) => normalizeAccountingPayments(row.tuitionPayments)),
+        lunch_payments: groupRows.flatMap((row) => normalizeAccountingPayments(row.lunchPayments)),
+        paid_amount: roundMoney(groupRows.reduce((sum, row) => sum + Number(row.paidAmount || 0), 0)),
+        tuition_paid_amount: roundMoney(groupRows.reduce((sum, row) => sum + Number(row.tuitionPaidAmount || 0), 0)),
+        lunch_paid_amount: roundMoney(groupRows.reduce((sum, row) => sum + Number(row.lunchPaidAmount || 0), 0)),
+        manual_discount: roundMoney(groupRows.reduce((sum, row) => sum + Number(row.manualDiscount || 0), 0)),
+        archived: false,
+        payment_method: groupRows.every((row) => String(row.paymentMethod || '') === String(primary.paymentMethod || ''))
+          ? primary.paymentMethod
+          : '',
+      }
+      const mergedPricingItem = buildStudentAccountingPricingList({
+        students: [mergedStudent],
+        accountingEntries: [aggregateEntry],
+        createdAt: oldestFirst[0]?.createdAt || primary.createdAt,
+        tuition: config.tuition,
+        lunchPrice: config.tuition.lunchPrice,
+        weekById,
+        discountEndDate: config.tuition.discountEndDate,
+      })[0] || {}
+      const pricing = mergedPricingItem.pricing || {}
+      const manualDiscount = Math.max(0, Number(aggregateEntry.manual_discount || 0))
+      const paymentState = deriveAccountingPaymentState({
+        entry: aggregateEntry,
+        tuitionTotal: pricing.total,
+        lunchTotal: pricing.lunchCost,
+        manualDiscount,
+      })
+      const discountCampaignId = mergedPricingItem.discountCampaignId || primary.discountCampaignId
+      const discountCampaign = getDiscountCampaignMeta(discountCampaignId, config.tuition.discountEndDate)
+      const selectedWeekIds = Array.from(new Set(pricing.weekIds || []))
+      const weekOverlayLines = mergedWeekChipDetails.flatMap((item) => [
+        `${item.displayChipLabel || item.chipLabel} (${item.dateLabel})`,
+        `Submitted: ${item.submissionLabel}`,
+        ...item.detailLines,
+      ])
+      const invoiceCalendarLines = buildAccountingCalendarLines({
+        camperName: primary.camperName,
+        student: mergedStudent,
+        weekById,
+        weekNumberById,
+      })
+
+      mergedRows.push({
+        ...primary,
+        key: `merged-${(manualAccountingMergeLinks[primary.key] || getAccountingMergeKey(primary)).replace(/[^a-z0-9]+/g, '-')}`,
+        isMergedAccountingRow: true,
+        mergedRegistrationCount: groupRows.length,
+        mergedSourceRows: newestFirst,
+        sourceSubmissionLabel: primary.sourceSubmissionLabel,
+        createdAt: primary.createdAt,
+        accountingStudent: mergedStudent,
+        accountingEntry: aggregateEntry,
+        selectedWeekIds,
+        scheduleByWeek: pricing.scheduleByWeek || [],
+        weekProgramDetails: pricing.weekDetails || [],
+        weeksCount: (pricing.weekDetails || []).length,
+        weekLabels: selectedWeekIds.map((weekId) => toWeekLabel(weekId, weekById)),
+        weekChipDetails: mergedWeekChipDetails,
+        weekOverlayLines,
+        weekSubmissionSections,
+        lunchSelections: mergedLunch,
+        tuitionPayments: aggregateEntry.tuition_payments,
+        lunchPayments: aggregateEntry.lunch_payments,
+        lunchDays: pricing.lunchDays || [],
+        lunchDaysCount: Number(pricing.paidLunchCount || 0),
+        lunchCost: Number(pricing.lunchCost || 0),
+        regularPriceTotal: Number(pricing.regularTotal || 0),
+        tuitionBeforeSiblingDiscount: roundMoney(
+          Number(pricing.general || 0) + Number(pricing.bootcamp || 0) + Number(pricing.overnight || 0)
+        ),
+        tuitionBeforeManualDiscount: paymentState.tuitionBase,
+        tuitionAfterManualDiscount: paymentState.tuitionAfterManualDiscount,
+        weekTierPromoAmount: Number(pricing.weekTierPromoAmount || 0),
+        weekTierPromoLines: pricing.weekTierPromoLines || [],
+        generalCost: Number(pricing.general || 0),
+        bootcampCost: Number(pricing.bootcamp || 0),
+        overnightCost: Number(pricing.overnight || 0),
+        tuitionTotal: Number(pricing.total || 0),
+        siblingDiscountPct: Number(pricing.siblingDiscountPct || 0),
+        siblingDiscountAmount: Number(pricing.siblingDiscount || 0),
+        discountCampaignId,
+        discountCampaignLabel: discountCampaign?.name || 'No early bird discount',
+        discountCampaignOverride: mergedPricingItem.discountCampaignOverride || primary.discountCampaignOverride,
+        totalBreakdownLines: [
+          discountCampaign
+            ? `Early bird applied: ${discountCampaign.name} (-$${Number(discountCampaign.fullWeekDiscountAmount || 0).toFixed(0)} full-week)`
+            : 'Early bird applied: none',
+          `Merged pricing default: earliest submission discount round applies to all kept weeks.`,
+          ...weekSubmissionSections.flatMap((section) =>
+            (section.weekChips || []).map((chip) =>
+              `${chip.omitted ? 'Omitted duplicate' : 'Kept'}: ${chip.displayChipLabel || chip.chipLabel}${chip.dateLabel ? ` (${chip.dateLabel})` : ''} - submitted ${section.submittedAt}`
+            )
+          ),
+          `General Camp: ${money(pricing.general)}`,
+          `Boot Camp: ${money(pricing.bootcamp)}`,
+          `Lunch added after sibling discount: ${money(pricing.lunchCost)}`,
+          `Calculated tuition before manual discount: ${money(paymentState.tuitionBase)}`,
+          `Manual discount: -${money(manualDiscount)}`,
+          `Displayed total: ${money(paymentState.totalAfterManualDiscount)}`,
+        ],
+        invoiceCalendarLines,
+        manualDiscount,
+        totalAfterManualDiscount: paymentState.totalAfterManualDiscount,
+        paidAmount: paymentState.totalPaidAmount,
+        owedAmount: paymentState.totalOwedAmount,
+        tuitionPaidAmount: paymentState.tuitionPaidAmount,
+        lunchPaidAmount: paymentState.lunchPaidAmount,
+        tuitionOwedAmount: paymentState.tuitionOwedAmount,
+        lunchOwedAmount: paymentState.lunchOwedAmount,
+        tuitionPaidPct: paymentState.tuitionPaidPct,
+        shouldStopRegistrationEmails: paymentState.shouldStopRegistrationEmails,
+        paymentMethod: accountingPaymentMethods.includes(String(aggregateEntry.payment_method || '')) ? aggregateEntry.payment_method : '',
+        archived: false,
+        r5SentUnpaid: groupRows.some((row) => row.r5SentUnpaid) && !paymentState.shouldStopRegistrationEmails,
+      })
+    }
+
+    return [...mergedRows, ...passthroughRows].sort(
+      (a, b) => new Date(b.createdAt || b.createdAtRaw || 0).getTime() - new Date(a.createdAt || a.createdAtRaw || 0).getTime()
+    )
+  }, [config.tuition, manualAccountingMergeLinks, registrationRecords, reservationJourneyStatusByRegistrationId, weekById, weekNumberById])
   const activeAccountingRows = useMemo(
     () => accountingRows.filter((row) => !row.archived && row.registrationType !== 'overnight-only'),
     [accountingRows]
@@ -5946,8 +6264,10 @@ export default function AdminPage() {
     setSettingTrackerVisibilityKey('')
   }
 
-  function renderAccountingDetailChip(detailKey, label, items = [], displayCount = null) {
-    if (!Array.isArray(items) || items.length === 0) {
+  function renderAccountingDetailChip(detailKey, label, items = [], displayCount = null, submissionSections = []) {
+    const hasItems = Array.isArray(items) && items.length > 0
+    const hasSubmissionSections = Array.isArray(submissionSections) && submissionSections.length > 0
+    if (!hasItems && !hasSubmissionSections) {
       return null
     }
     const expanded = accountingOverlay.key === detailKey
@@ -5965,8 +6285,8 @@ export default function AdminPage() {
 
             setAccountingOverlay((current) =>
               current.key === detailKey
-                ? { key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 }
-                : { key: detailKey, label, items, scheduleRows: [], top, left, pointerLeft }
+                ? { key: '', label: '', items: [], scheduleRows: [], submissionSections: [], top: 0, left: 0, pointerLeft: 24 }
+                : { key: detailKey, label, items, scheduleRows: [], submissionSections, top, left, pointerLeft }
             )
           }}
         >
@@ -5974,6 +6294,52 @@ export default function AdminPage() {
         </button>
       </div>
     )
+  }
+
+  function getAccountingMergeRowSourceKeys(row) {
+    return Array.isArray(row?.mergedSourceRows) && row.mergedSourceRows.length > 0
+      ? row.mergedSourceRows.map((sourceRow) => sourceRow.key).filter(Boolean)
+      : [row?.key].filter(Boolean)
+  }
+
+  function handleAccountingMergeClick(row) {
+    if (!row || row.registrationType === 'overnight-only') {
+      return
+    }
+    if (!pendingAccountingMergeRow) {
+      setPendingAccountingMergeRow(row)
+      setSavedMessage(`Select another ${row.camperName} row to merge.`)
+      setErrorMessage('')
+      return
+    }
+    if (pendingAccountingMergeRow.key === row.key) {
+      setPendingAccountingMergeRow(null)
+      setSavedMessage('')
+      return
+    }
+    if (normalizeAccountingMergeValue(pendingAccountingMergeRow.camperName) !== normalizeAccountingMergeValue(row.camperName)) {
+      setErrorMessage('Cannot merge rows: camper names do not match.')
+      return
+    }
+
+    const sourceKeys = getAccountingMergeRowSourceKeys(pendingAccountingMergeRow)
+    const targetKeys = getAccountingMergeRowSourceKeys(row)
+    const groupId = String(
+      manualAccountingMergeLinks[sourceKeys[0]] ||
+      manualAccountingMergeLinks[targetKeys[0]] ||
+      sourceKeys[0] ||
+      pendingAccountingMergeRow.key
+    )
+    setManualAccountingMergeLinks((current) => {
+      const next = { ...current }
+      for (const key of [...sourceKeys, ...targetKeys]) {
+        next[key] = groupId
+      }
+      return next
+    })
+    setPendingAccountingMergeRow(null)
+    setErrorMessage('')
+    setSavedMessage(`Merged accounting rows for ${row.camperName}.`)
   }
 
   function getAccountingRowScheduleSummary(row) {
@@ -6035,12 +6401,13 @@ export default function AdminPage() {
 
             setAccountingOverlay((current) =>
               current.key === detailKey
-                ? { key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 }
+                ? { key: '', label: '', items: [], scheduleRows: [], submissionSections: [], top: 0, left: 0, pointerLeft: 24 }
                 : {
                     key: detailKey,
                     label: 'Weekly Schedule',
                     items: [],
                     scheduleRows,
+                    submissionSections: [],
                     top,
                     left,
                     pointerLeft,
@@ -6518,6 +6885,8 @@ export default function AdminPage() {
       paid_amount: Math.max(0, Number(updates.paid_amount ?? base.paid_amount ?? 0)),
       tuition_paid_amount: Math.max(0, Number(updates.tuition_paid_amount ?? base.tuition_paid_amount ?? 0)),
       lunch_paid_amount: Math.max(0, Number(updates.lunch_paid_amount ?? base.lunch_paid_amount ?? 0)),
+      tuition_payments: updates.tuition_payments ?? base.tuition_payments ?? [],
+      lunch_payments: updates.lunch_payments ?? base.lunch_payments ?? [],
       manual_discount: Math.max(0, Number(updates.manual_discount ?? base.manual_discount ?? 0)),
       discount_campaign_override: normalizeDiscountCampaignOverride(
         updates.discount_campaign_override ?? base.discount_campaign_override ?? ''
@@ -6535,6 +6904,16 @@ export default function AdminPage() {
       next.lunch_paid_amount = 0
     }
     if (updates.tuition_paid_amount != null || updates.lunch_paid_amount != null) {
+      next.paid_amount = roundMoney(Number(next.tuition_paid_amount || 0) + Number(next.lunch_paid_amount || 0))
+    }
+    if (updates.tuition_payments != null) {
+      next.tuition_payments = normalizeAccountingPayments(updates.tuition_payments)
+      next.tuition_paid_amount = sumAccountingPayments(next.tuition_payments)
+      next.paid_amount = roundMoney(Number(next.tuition_paid_amount || 0) + Number(next.lunch_paid_amount || 0))
+    }
+    if (updates.lunch_payments != null) {
+      next.lunch_payments = normalizeAccountingPayments(updates.lunch_payments)
+      next.lunch_paid_amount = sumAccountingPayments(next.lunch_payments)
       next.paid_amount = roundMoney(Number(next.tuition_paid_amount || 0) + Number(next.lunch_paid_amount || 0))
     }
     if (!accountingPaymentMethods.includes(next.payment_method)) {
@@ -6625,6 +7004,95 @@ export default function AdminPage() {
         archived: updates.archived ?? current[row.key]?.archived ?? Boolean(row.archived),
       },
     }))
+  }
+
+  function openAccountingPaymentEditor(row, type = 'tuition') {
+    const sourcePayments = type === 'lunch' ? row.lunchPayments : row.tuitionPayments
+    const payments = normalizeAccountingPayments(sourcePayments)
+    const legacyPayment = buildLegacyAccountingPayment(row, type)
+    const displayPayments = payments.length > 0 ? payments : legacyPayment ? [legacyPayment] : []
+    setAccountingPaymentEditor({
+      open: true,
+      row,
+      type,
+      payments:
+        displayPayments.length > 0
+          ? displayPayments
+          : [
+              {
+                id: `payment-${Date.now()}`,
+                amount: '',
+                date: '',
+                method: row.paymentMethod || '',
+              },
+            ],
+    })
+  }
+
+  function updateAccountingPaymentDraft(paymentId, updates = {}) {
+    setAccountingPaymentEditor((current) => ({
+      ...current,
+      payments: (Array.isArray(current.payments) ? current.payments : []).map((payment) =>
+        payment.id === paymentId ? { ...payment, ...updates } : payment
+      ),
+    }))
+  }
+
+  function addAccountingPaymentDraftRow() {
+    setAccountingPaymentEditor((current) => ({
+      ...current,
+      payments: [
+        ...(Array.isArray(current.payments) ? current.payments : []),
+        {
+          id: `payment-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          amount: '',
+          date: '',
+          method: current.row?.paymentMethod || '',
+        },
+      ],
+    }))
+  }
+
+  async function saveAccountingPaymentEditor() {
+    const row = accountingPaymentEditor.row
+    if (!row) return
+    const normalizedPayments = normalizeAccountingPayments(accountingPaymentEditor.payments)
+    const paymentSum = sumAccountingPayments(normalizedPayments)
+    const updates =
+      accountingPaymentEditor.type === 'lunch'
+        ? {
+            lunch_payments: normalizedPayments,
+            lunch_paid_amount: paymentSum,
+          }
+        : {
+            tuition_payments: normalizedPayments,
+            tuition_paid_amount: paymentSum,
+          }
+    let ok = false
+    if (row.isMergedAccountingRow && Array.isArray(row.mergedSourceRows) && row.mergedSourceRows.length > 0) {
+      const [primarySourceRow, ...secondaryRows] = row.mergedSourceRows
+      ok = await updateAccountingEntryField(primarySourceRow, updates)
+      if (ok) {
+        const clearUpdates =
+          accountingPaymentEditor.type === 'lunch'
+            ? {
+                lunch_payments: [],
+                lunch_paid_amount: 0,
+              }
+            : {
+                tuition_payments: [],
+                tuition_paid_amount: 0,
+              }
+        for (const secondaryRow of secondaryRows) {
+          await updateAccountingEntryField(secondaryRow, clearUpdates)
+        }
+      }
+    } else {
+      ok = await updateAccountingEntryField(row, updates)
+    }
+    if (ok) {
+      setAccountingPaymentEditor({ open: false, row: null, type: 'tuition', payments: [] })
+    }
   }
 
   function updateManualAccountingDraft(updates = {}) {
@@ -6863,6 +7331,113 @@ export default function AdminPage() {
     setUpdatingAccountingKey('')
   }
 
+  function toggleManualOvernightAccountingWeek(weekId) {
+    setManualOvernightAccountingDraft((current) => {
+      const weekIds = Array.isArray(current.weekIds) ? current.weekIds : []
+      return {
+        ...current,
+        weekIds: weekIds.includes(weekId)
+          ? weekIds.filter((item) => item !== weekId)
+          : [...weekIds, weekId],
+      }
+    })
+  }
+
+  async function addManualOvernightAccountingRow() {
+    if (!supabaseEnabled || !supabase) {
+      setErrorMessage('Supabase is not configured for overnight accounting row creation.')
+      return
+    }
+    const studentName = String(manualOvernightAccountingDraft.studentName || '').trim()
+    const weekIds = Array.from(new Set(
+      (Array.isArray(manualOvernightAccountingDraft.weekIds) ? manualOvernightAccountingDraft.weekIds : []).filter(Boolean)
+    ))
+    if (!studentName) {
+      setErrorMessage('Enter a student name before adding an overnight row.')
+      return
+    }
+    if (weekIds.length === 0) {
+      setErrorMessage('Select at least one overnight week.')
+      return
+    }
+
+    setUpdatingAccountingKey('manual-overnight-new-row')
+    setSavedMessage('')
+    setErrorMessage('')
+
+    const submittedAt = new Date().toISOString()
+    const parentName = `${studentName} Family`
+    const guardianEmail = `manual-overnight-${submittedAt.replace(/[^0-9]/g, '')}@newushu.local`
+    const student = {
+      id: `manual-overnight-student-${Date.now()}`,
+      fullName: studentName,
+      dob: '',
+      overnightWeekIds: weekIds,
+      schedule: {},
+      lunch: {},
+      allergies: '',
+      medication: '',
+      previousInjury: '',
+      healthNotes: '',
+      activitySelections: [],
+    }
+    const registrationPayload = {
+      source: 'admin_manual_overnight_accounting_row',
+      registrationType: 'overnight-only',
+      submittedAt,
+      registration: {
+        submittedAt,
+        location: 'Camp House',
+        parentName,
+        contactEmail: '',
+        contactPhone: '',
+        paymentMethod: '',
+        students: [student],
+      },
+    }
+    const response = await supabase
+      .from('registrations')
+      .insert({
+        camper_first_name: studentName.split(/\s+/)[0] || studentName,
+        camper_last_name: studentName.split(/\s+/).slice(1).join(' '),
+        guardian_name: parentName,
+        guardian_email: guardianEmail,
+        guardian_phone: '',
+        medical_notes: JSON.stringify(registrationPayload),
+        accounting_entries: [
+          {
+            camper_index: 0,
+            camper_name: studentName,
+            archived: false,
+            paid_amount: 0,
+            tuition_paid_amount: 0,
+            lunch_paid_amount: 0,
+            manual_discount: 0,
+            payment_method: '',
+          },
+        ],
+      })
+      .select('id, guardian_name, guardian_email, created_at, medical_notes, accounting_entries')
+      .single()
+
+    if (response.error) {
+      setErrorMessage(`Manual overnight row failed: ${response.error.message}`)
+      setUpdatingAccountingKey('')
+      return
+    }
+
+    setRegistrationRecords((current) => [
+      {
+        ...response.data,
+        accounting_entries: Array.isArray(response.data?.accounting_entries) ? response.data.accounting_entries : [],
+      },
+      ...current,
+    ])
+    setManualOvernightAccountingDraft({ studentName: '', weekIds: [] })
+    setSavedMessage('Manual overnight row added.')
+    setUpdatingAccountingKey('')
+  }
+
   async function saveAccountingDraft(row) {
     const draft = accountingDrafts[row.key]
     if (!draft) {
@@ -7079,6 +7654,15 @@ export default function AdminPage() {
       setErrorMessage('Saved registration data was not found for this camper.')
       return
     }
+    const normalizedStudents = students.map((student) => normalizeSavedAccountingStudentForEditor(student))
+    const editorStudents =
+      row.isMergedAccountingRow && row.accountingStudent
+        ? normalizedStudents.map((student, index) =>
+            index === Number(row.camperIndex)
+              ? normalizeSavedAccountingStudentForEditor(row.accountingStudent)
+              : student
+          )
+        : normalizedStudents
 
     setAccountingEditState({
       open: true,
@@ -7086,7 +7670,7 @@ export default function AdminPage() {
       sourceRecordId: Number(sourceRecord.id),
       registration: {
         ...payload,
-        students: students.map((student) => normalizeSavedAccountingStudentForEditor(student)),
+        students: editorStudents,
       },
       expandedWeekKey: '',
       expandedLunchWeekKey: '',
@@ -7105,12 +7689,16 @@ export default function AdminPage() {
       if (!student) {
         return current
       }
-      const existingKey = resolveAccountingEditorScheduleKey(student, week)
+      const sourceKey = resolveAccountingEditorScheduleKey(student, week)
+      const preferredCampType = String(student.schedule?.[sourceKey]?.campType || '').trim().toLowerCase()
+      const existingKey =
+        getAccountingEditorCanonicalScheduleKey(week, preferredCampType) ||
+        sourceKey
       const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
-      const currentEntry = student.schedule?.[existingKey] || {
+      const currentEntry = student.schedule?.[existingKey] || student.schedule?.[sourceKey] || {
         weekId: existingKey,
-        programKey: week.programKey,
-        campType: week.programKey === 'daycamp' ? '' : week.programKey,
+        programKey: preferredCampType || (week.programKey === 'daycamp' ? '' : week.programKey),
+        campType: preferredCampType || (week.programKey === 'daycamp' ? '' : week.programKey),
         days: weekDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
       }
       const updatedEntry = updater(currentEntry)
@@ -7118,16 +7706,35 @@ export default function AdminPage() {
       const hasAnyDay = dayModes.some((mode) => mode !== 'NONE')
       const nextSchedule = { ...(student.schedule || {}) }
       const nextLunch = { ...(student.lunch || {}) }
+      const aliasKeys = getAccountingEditorWeekKeyAliases(week)
 
       if (hasAnyDay) {
+        for (const aliasKey of aliasKeys) {
+          if (aliasKey !== existingKey && nextSchedule[aliasKey]) {
+            delete nextSchedule[aliasKey]
+          }
+        }
+        for (const aliasKey of aliasKeys) {
+          if (aliasKey === existingKey) {
+            continue
+          }
+          for (const day of weekDayKeys) {
+            if (nextLunch[`${existingKey}:${day}`] === undefined && nextLunch[`${aliasKey}:${day}`] !== undefined) {
+              nextLunch[`${existingKey}:${day}`] = nextLunch[`${aliasKey}:${day}`]
+            }
+            delete nextLunch[`${aliasKey}:${day}`]
+          }
+        }
         nextSchedule[existingKey] = {
           ...updatedEntry,
           weekId: existingKey,
         }
       } else {
-        delete nextSchedule[existingKey]
-        for (const day of weekDayKeys) {
-          delete nextLunch[`${existingKey}:${day}`]
+        for (const aliasKey of aliasKeys) {
+          delete nextSchedule[aliasKey]
+          for (const day of weekDayKeys) {
+            delete nextLunch[`${aliasKey}:${day}`]
+          }
         }
       }
 
@@ -7168,25 +7775,44 @@ export default function AdminPage() {
       if (!student) {
         return current
       }
-      const existingKey = resolveAccountingEditorScheduleKey(student, week, campType)
+      const existingKey = getAccountingEditorCanonicalScheduleKey(week, campType)
+      const sourceKey = resolveAccountingEditorScheduleKey(student, week, campType)
+      const sourceEntry = student.schedule?.[sourceKey] || {}
       const existing = student.schedule?.[existingKey] || {
+        ...sourceEntry,
         weekId: existingKey,
-        programKey: week.programKey,
+        programKey: campType,
         campType: '',
-        days: accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
+        days:
+          typeof sourceEntry?.days === 'object' && sourceEntry.days
+            ? sourceEntry.days
+            : accountingEditorDayKeys.reduce((acc, day) => ({ ...acc, [day]: 'NONE' }), {}),
+      }
+      const nextSchedule = { ...(student.schedule || {}) }
+      const nextLunch = { ...(student.lunch || {}) }
+      for (const aliasKey of getAccountingEditorWeekKeyAliases(week)) {
+        if (aliasKey !== existingKey) {
+          delete nextSchedule[aliasKey]
+          for (const day of accountingEditorDayKeys) {
+            if (nextLunch[`${existingKey}:${day}`] === undefined && nextLunch[`${aliasKey}:${day}`] !== undefined) {
+              nextLunch[`${existingKey}:${day}`] = nextLunch[`${aliasKey}:${day}`]
+            }
+            delete nextLunch[`${aliasKey}:${day}`]
+          }
+        }
+      }
+      nextSchedule[existingKey] = {
+        ...existing,
+        weekId: existingKey,
+        programKey: campType,
+        campType,
       }
       const nextStudents = students.map((item, index) =>
         index === studentIndex
           ? {
               ...item,
-              schedule: {
-                ...(item.schedule || {}),
-                [existingKey]: {
-                  ...existing,
-                  weekId: existingKey,
-                  campType,
-                },
-              },
+              schedule: nextSchedule,
+              lunch: nextLunch,
             }
           : item
       )
@@ -7295,13 +7921,14 @@ export default function AdminPage() {
     }
 
     const rawMeta = parseMaybeJson(sourceRecord.medical_notes, {}) || {}
+    const primaryMedicalNotes = JSON.stringify({
+      ...rawMeta,
+      registration: accountingEditState.registration,
+    })
     const response = await supabase
       .from('registrations')
       .update({
-        medical_notes: JSON.stringify({
-          ...rawMeta,
-          registration: accountingEditState.registration,
-        }),
+        medical_notes: primaryMedicalNotes,
       })
       .eq('id', sourceRecord.id)
 
@@ -7311,17 +7938,60 @@ export default function AdminPage() {
       return
     }
 
+    const secondaryUpdates = []
+    if (
+      accountingEditState.row.isMergedAccountingRow &&
+      Array.isArray(accountingEditState.row.mergedSourceRows)
+    ) {
+      for (const secondaryRow of accountingEditState.row.mergedSourceRows.slice(1)) {
+        const secondaryRecord = registrationRecords.find((item) => Number(item.id) === Number(secondaryRow.registrationId))
+        if (!secondaryRecord) continue
+        const secondaryMeta = parseMaybeJson(secondaryRecord.medical_notes, {}) || {}
+        const secondaryRegistration = secondaryMeta?.registration || {}
+        const secondaryStudents = Array.isArray(secondaryRegistration.students) ? secondaryRegistration.students : []
+        if (!secondaryStudents[secondaryRow.camperIndex]) continue
+        const nextSecondaryStudents = secondaryStudents.map((student, index) =>
+          index === Number(secondaryRow.camperIndex)
+            ? {
+                ...student,
+                schedule: {},
+                lunch: {},
+              }
+            : student
+        )
+        const nextSecondaryMedicalNotes = JSON.stringify({
+          ...secondaryMeta,
+          registration: {
+            ...secondaryRegistration,
+            students: nextSecondaryStudents,
+          },
+        })
+        const secondaryResponse = await supabase
+          .from('registrations')
+          .update({ medical_notes: nextSecondaryMedicalNotes })
+          .eq('id', secondaryRecord.id)
+        if (!secondaryResponse.error) {
+          secondaryUpdates.push({
+            id: Number(secondaryRecord.id),
+            medical_notes: nextSecondaryMedicalNotes,
+          })
+        }
+      }
+    }
+
     setRegistrationRecords((current) =>
       current.map((item) =>
         Number(item.id) === Number(sourceRecord.id)
           ? {
               ...item,
-              medical_notes: JSON.stringify({
-                ...rawMeta,
-                registration: accountingEditState.registration,
-              }),
+              medical_notes: primaryMedicalNotes,
             }
-          : item
+          : secondaryUpdates.find((update) => update.id === Number(item.id))
+            ? {
+                ...item,
+                medical_notes: secondaryUpdates.find((update) => update.id === Number(item.id)).medical_notes,
+              }
+            : item
       )
     )
     setAccountingEditState({
@@ -11833,6 +12503,15 @@ export default function AdminPage() {
                     const lunchPaidValue = draft?.lunchPaidAmount ?? String(row.lunchPaidAmount ?? 0)
                     const paymentMethodValue = draft?.paymentMethod ?? row.paymentMethod
                     const archivedValue = draft?.archived ?? row.archived
+                    const previewPaymentState = deriveAccountingPaymentState({
+                      entry: {
+                        tuition_paid_amount: Number(tuitionPaidValue || 0),
+                        lunch_paid_amount: Number(lunchPaidValue || 0),
+                      },
+                      tuitionTotal: Number(row.tuitionTotal || row.totalAfterManualDiscount || 0),
+                      lunchTotal: Number(row.lunchCost || 0),
+                      manualDiscount: Number(manualDiscountValue || 0),
+                    })
                     const hasPendingAccountingChanges =
                       String(discountCampaignOverrideValue || '') !== String(row.discountCampaignOverride || '') ||
                       Number(manualDiscountValue || 0) !== Number(row.manualDiscount || 0) ||
@@ -11846,6 +12525,14 @@ export default function AdminPage() {
                         className={paymentMethodValue === 'credit-card' ? 'accountingCreditCardRow' : ''}
                       >
                         <td>
+                          <button
+                            type="button"
+                            className={`accountingMergeButton ${pendingAccountingMergeRow?.key === row.key ? 'active' : ''}`}
+                            onClick={() => handleAccountingMergeClick(row)}
+                            title="Merge this camper row with another row that has the same camper name"
+                          >
+                            Merge
+                          </button>
                           <strong>{row.parentName}</strong>
                           {row.r5SentUnpaid ? <div className="accountingAlertText">R5 sent, not paid</div> : null}
                           <div>{row.parentEmail || '-'}</div>
@@ -11853,16 +12540,20 @@ export default function AdminPage() {
                         </td>
                         <td>
                           <strong>{row.camperName}</strong>
+                          {row.isMergedAccountingRow ? (
+                            <div className="accountingMultipleRegistrationChip">Multiple registrations</div>
+                          ) : null}
                           <div>Sibling discount: {row.siblingDiscountPct}%</div>
                         </td>
                         <td>
                           <div className="accountingDetailStack">
                             {row.weeksCount > 0
-                              ? renderAccountingDetailChip(
+                                ? renderAccountingDetailChip(
                                   `${key}-weeks`,
                                   'Weeks',
                                   row.weekOverlayLines,
-                                  row.weeksCount
+                                  row.weeksCount,
+                                  row.weekSubmissionSections
                                 )
                               : null}
                             {renderAccountingScheduleChip(row)}
@@ -11938,6 +12629,14 @@ export default function AdminPage() {
                             />
                             <button
                               type="button"
+                              className="accountingInfoButton"
+                              onClick={() => openAccountingPaymentEditor(row, 'tuition')}
+                              aria-label={`Edit tuition payments for ${row.camperName}`}
+                            >
+                              Info
+                            </button>
+                            <button
+                              type="button"
                               className="accountingQuickFillBtn"
                               onClick={() => {
                                 const nextTuitionPaidAmount = Number(row.tuitionAfterManualDiscount || 0)
@@ -11948,7 +12647,7 @@ export default function AdminPage() {
                               }}
                               disabled={updatingAccountingKey === key || Number(row.tuitionOwedAmount || 0) <= 0}
                             >
-                              Use Tuition Due
+                              Due
                             </button>
                           </div>
                         </td>
@@ -11969,6 +12668,14 @@ export default function AdminPage() {
                             />
                             <button
                               type="button"
+                              className="accountingInfoButton"
+                              onClick={() => openAccountingPaymentEditor(row, 'lunch')}
+                              aria-label={`Edit lunch payments for ${row.camperName}`}
+                            >
+                              Info
+                            </button>
+                            <button
+                              type="button"
                               className="accountingQuickFillBtn"
                               onClick={() => {
                                 const nextLunchPaidAmount = Number(row.lunchCost || 0)
@@ -11979,23 +12686,23 @@ export default function AdminPage() {
                               }}
                               disabled={updatingAccountingKey === key || Number(row.lunchOwedAmount || 0) <= 0}
                             >
-                              Use Lunch Due
+                              Due
                             </button>
                           </div>
                         </td>
                         <td>
                           {renderAccountingDetailChip(
                             `${key}-total-breakdown`,
-                            money(row.owedAmount),
+                            money(previewPaymentState.totalOwedAmount),
                             [
                               ...row.totalBreakdownLines,
-                              `Paid tuition: ${money(row.tuitionPaidAmount)}`,
-                              `Paid lunch: ${money(row.lunchPaidAmount)}`,
-                              `Total paid: ${money(row.paidAmount)}`,
-                              `Tuition owed: ${money(row.tuitionOwedAmount)}`,
-                              `Lunch owed: ${money(row.lunchOwedAmount)}`,
-                              `Total owed: ${money(row.owedAmount)}`,
-                              row.shouldStopRegistrationEmails
+                              `Paid tuition: ${money(previewPaymentState.tuitionPaidAmount)}`,
+                              `Paid lunch: ${money(previewPaymentState.lunchPaidAmount)}`,
+                              `Total paid: ${money(previewPaymentState.totalPaidAmount)}`,
+                              `Tuition owed: ${money(previewPaymentState.tuitionOwedAmount)}`,
+                              `Lunch owed: ${money(previewPaymentState.lunchOwedAmount)}`,
+                              `Total owed: ${money(previewPaymentState.totalOwedAmount)}`,
+                              previewPaymentState.shouldStopRegistrationEmails
                                 ? 'Registration reminder emails paused: tuition is at least 95% paid.'
                                 : 'Registration reminder emails remain active until tuition reaches 95% paid.',
                             ]
@@ -12237,7 +12944,7 @@ export default function AdminPage() {
         {accountingOverlay.key ? (
           <div
             className="accountingOverlayWrap"
-            onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 })}
+            onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], submissionSections: [], top: 0, left: 0, pointerLeft: 24 })}
           >
             <div
               className="accountingOverlayBox"
@@ -12260,7 +12967,7 @@ export default function AdminPage() {
                 <button
                   type="button"
                   className="accountingOverlayClose"
-                  onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], top: 0, left: 0, pointerLeft: 24 })}
+                  onClick={() => setAccountingOverlay({ key: '', label: '', items: [], scheduleRows: [], submissionSections: [], top: 0, left: 0, pointerLeft: 24 })}
                   aria-label="Close accounting details"
                 >
                   Close
@@ -12294,6 +13001,30 @@ export default function AdminPage() {
                     </div>
                   ))}
                 </div>
+              ) : Array.isArray(accountingOverlay.submissionSections) && accountingOverlay.submissionSections.length > 0 ? (
+                <div className="accountingSubmissionOverlayStack">
+                  {accountingOverlay.submissionSections.map((section) => (
+                    <div key={section.key} className="accountingSubmissionOverlaySection">
+                      <div className="accountingSubmissionOverlayHeader">
+                        <strong>Registration Form Submission</strong>
+                        <span>{section.submittedAt || '-'}</span>
+                      </div>
+                      <div className="accountingOverlayList">
+                        {(section.weekChips || []).map((chip) => (
+                          <span
+                            key={`${section.key}-${chip.key}-${chip.dateLabel}`}
+                            className={`accountingOverlayItem ${chip.omitted ? 'omitted' : 'kept'}`}
+                            title={chip.omitted ? 'Duplicate week omitted from merged accounting total' : ''}
+                          >
+                            {chip.displayChipLabel || chip.chipLabel}
+                            {chip.dateLabel ? ` (${chip.dateLabel})` : ''}
+                            {chip.omitted ? ' - omitted duplicate' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="accountingOverlayList">
                   {accountingOverlay.items.map((item, index) => (
@@ -12303,6 +13034,102 @@ export default function AdminPage() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        ) : null}
+        {accountingPaymentEditor.open && accountingPaymentEditor.row ? (
+          <div
+            className="summaryOverlayBackdrop"
+            onClick={() => setAccountingPaymentEditor({ open: false, row: null, type: 'tuition', payments: [] })}
+          >
+            <div
+              className="paymentOptionsOverlayPanel accountingPaymentEditorPanel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Edit payment history"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="paymentOptionsOverlayHeader">
+                <strong>
+                  {accountingPaymentEditor.type === 'lunch' ? 'Lunch Payments' : 'Tuition Payments'}: {accountingPaymentEditor.row.camperName}
+                </strong>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setAccountingPaymentEditor({ open: false, row: null, type: 'tuition', payments: [] })}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="accountingPaymentEditorStack">
+                {(Array.isArray(accountingPaymentEditor.payments) ? accountingPaymentEditor.payments : []).map((payment) => (
+                  <div key={payment.id} className="accountingPaymentEditorRow">
+                    <label>
+                      Amount
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={payment.amount}
+                        onChange={(event) => updateAccountingPaymentDraft(payment.id, { amount: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Date
+                      <input
+                        type="date"
+                        value={payment.date}
+                        onChange={(event) => updateAccountingPaymentDraft(payment.id, { date: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Method
+                      <select
+                        value={payment.method}
+                        onChange={(event) => updateAccountingPaymentDraft(payment.id, { method: event.target.value })}
+                      >
+                        <option value="">Select</option>
+                        {accountingPaymentMethods.map((method) => (
+                          <option key={`payment-editor-method-${method}`} value={method}>
+                            {method.toUpperCase()}
+                          </option>
+                        ))}
+                      </select>
+                      {payment.legacy && !payment.method ? (
+                        <small className="accountingLegacyPaymentNote">Legacy paid amount</small>
+                      ) : null}
+                    </label>
+                  </div>
+                ))}
+                <button type="button" className="accountingInlineAddPaymentBtn" onClick={addAccountingPaymentDraftRow}>
+                  Add Payment Row
+                </button>
+              </div>
+              <div className="accountingPaymentEditorSummary">
+                <strong>
+                  Sum: {money(sumAccountingPayments(accountingPaymentEditor.payments))}
+                </strong>
+                <span>
+                  Current balance: {money(
+                    accountingPaymentEditor.type === 'lunch'
+                      ? accountingPaymentEditor.row.lunchOwedAmount
+                      : accountingPaymentEditor.row.tuitionOwedAmount
+                  )}
+                </span>
+              </div>
+              <div className="adminActions">
+                <button
+                  type="button"
+                  className="button"
+                  onClick={saveAccountingPaymentEditor}
+                  disabled={
+                    updatingAccountingKey === `${accountingPaymentEditor.row.registrationId}-${accountingPaymentEditor.row.camperIndex}` ||
+                    normalizeAccountingPayments(accountingPaymentEditor.payments).length === 0
+                  }
+                >
+                  Save Payments
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -12459,12 +13286,12 @@ export default function AdminPage() {
                 </p>
                 <div className="weekCardList">
                   {accountingEditRegistrationWeeks.map((week, weekIndex) => {
-                    const { key: entryWeekKey, entry } = getAccountingEditorScheduleEntry(accountingEditStudent, week)
+                    const { entry } = getAccountingEditorScheduleEntry(accountingEditStudent, week)
                     const weekSelectionSummary = getWeekSelectionSummary(entry, week)
                     const weekDayKeys = Array.isArray(week.days) ? week.days.map((item) => item.key) : accountingEditorDayKeys
                     const weekIsFull = weekDayKeys.every((day) => getAccountingEditorDayMode(entry, day) === 'FULL')
                     const selectedCampType = entry?.campType || ''
-                    const panelKey = `${accountingEditState.row.key}:${entryWeekKey || week.id}`
+                    const panelKey = `${accountingEditState.row.key}:${week.id}`
                     const expanded = accountingEditState.expandedWeekKey === panelKey
                     const hasSelection = weekDayKeys.some((day) => getAccountingEditorDayMode(entry, day) !== 'NONE')
 
@@ -12670,6 +13497,54 @@ export default function AdminPage() {
             </div>
           </div>
         ) : null}
+        <div className="accountingTableSection">
+          <div className="accountingSectionHeader">
+            <h3>Add Overnight Student</h3>
+            <p className="subhead">Add a student manually, then select their overnight weeks.</p>
+          </div>
+          <div className="manualOvernightAccountingForm">
+            <label>
+              Student Name
+              <input
+                type="text"
+                value={manualOvernightAccountingDraft.studentName}
+                onChange={(event) =>
+                  setManualOvernightAccountingDraft((current) => ({
+                    ...current,
+                    studentName: event.target.value,
+                  }))
+                }
+                placeholder="Student name"
+              />
+            </label>
+            <div className="manualOvernightWeekPicker">
+              <span>Weeks</span>
+              <div className="overnightWeekCheckboxes accountingCompact">
+                {weekOptions.overnight.map((week) => {
+                  const checked = manualOvernightAccountingDraft.weekIds.includes(week.id)
+                  return (
+                    <label key={`manual-overnight-week-${week.id}`} className="overnightWeekCheckbox accountingCompact">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleManualOvernightAccountingWeek(week.id)}
+                      />
+                      <span>{formatWeekLabel(week)}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="button"
+              onClick={addManualOvernightAccountingRow}
+              disabled={updatingAccountingKey === 'manual-overnight-new-row'}
+            >
+              {updatingAccountingKey === 'manual-overnight-new-row' ? 'Adding...' : 'Add Overnight Row'}
+            </button>
+          </div>
+        </div>
         <div className="accountingTableSection">
           <div className="accountingSectionHeader">
             <h3>Active Overnight Rows</h3>
