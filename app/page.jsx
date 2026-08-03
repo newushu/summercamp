@@ -85,7 +85,6 @@ const DAY_CAMP_WEEKLY_POINTS = 2500
 const DAY_CAMP_FULL_DAY_POINTS = 500
 const DAY_CAMP_HALF_DAY_POINTS = 100
 const OVERNIGHT_WEEKLY_POINTS = 5000
-const OVERNIGHT_SIBLING_DISCOUNT_PCT = 5
 const DISCOUNT_BANNER_HOLD_DATE = '2026-07-01'
 const DISCOUNT_BANNER_PREVIEW_DATE = ROUND_THREE_DISCOUNT_END_DATE
 const DAY_CAMP_START_TIME = '8:30 AM'
@@ -7657,8 +7656,7 @@ export default function HomePage() {
             (address TBA). Outings and external activity costs are charged separately.
           </p>
           <p>
-            Train More, Save More does not apply to the overnight wushu program. If a second sibling enrolls, the overnight sibling
-            discount is {OVERNIGHT_SIBLING_DISCOUNT_PCT}% off that second student&apos;s program tuition.
+            Train More, Save More and the sibling discount do not apply to the overnight wushu program.
           </p>
           <p>
             Capacity: <strong>12 students max per overnight week.</strong>
