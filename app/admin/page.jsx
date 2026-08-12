@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   buildProgramWeekOptions,
+  createEmptySeasonSettings,
   defaultAdminConfig,
   formatWeekLabel,
   getLimitedDiscountCampaigns,
@@ -33,7 +34,24 @@ import {
   PAYMENT_METHODS_TEXT,
   buildReservationJourneyMessage,
 } from '../../lib/emailJourneyRenderer'
-import { getWeekTierPromoDisplayLines, getWeekTierPromoForStudent } from '../../lib/campPricing'
+import {
+  countWeekTierPromoClaims,
+  getWeekTierPromoDisplayLines,
+  getWeekTierPromoForStudent,
+  getWeekTierPromoQuotaStatus,
+  WEEK_TIER_PROMO_MIN_FULL_WEEKS,
+  WEEK_TIER_PROMO_QUOTA,
+} from '../../lib/campPricing'
+import {
+  getSeasonCampDates,
+  getSeasonDiscountRounds,
+  getSeasonTuition,
+  getSeasonWeeks,
+  getSeasonYears,
+  resolveSeasonRound,
+  resolveSeasonYear,
+  SEASON_SIMULATION_PARAM,
+} from '../../lib/campSeasons'
 import {
   EARLY_BIRD_R2_JOURNEY_TYPE,
   EARLY_BIRD_R2_STEPS,
@@ -1529,6 +1547,7 @@ function buildJourneyProcessStepChips(stepCounts = {}, flow = 'reservation') {
 const adminTabBlueprint = [
   { id: 'media', label: 'Media' },
   { id: 'tuition', label: 'Tuition' },
+  { id: 'seasons', label: 'Seasons & Year Pricing' },
   { id: 'programs', label: 'Programs' },
   { id: 'journey', label: 'Email Journey' },
   { id: 'accounting', label: 'Registration Accounting' },
@@ -1545,6 +1564,29 @@ const mediaSubtabBlueprint = [
   { id: 'levelup', label: 'Level Up Viewport' },
   { id: 'steps', label: 'Survey/Reg/Overnight' },
   { id: 'library', label: 'Media Library' },
+]
+
+const seasonSubtabBlueprint = [
+  { id: 'pricing', label: 'Year Pricing' },
+  { id: 'rounds', label: 'Discount Rounds' },
+  { id: 'promo', label: 'Train More, Save More' },
+  { id: 'hero', label: 'Hero Banner' },
+]
+
+const seasonPricingRows = [
+  ['fullWeek', 'General Full Week'],
+  ['fullDay', 'General Full Day'],
+  ['amHalf', 'AM Half Day'],
+  ['pmHalf', 'PM Half Day'],
+  ['overnightWeek', 'Overnight Full Week'],
+  ['overnightDay', 'Overnight Camp Day'],
+]
+
+const seasonBootcampRows = [
+  ['fullWeek', 'Boot Camp Full Week'],
+  ['fullDay', 'Boot Camp Full Day'],
+  ['amHalf', 'Boot Camp AM Half Day'],
+  ['pmHalf', 'Boot Camp PM Half Day'],
 ]
 
 const accountingSubtabBlueprint = [
@@ -2978,6 +3020,8 @@ export default function AdminPage() {
   const [config, setConfig] = useState(getInitialState)
   const [activeAdminTab, setActiveAdminTab] = useState('media')
   const [activeMediaSubtab, setActiveMediaSubtab] = useState('overview')
+  const [activeSeasonSubtab, setActiveSeasonSubtab] = useState('pricing')
+  const [activeSeasonYear, setActiveSeasonYear] = useState(() => resolveSeasonYear(new Date()))
   const [activeJourneyTab, setActiveJourneyTab] = useState(0)
   const [activeJourneyFlow, setActiveJourneyFlow] = useState('lead')
   const [activeReservationJourneyTab, setActiveReservationJourneyTab] = useState(0)
@@ -3333,6 +3377,72 @@ export default function AdminPage() {
       }
     })
   }, [config.tuition, limitedDiscountCampaigns])
+  const seasonYears = useMemo(() => getSeasonYears(new Date()), [])
+  const liveSeasonYear = useMemo(() => resolveSeasonYear(new Date()), [])
+  const seasonYearInFocus = seasonYears.includes(activeSeasonYear) ? activeSeasonYear : seasonYears[0]
+  const seasonOverrides = config.seasonSettings?.[String(seasonYearInFocus)] || createEmptySeasonSettings()
+  const seasonEffectiveTuition = useMemo(
+    () => getSeasonTuition(config, seasonYearInFocus),
+    [config, seasonYearInFocus]
+  )
+  const seasonEffectiveBootcamp = useMemo(
+    () => resolveBootcampTuition(seasonEffectiveTuition),
+    [seasonEffectiveTuition]
+  )
+  // Live Train More, Save More claims per season, counted the same way the public
+  // site counts them: one slot per camper enrolled in 4+ full day-camp weeks.
+  const seasonPromoClaims = useMemo(() => {
+    const byYear = {}
+    for (const year of seasonYears) {
+      let claimed = 0
+      const campers = []
+      for (const record of registrationRecords) {
+        const rawMeta = parseMaybeJson(record.medical_notes, {}) || {}
+        if (String(rawMeta?.registrationType || '').trim() === 'overnight') {
+          continue
+        }
+        const students = Array.isArray(rawMeta?.registration?.students) ? rawMeta.registration.students : []
+        const recordClaims = countWeekTierPromoClaims(students, null, { seasonYear: year })
+        if (recordClaims > 0) {
+          claimed += recordClaims
+          campers.push({
+            id: record.id,
+            parentName: rawMeta?.registration?.parentName || record.guardian_name || 'Parent/Guardian',
+            email: rawMeta?.registration?.contactEmail || record.guardian_email || '',
+            claims: recordClaims,
+          })
+        }
+      }
+      byYear[year] = { ...getWeekTierPromoQuotaStatus(claimed), rawClaimed: claimed, campers }
+    }
+    return byYear
+  }, [registrationRecords, seasonYears])
+  const seasonRoundRows = useMemo(
+    () =>
+      seasonYears.map((year) => {
+        const rounds = getSeasonDiscountRounds(year, {
+          discountEndDate: config.tuition.discountEndDate,
+          programConfig: config.programs.general,
+        })
+        const campDates = getSeasonCampDates(config.programs.general, year)
+        const weeks = getSeasonWeeks('general', config.programs.general, year)
+        const usesAdminWeeks = getSelectedWeeks('general', config.programs.general).some(
+          (week) => String(week.start).slice(0, 4) === String(year)
+        )
+        return {
+          year,
+          rounds,
+          campDates,
+          weekCount: weeks.length,
+          usesAdminWeeks,
+          activeRound: resolveSeasonRound(year, new Date(), {
+            discountEndDate: config.tuition.discountEndDate,
+            programConfig: config.programs.general,
+          }),
+        }
+      }),
+    [config.programs.general, config.tuition.discountEndDate, seasonYears]
+  )
   const accountingPricingReference = useMemo(() => {
     const regular = config.tuition.regular || {}
     const discount = config.tuition.discount || {}
@@ -9072,6 +9182,88 @@ export default function AdminPage() {
     }))
   }
 
+  /**
+   * Season overrides are sparse: a 0 or blank value means "inherit the base
+   * tuition table", so the admin only types the numbers that change that year.
+   */
+  function updateSeasonSetting(year, updater) {
+    const key = String(year)
+    setConfig((current) => {
+      const existing = current.seasonSettings?.[key] || createEmptySeasonSettings()
+      return {
+        ...current,
+        seasonSettings: {
+          ...(current.seasonSettings || {}),
+          [key]: updater(existing),
+        },
+      }
+    })
+  }
+
+  function updateSeasonPrice(year, group, field, value) {
+    const amount = value === '' ? 0 : Math.max(0, Number(value) || 0)
+    updateSeasonSetting(year, (entry) => ({
+      ...entry,
+      tuition: {
+        ...entry.tuition,
+        ...(group === 'bootcamp'
+          ? {
+              bootcamp: {
+                ...entry.tuition.bootcamp,
+                regular: { ...entry.tuition.bootcamp.regular, [field]: amount },
+              },
+            }
+          : { regular: { ...entry.tuition.regular, [field]: amount } }),
+      },
+    }))
+  }
+
+  function updateSeasonLunchPrice(year, value) {
+    const amount = value === '' ? 0 : Math.max(0, Number(value) || 0)
+    updateSeasonSetting(year, (entry) => ({
+      ...entry,
+      tuition: { ...entry.tuition, lunchPrice: amount },
+    }))
+  }
+
+  function updateSeasonField(year, field, value) {
+    updateSeasonSetting(year, (entry) => ({ ...entry, [field]: value }))
+  }
+
+  function clearSeasonOverrides(year) {
+    updateSeasonSetting(year, (entry) => ({
+      ...createEmptySeasonSettings(),
+      heroBannerImageUrl: entry.heroBannerImageUrl,
+      heroBannerVideoUrl: entry.heroBannerVideoUrl,
+      heroBannerHeadline: entry.heroBannerHeadline,
+      heroBannerSubhead: entry.heroBannerSubhead,
+    }))
+  }
+
+  function copySeasonPricesFromBase(year) {
+    updateSeasonSetting(year, (entry) => {
+      const baseBootcamp = resolveBootcampTuition(config.tuition)
+      const readAmount = (value) => Math.max(0, Number(value) || 0)
+      return {
+        ...entry,
+        tuition: {
+          ...entry.tuition,
+          regular: seasonPricingRows.reduce(
+            (acc, [key]) => ({ ...acc, [key]: readAmount(config.tuition.regular?.[key]) }),
+            {}
+          ),
+          bootcamp: {
+            regular: seasonBootcampRows.reduce(
+              (acc, [key]) => ({ ...acc, [key]: readAmount(baseBootcamp.regular?.[key]) }),
+              {}
+            ),
+          },
+          lunchPrice: readAmount(config.tuition.lunchPrice),
+        },
+      }
+    })
+  }
+
   function updateTuitionField(field, value) {
     setConfig((current) => ({
       ...current,
@@ -9382,10 +9574,14 @@ export default function AdminPage() {
     setErrorMessage('')
 
     const error = await saveAdminConfigToSupabase(config)
-    if (error) {
+    if (error && !error.isWarning) {
       setErrorMessage(`Save failed: ${error.message}`)
       setSaving(false)
       return
+    }
+
+    if (error?.isWarning) {
+      setErrorMessage(error.message)
     }
 
     setSavedMessage(`Saved ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`)
@@ -10993,6 +11189,19 @@ export default function AdminPage() {
 	                      >
 	                        Use as hero
                       </button>
+                      {seasonYears.map((year) => (
+                        <button
+                          key={`hero-banner-${year}-${item.path}`}
+                          type="button"
+                          className={`button secondary ${
+                            config.seasonSettings?.[String(year)]?.heroBannerImageUrl === item.publicUrl ? 'active' : ''
+                          }`}
+                          onClick={() => updateSeasonField(year, 'heroBannerImageUrl', item.publicUrl)}
+                        >
+                          {config.seasonSettings?.[String(year)]?.heroBannerImageUrl === item.publicUrl ? '✓ ' : ''}
+                          Hero banner {year}
+                        </button>
+                      ))}
 	                      <button
 	                        type="button"
 	                        className="button secondary"
@@ -11342,6 +11551,297 @@ export default function AdminPage() {
             </tbody>
           </table>
         </div>
+      </section>
+      ) : null}
+
+      {activeAdminTab === 'seasons' ? (
+      <section className="card section">
+        <h2>Seasons &amp; year pricing</h2>
+        <p className="subhead">
+          The public site rolls to the next summer on <strong>October 1</strong>. Season {liveSeasonYear} is live right
+          now. Weeks default to the last full week of June plus every full Monday-Friday week of July and August; any
+          weeks you publish in the Programs tab for that year override the default.
+        </p>
+        <div className="adminSubTabs" role="tablist" aria-label="Season year">
+          {seasonYears.map((year) => (
+            <button
+              key={`season-year-${year}`}
+              type="button"
+              role="tab"
+              aria-selected={seasonYearInFocus === year}
+              className={`adminSubTabBtn ${seasonYearInFocus === year ? 'active' : ''}`}
+              onClick={() => setActiveSeasonYear(year)}
+            >
+              {year}
+              {year === liveSeasonYear ? ' (live)' : ''}
+            </button>
+          ))}
+        </div>
+        <div className="adminSubTabs" role="tablist" aria-label="Season sections">
+          {seasonSubtabBlueprint.map((tab) => (
+            <button
+              key={`season-subtab-${tab.id}`}
+              type="button"
+              role="tab"
+              aria-selected={activeSeasonSubtab === tab.id}
+              className={`adminSubTabBtn ${activeSeasonSubtab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveSeasonSubtab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeSeasonSubtab === 'pricing' ? (
+        <div className="tuitionTableWrap">
+          <h3>Summer {seasonYearInFocus} prices</h3>
+          <p className="subhead">
+            Leave a field at <code>0</code> to inherit the base Tuition tab price. Discounted prices are derived from the
+            active discount round, so you only maintain the regular price for each year.
+          </p>
+          <div className="adminActions">
+            <button type="button" className="button secondary" onClick={() => copySeasonPricesFromBase(seasonYearInFocus)}>
+              Copy current base prices into {seasonYearInFocus}
+            </button>
+            <button type="button" className="button secondary" onClick={() => clearSeasonOverrides(seasonYearInFocus)}>
+              Clear {seasonYearInFocus} overrides
+            </button>
+          </div>
+          <table className="tuitionTable">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>{seasonYearInFocus} override</th>
+                <th>Base price</th>
+                <th>Effective for {seasonYearInFocus}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {seasonPricingRows.map(([key, label]) => (
+                <tr key={`season-price-${key}`}>
+                  <td>{label}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={seasonOverrides.tuition.regular[key] || 0}
+                      onChange={(event) => updateSeasonPrice(seasonYearInFocus, 'regular', key, event.target.value)}
+                    />
+                  </td>
+                  <td>{money(config.tuition.regular?.[key])}</td>
+                  <td>
+                    <strong>{money(seasonEffectiveTuition.regular?.[key])}</strong>
+                  </td>
+                </tr>
+              ))}
+              {seasonBootcampRows.map(([key, label]) => (
+                <tr key={`season-boot-${key}`}>
+                  <td>{label}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={seasonOverrides.tuition.bootcamp.regular[key] || 0}
+                      onChange={(event) => updateSeasonPrice(seasonYearInFocus, 'bootcamp', key, event.target.value)}
+                    />
+                  </td>
+                  <td>{money(bootcampTuition.regular?.[key])}</td>
+                  <td>
+                    <strong>{money(seasonEffectiveBootcamp.regular?.[key])}</strong>
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>Lunch (per day)</td>
+                <td>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={seasonOverrides.tuition.lunchPrice || 0}
+                    onChange={(event) => updateSeasonLunchPrice(seasonYearInFocus, event.target.value)}
+                  />
+                </td>
+                <td>{money(config.tuition.lunchPrice)}</td>
+                <td>
+                  <strong>{money(seasonEffectiveTuition.lunchPrice)}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        ) : null}
+
+        {activeSeasonSubtab === 'rounds' ? (
+        <div className="tuitionTableWrap">
+          <h3>Discount rounds by season</h3>
+          <p className="subhead">
+            Round 1 opens October 1 of the prior year and runs to one month before day 1. Round 2 runs from there through
+            day 1 itself. Round 3 starts the day after camp begins and runs to the last day of the season. Summer{' '}
+            {seasonYears[0] === 2026 ? '2026 keeps its originally published dates.' : 'dates are generated from the calendar.'}
+          </p>
+          {seasonRoundRows.map((row) => (
+            <div key={`season-rounds-${row.year}`} className="tuitionTableWrap">
+              <h4>
+                Summer {row.year} · {row.campDates.startDate} to {row.campDates.endDate} · {row.weekCount} weeks{' '}
+                {row.usesAdminWeeks ? '(admin-published weeks)' : '(auto-generated calendar)'}
+              </h4>
+              <table className="tuitionTable">
+                <thead>
+                  <tr>
+                    <th>Round</th>
+                    <th>Starts</th>
+                    <th>Ends</th>
+                    <th>Weekly discount</th>
+                    <th>Status</th>
+                    <th>Preview</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {row.rounds.map((round) => (
+                    <tr key={`season-round-${row.year}-${round.id}`}>
+                      <td>{round.name}</td>
+                      <td>{round.startsAt || '-'}</td>
+                      <td>{round.endsAt || '-'}</td>
+                      <td>{money(round.fullWeekDiscountAmount)}</td>
+                      <td>{row.activeRound?.id === round.id ? 'LIVE NOW' : ''}</td>
+                      <td>
+                        <a
+                          className="button secondary"
+                          href={`/?${SEASON_SIMULATION_PARAM}=${round.startsAt || row.campDates.startDate}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open site on this date
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+        ) : null}
+
+        {activeSeasonSubtab === 'promo' ? (
+        <div className="tuitionTableWrap">
+          <h3>Train More, Save More claims</h3>
+          <p className="subhead">
+            Live count from submitted registrations. A camper claims one of the {WEEK_TIER_PROMO_QUOTA} spots by
+            enrolling in {WEEK_TIER_PROMO_MIN_FULL_WEEKS} or more full Monday-Friday day-camp weeks in that season.
+            Overnight registrations never count. Once a season hits {WEEK_TIER_PROMO_QUOTA}, the public site stops
+            applying the discount to new registrations.
+          </p>
+          {loadingAccounting ? <p className="subhead">Loading registrations...</p> : null}
+          <table className="tuitionTable">
+            <thead>
+              <tr>
+                <th>Season</th>
+                <th>Claimed</th>
+                <th>Remaining</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {seasonYears.map((year) => {
+                const claims = seasonPromoClaims[year] || getWeekTierPromoQuotaStatus(0)
+                return (
+                  <tr key={`season-promo-${year}`}>
+                    <td>Summer {year}</td>
+                    <td>
+                      {claims.claimed} / {WEEK_TIER_PROMO_QUOTA}
+                      {claims.rawClaimed > WEEK_TIER_PROMO_QUOTA
+                        ? ` (${claims.rawClaimed} campers qualify)`
+                        : ''}
+                    </td>
+                    <td>{claims.remaining}</td>
+                    <td className={`checkCell ${claims.soldOut ? 'warn' : 'pass'}`}>
+                      <div className={`checkBadge ${claims.soldOut ? 'warn' : 'pass'}`}>
+                        {claims.soldOut ? 'FULLY CLAIMED' : 'OPEN'}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <h4>Who claimed a spot in Summer {seasonYearInFocus}</h4>
+          {(seasonPromoClaims[seasonYearInFocus]?.campers || []).length === 0 ? (
+            <p className="subhead">No registration has claimed a spot for this season yet.</p>
+          ) : (
+            <table className="tuitionTable">
+              <thead>
+                <tr>
+                  <th>Registration</th>
+                  <th>Parent</th>
+                  <th>Email</th>
+                  <th>Campers claiming</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(seasonPromoClaims[seasonYearInFocus]?.campers || []).map((row) => (
+                  <tr key={`promo-claim-${row.id}`}>
+                    <td>#{row.id}</td>
+                    <td>{row.parentName}</td>
+                    <td>{row.email}</td>
+                    <td>{row.claims}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        ) : null}
+
+        {activeSeasonSubtab === 'hero' ? (
+        <div className="adminGrid">
+          <label>
+            {seasonYearInFocus} hero banner image URL
+            <input
+              type="url"
+              value={seasonOverrides.heroBannerImageUrl}
+              onChange={(event) => updateSeasonField(seasonYearInFocus, 'heroBannerImageUrl', event.target.value)}
+              placeholder="Leave blank to use the Media tab hero image"
+            />
+            {renderBucketImagePicker(
+              `${seasonYearInFocus} hero banner`,
+              seasonOverrides.heroBannerImageUrl,
+              (value) => updateSeasonField(seasonYearInFocus, 'heroBannerImageUrl', value)
+            )}
+          </label>
+          <label>
+            {seasonYearInFocus} hero YouTube link
+            <input
+              type="url"
+              value={seasonOverrides.heroBannerVideoUrl}
+              onChange={(event) => updateSeasonField(seasonYearInFocus, 'heroBannerVideoUrl', event.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
+            />
+            <small>Shown as an embedded player beside the hero copy. Leave blank to hide the player.</small>
+          </label>
+          <label>
+            {seasonYearInFocus} hero headline
+            <input
+              value={seasonOverrides.heroBannerHeadline}
+              onChange={(event) => updateSeasonField(seasonYearInFocus, 'heroBannerHeadline', event.target.value)}
+              placeholder={`Registration is open for Summer ${seasonYearInFocus}.`}
+            />
+          </label>
+          <label>
+            {seasonYearInFocus} hero subhead
+            <textarea
+              rows="2"
+              value={seasonOverrides.heroBannerSubhead}
+              onChange={(event) => updateSeasonField(seasonYearInFocus, 'heroBannerSubhead', event.target.value)}
+              placeholder="Leave blank to auto-fill with dates, ages, and locations"
+            />
+          </label>
+        </div>
+        ) : null}
       </section>
       ) : null}
 

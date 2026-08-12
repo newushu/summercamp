@@ -11327,3 +11327,378 @@ textarea:focus {
     backdrop-filter: blur(2px);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Season hero banner
+--------------------------------------------------------------------------- */
+
+.seasonHeroBanner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 26px;
+  margin-bottom: 1.1rem;
+  min-height: 300px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.18);
+}
+
+.seasonHeroBannerImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.seasonHeroBannerScrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.66) 52%, rgba(15, 23, 42, 0.3) 100%);
+}
+
+.seasonHeroBannerInner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 1.6rem;
+  align-items: center;
+  padding: 2.1rem 2.2rem;
+}
+
+.seasonHeroBannerCopy {
+  display: grid;
+  gap: 0.6rem;
+  color: #f8fafc;
+}
+
+.seasonHeroBannerEyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #bfdbfe;
+}
+
+.seasonHeroBannerCopy h2 {
+  margin: 0;
+  font-family: 'Sora', 'Manrope', 'Avenir Next', sans-serif;
+  font-size: clamp(1.55rem, 3.2vw, 2.35rem);
+  line-height: 1.15;
+  color: #ffffff;
+}
+
+.seasonHeroBannerSubhead {
+  margin: 0;
+  color: #dbeafe;
+  font-weight: 600;
+}
+
+.seasonHeroBannerRibbon {
+  justify-self: start;
+  margin: 0.15rem 0 0;
+  border-radius: 999px;
+  padding: 0.32rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: rgba(148, 163, 184, 0.28);
+  color: #e2e8f0;
+}
+
+.seasonHeroBannerRibbon.active {
+  background: linear-gradient(120deg, #f59e0b 0%, #fbbf24 100%);
+  color: #451a03;
+}
+
+.seasonHeroBannerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+.seasonHeroBannerCta {
+  padding: 0.78rem 1.5rem;
+}
+
+.seasonHeroBannerLink {
+  color: #bfdbfe;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.seasonHeroBannerVideo {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.45);
+}
+
+.seasonHeroBannerVideo iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+@media (max-width: 860px) {
+  .seasonHeroBannerInner {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 1.5rem 1.3rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Late pickup policy
+--------------------------------------------------------------------------- */
+
+.latePickupPolicyCard {
+  margin-top: 0.95rem;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 18px;
+  padding: 1rem 1.1rem;
+  background: linear-gradient(145deg, #fff5f5 0%, #fffafa 100%);
+  display: grid;
+  gap: 0.4rem;
+}
+
+.latePickupPolicyCard .pricingLabel {
+  color: #b91c1c;
+}
+
+.latePickupPolicyCard strong {
+  font-family: 'Sora', 'Manrope', 'Avenir Next', sans-serif;
+  font-size: 1.05rem;
+  color: #7f1d1d;
+}
+
+.latePickupPolicyCard p {
+  margin: 0;
+  color: #7f1d1d;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.latePickupLadder {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.5rem;
+}
+
+.latePickupLadder li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 12px;
+  padding: 0.5rem 0.7rem;
+  background: #ffffff;
+  color: #7f1d1d;
+  font-weight: 700;
+}
+
+.latePickupLadder li strong {
+  font-size: 0.98rem;
+}
+
+.latePickupLadderMore {
+  background: rgba(254, 226, 226, 0.6);
+}
+
+/* ---------------------------------------------------------------------------
+   Admin-only date simulator
+--------------------------------------------------------------------------- */
+
+.seasonSimBar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  margin-bottom: 0.8rem;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 0.7rem 0.9rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  display: grid;
+  gap: 0.55rem;
+  box-shadow: 0 12px 26px rgba(2, 6, 23, 0.28);
+}
+
+.seasonSimBar.active {
+  border-color: #f59e0b;
+  background: #1c1917;
+}
+
+.seasonSimBarHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.seasonSimBarTag {
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+}
+
+.seasonSimBar.active .seasonSimBarTag {
+  background: #f59e0b;
+  color: #431407;
+}
+
+.seasonSimBarHead strong {
+  font-family: 'Sora', 'Manrope', 'Avenir Next', sans-serif;
+  font-size: 1rem;
+}
+
+.seasonSimBarMeta {
+  flex: 1 1 260px;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.seasonSimBarHead input[type='date'] {
+  border: 1px solid #475569;
+  border-radius: 10px;
+  padding: 0.34rem 0.5rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font: inherit;
+}
+
+.seasonSimBarReset,
+.seasonSimBarHide {
+  border: 1px solid #475569;
+  border-radius: 10px;
+  padding: 0.36rem 0.7rem;
+  background: transparent;
+  color: #e2e8f0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.seasonSimBarReset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.seasonSimBarChecks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.seasonSimChip {
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 0.32rem 0.6rem;
+  background: #1e293b;
+  color: #cbd5e1;
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.seasonSimChip span {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.seasonSimChip small {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.seasonSimChip.active {
+  border-color: #f59e0b;
+  background: #451a03;
+  color: #fef3c7;
+}
+
+.seasonSimChip.active small {
+  color: #fcd34d;
+}
+
+.seasonSimBarPill {
+  position: fixed;
+  top: 0.6rem;
+  left: 0.6rem;
+  z-index: 60;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-weight: 700;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.seasonRoundTimeline {
+  margin-top: 0.95rem;
+  border: 1px solid rgba(191, 219, 254, 0.9);
+  border-radius: 18px;
+  padding: 1rem 1.1rem;
+  background: linear-gradient(145deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.seasonRoundTimeline ol {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
+}
+
+.seasonRoundTimeline li {
+  display: grid;
+  gap: 0.15rem;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-left: 4px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+  background: #ffffff;
+}
+
+.seasonRoundTimeline li.live {
+  border-color: rgba(251, 191, 36, 0.75);
+  border-left-color: #f59e0b;
+  background: linear-gradient(150deg, #fffbeb 0%, #fffdf7 100%);
+}
+
+.seasonRoundTimeline li strong {
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.seasonRoundTimeline li span {
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+
+.seasonRoundTimeline li em {
+  color: #1d4ed8;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+
+.seasonRoundTimeline li.live em {
+  color: #b45309;
+}

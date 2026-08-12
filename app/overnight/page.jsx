@@ -4,13 +4,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   defaultAdminConfig,
   formatWeekLabel,
-  getSelectedWeeks,
   getTuitionForDiscountCampaign,
-  LIMITED_DISCOUNT_CAMPAIGN_IDS,
   mergeAdminConfig,
-  ROUND_THREE_DISCOUNT_END_DATE,
   ROUND_THREE_FULL_WEEK_DISCOUNT_AMOUNT,
 } from '../../lib/campAdmin'
+import {
+  getSeasonRoundCountdownTarget,
+  getSeasonTuition,
+  getSeasonWeeks,
+  resolveSeasonRound,
+  resolveSeasonYear,
+} from '../../lib/campSeasons'
+import SeasonSimulatorBar, { useAdminDateSimulation } from '../components/SeasonSimulatorBar'
 import { fetchAdminConfigFromSupabase } from '../../lib/campAdminApi'
 import { buildPaymentPageHref } from '../../lib/paymentPageLink'
 import { publicWushuCopy } from '../../lib/publicWushuCopy'
@@ -23,8 +28,6 @@ const OVERNIGHT_SECOND_WEEK_EXTRA_DISCOUNT = 0
 const OVERNIGHT_WEEKLY_POINTS = 5000
 const OVERNIGHT_POINTS_USE_COPY = 'Points can be saved for prizes, equipment, and future discounts during fall or spring season.'
 const OVERNIGHT_REGISTRATION_DRAFT_KEY = 'new-england-wushu-overnight-registration-draft-v1'
-const DISCOUNT_BANNER_HOLD_DATE = '2026-07-01'
-const DISCOUNT_BANNER_PREVIEW_DATE = ROUND_THREE_DISCOUNT_END_DATE
 const overnightRegistrationSteps = [
   { id: 1, title: 'Family & students' },
   { id: 2, title: 'Choose weeks' },
@@ -274,22 +277,6 @@ function parseDateLocal(input) {
   return parsed
 }
 
-function getDisplayedDiscountEndDate(rawEndDate, nowDate) {
-  const actual = String(rawEndDate || '').trim()
-  if (!actual) {
-    return ROUND_THREE_DISCOUNT_END_DATE
-  }
-  const switchDate = parseDateLocal(DISCOUNT_BANNER_HOLD_DATE)
-  const now = nowDate instanceof Date ? nowDate : null
-  if (!switchDate || !now || Number.isNaN(now.getTime())) {
-    return actual < ROUND_THREE_DISCOUNT_END_DATE ? ROUND_THREE_DISCOUNT_END_DATE : actual
-  }
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const switchPoint = new Date(switchDate.getFullYear(), switchDate.getMonth(), switchDate.getDate())
-  const normalizedActual = actual < ROUND_THREE_DISCOUNT_END_DATE ? ROUND_THREE_DISCOUNT_END_DATE : actual
-  return today.getTime() >= switchPoint.getTime() ? normalizedActual : DISCOUNT_BANNER_PREVIEW_DATE
-}
-
 function calcAge(dob) {
   const parsed = parseDateLocal(dob)
   if (!parsed) {
@@ -417,24 +404,32 @@ export function OvernightCampPage({ view = 'landing' }) {
     }
   }, [])
 
+  // Season engine: which summer this visitor is shopping, and which discount
+  // round is live on that summer's calendar.
+  const {
+    isAdmin: isAdminViewer,
+    simulatedDate,
+    setSimulatedDate,
+    applySimulation,
+  } = useAdminDateSimulation()
+  const seasonNow = useMemo(() => applySimulation(new Date(countdownNow)), [applySimulation, countdownNow])
+  const seasonYear = useMemo(() => resolveSeasonYear(seasonNow), [seasonNow])
+  const seasonTuition = useMemo(() => getSeasonTuition(config, seasonYear), [config, seasonYear])
+  const seasonRoundOptions = useMemo(
+    () => ({ discountEndDate: seasonTuition.discountEndDate, programConfig: config.programs.general }),
+    [config.programs.general, seasonTuition.discountEndDate]
+  )
+  const activeSeasonRound = useMemo(
+    () => resolveSeasonRound(seasonYear, seasonNow, seasonRoundOptions),
+    [seasonNow, seasonRoundOptions, seasonYear]
+  )
   const overnightWeeks = useMemo(
-    () => getSelectedWeeks('overnight', config.programs.overnight),
-    [config.programs.overnight]
+    () => getSeasonWeeks('overnight', config.programs.overnight, seasonYear),
+    [config.programs.overnight, seasonYear]
   )
-  const displayedDiscountEndDate = useMemo(
-    () => getDisplayedDiscountEndDate(config.tuition.discountEndDate, new Date(countdownNow)),
-    [config.tuition.discountEndDate, countdownNow]
-  )
-  const discountActive = useMemo(() => {
-    const end = parseDateLocal(displayedDiscountEndDate)
-    if (!end) {
-      return false
-    }
-    const now = new Date(countdownNow)
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    return today <= end
-  }, [countdownNow, displayedDiscountEndDate])
-  const activeDiscountCampaignId = discountActive ? LIMITED_DISCOUNT_CAMPAIGN_IDS.ROUND_THREE : ''
+  const displayedDiscountEndDate = activeSeasonRound?.endsAt || ''
+  const discountActive = Boolean(activeSeasonRound)
+  const activeDiscountCampaignId = activeSeasonRound?.id || ''
   useEffect(() => {
     if (!discountActive) {
       return undefined
@@ -444,12 +439,11 @@ export function OvernightCampPage({ view = 'landing' }) {
   }, [discountActive])
   const overnightDiscountCountdown = useMemo(() => {
     const end = parseDateLocal(displayedDiscountEndDate)
-    if (!discountActive || !end) {
+    const endOfDay = getSeasonRoundCountdownTarget(activeSeasonRound)
+    if (!discountActive || !end || !endOfDay) {
       return null
     }
-    const endOfDay = new Date(end)
-    endOfDay.setHours(23, 59, 59, 999)
-    const remainingMs = Math.max(0, endOfDay.getTime() - countdownNow)
+    const remainingMs = Math.max(0, endOfDay.getTime() - seasonNow.getTime())
     const totalSeconds = Math.floor(remainingMs / 1000)
     const days = Math.floor(totalSeconds / 86400)
     const hours = Math.floor((totalSeconds % 86400) / 3600)
@@ -462,23 +456,23 @@ export function OvernightCampPage({ view = 'landing' }) {
       seconds,
       endLabel: end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     }
-  }, [countdownNow, discountActive, displayedDiscountEndDate])
+  }, [activeSeasonRound, discountActive, displayedDiscountEndDate, seasonNow])
   const displayedDiscountEndDateLabel = useMemo(() => {
     const end = parseDateLocal(displayedDiscountEndDate)
     return end ? end.toLocaleDateString('en-US', { month: 'long', day: 'numeric' }) : 'the discount deadline'
   }, [displayedDiscountEndDate])
   const overnightRegularWeekPrice = useMemo(
-    () => normalizeOvernightRegularWeekPrice(config.tuition.regular.overnightWeek),
-    [config.tuition.regular.overnightWeek]
+    () => normalizeOvernightRegularWeekPrice(seasonTuition.regular.overnightWeek),
+    [seasonTuition.regular.overnightWeek]
   )
   const overnightDiscountWeekPrice = useMemo(
     () => {
       const effectiveTuition = activeDiscountCampaignId
-        ? getTuitionForDiscountCampaign(config.tuition, activeDiscountCampaignId)
-        : config.tuition
+        ? getTuitionForDiscountCampaign(seasonTuition, activeDiscountCampaignId)
+        : seasonTuition
       return normalizeOvernightDiscountWeekPrice(effectiveTuition.discount.overnightWeek)
     },
-    [activeDiscountCampaignId, config.tuition]
+    [activeDiscountCampaignId, seasonTuition]
   )
   const overnightWeekPrice = useMemo(() => {
     if (discountActive && overnightDiscountWeekPrice > 0) {
@@ -962,6 +956,14 @@ export function OvernightCampPage({ view = 'landing' }) {
 
   return (
     <main className={`page overnightPage ${isRegistrationView ? 'registrationRoute' : ''}`}>
+      <SeasonSimulatorBar
+        isAdmin={isAdminViewer}
+        simulatedDate={simulatedDate}
+        onChange={setSimulatedDate}
+        programConfig={config.programs.general}
+        seasonLabel={`Overnight ${seasonYear}`}
+        activeRoundLabel={activeSeasonRound ? `${activeSeasonRound.name} live` : ''}
+      />
       <section className="card section overnightHero" id="overnight-top">
         <div className="overnightHeroStickyStack">
           {activeOvernightCarouselImage ? (
@@ -1683,7 +1685,8 @@ export function OvernightCampPage({ view = 'landing' }) {
                   <div className="overnightInvoiceModel">
                     <p className="subhead">
                       Includes 7 days of lodging, 7 days of meals, and 7 days of academy training. Does not include outing
-                      prices, tickets, external activity costs, or the Friday family & friends BBQ.
+                      prices, outing supervision costs, travel costs, tickets, external activity costs, or the Friday
+                      family &amp; friends BBQ.
                     </p>
                     <p className="subhead">
                       Published overnight full week rate: ${Number(suggestedOvernightWeekPrice || 0).toFixed(2)} regular,
